@@ -12,7 +12,7 @@ const { defineConfig, devices } = require('@playwright/test');
  */
 module.exports = defineConfig({
   // Test directory: defaults to smoke tests, but can be overridden for integration tests
-  // Integration tests use tags (e.g., @ai-impact) to filter by module
+  // Integration tests use tags (e.g., @people-teams) to filter by module
   testDir: './tests',
 
   // Each test can run for a max of 30 seconds

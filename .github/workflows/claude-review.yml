@@ -34,9 +34,11 @@ jobs:
       - run: echo "Merge queue — skipping review (already passed on PR)"
 
   # When the Claude review pushes an autofix commit via the GitHub App token,
-  # the synchronize event fires with actor=rhai-org-pulse[bot]. We don't want
+  # the synchronize event fires with actor=<app-name>[bot]. We don't want
   # to re-run the full review (infinite loop), but "Claude Review" is a
   # required check — so we need this no-op job to satisfy the gate.
+  # NOTE: The bot name below (rhai-org-pulse[bot]) must match the GitHub App
+  # configured for this repo. Update if using a different App.
   # Dependabot PRs also skip here — they lack repo secrets for Vertex AI auth.
   # The maintainer reviews them manually.
   autofix-pass:

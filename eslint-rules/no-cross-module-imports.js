@@ -37,12 +37,7 @@ module.exports = {
 
     // Known module slugs — prevents false positives on non-module hash paths
     const KNOWN_SLUGS = new Set([
-      'ai-impact',
-      'releases',
       'team-tracker',
-      'system-health',
-      'product-builds',
-      'upstream-pulse',
     ])
 
     function checkImportSource(node, source) {

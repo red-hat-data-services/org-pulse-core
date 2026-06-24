@@ -417,69 +417,6 @@ async function startServer(options = {}) {
   // Update route context with resolved enabledSlugs
   routeContext.enabledSlugs = enabledSlugs;
 
-  // ─── One-time migration: AI Impact features → unified releases store ───
-  // Runs BEFORE module routers. Wrapped in try/catch so core can run standalone
-  // even without the releases module installed.
-  (function migrateAiFeaturesToUnifiedStore() {
-    const FLAG_KEY = 'migrations/ai-features-unified';
-    if (storageModule.readFromStorage(FLAG_KEY)) return;
-
-    const legacyData = storageModule.readFromStorage('ai-impact/features.json');
-    if (!legacyData || !legacyData.features || Object.keys(legacyData.features).length === 0) {
-      storageModule.writeToStorage(FLAG_KEY, { migratedAt: new Date().toISOString(), count: 0 });
-      return;
-    }
-
-    console.log('[migration] Migrating AI Impact features to unified releases store...');
-    const keys = Object.keys(legacyData.features);
-    let migrated = 0;
-
-    for (const key of keys) {
-      const entry = legacyData.features[key];
-      if (!entry || !entry.latest) continue;
-
-      const featurePath = 'releases/execution/features/' + key + '.json';
-      const existing = storageModule.readFromStorage(featurePath);
-
-      if (existing && existing.aiReview) continue;
-
-      const aiReview = {
-        ...entry.latest,
-        history: entry.history || []
-      };
-      delete aiReview.key;
-
-      if (existing) {
-        existing.aiReview = aiReview;
-        storageModule.writeToStorage(featurePath, existing);
-      } else {
-        storageModule.writeToStorage(featurePath, {
-          key,
-          summary: entry.latest.title || '',
-          aiReview,
-          _sources: { aiReview: new Date().toISOString() }
-        });
-      }
-      migrated++;
-    }
-
-    if (migrated > 0) {
-      try {
-        const { rebuildIndex } = require('../modules/releases/server/execution/feature-store');
-        rebuildIndex(storageModule);
-        console.log(`[migration] Migrated ${migrated} AI Impact features, index rebuilt.`);
-      } catch (err) {
-        console.log(`[migration] Migrated ${migrated} AI Impact features (index rebuild deferred to next refresh): ${err.message}`);
-      }
-    }
-
-    storageModule.writeToStorage(FLAG_KEY, {
-      migratedAt: new Date().toISOString(),
-      count: migrated,
-      totalLegacy: keys.length
-    });
-  })();
-
   // ─── Module Routers ───
 
   const moduleRouters = createModuleRouters(builtInModules, coreServices, enabledSlugs, registries);

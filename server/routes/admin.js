@@ -477,13 +477,6 @@ function registerAdminRoutes(app, context) {
         'GOOGLE_OAUTH_CLIENT_SECRET',
         'GOOGLE_PICKER_API_KEY',
         'VITE_GOOGLE_PICKER_API_KEY',
-        'PRODUCT_PAGES_CLIENT_ID',
-        'PRODUCT_PAGES_CLIENT_SECRET',
-        'PRODUCT_PAGES_TOKEN',
-        'FEATURE_TRAFFIC_GITLAB_TOKEN',
-        'PRODUCT_BUILDS_API_URL',
-        'MODELS_CORP_API_KEY',
-        'MODELS_CORP_BASE_URL',
         'SESSION_SECRET'
       ];
 
