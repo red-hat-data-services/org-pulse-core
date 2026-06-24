@@ -1,0 +1,412 @@
+name: Build & Push Core Images
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - 'modules/team-tracker/**'
+      - 'shared/**'
+      - 'src/**'
+      - 'deploy/core.*.Dockerfile'
+      - 'deploy/nginx-default.conf'
+      - 'deploy/openshift/base/**'
+      - 'package*.json'
+      - 'vite.config.mjs'
+      - 'tailwind.config.mjs'
+      - 'postcss.config.mjs'
+      - 'index.html'
+      - 'tests/smoke/**'
+      - 'playwright.config.js'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-images-${{ github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  CORE_BACKEND_IMAGE: quay.io/org-pulse/org-pulse-core-backend
+  CORE_FRONTEND_IMAGE: quay.io/org-pulse/org-pulse-core-frontend
+
+jobs:
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.changes.outputs.backend }}
+      frontend: ${{ steps.changes.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed paths
+        id: changes
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD)
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          BACKEND=false
+          FRONTEND=false
+
+          if echo "$CHANGED" | grep -qE '^(server/|modules/team-tracker/(server/|module\.json)|shared/server/|deploy/core\.backend\.Dockerfile|package)'; then
+            BACKEND=true
+          fi
+
+          if echo "$CHANGED" | grep -qE '^(src/|modules/team-tracker/(client/|module\.json)|shared/client/|index\.html|vite\.config|tailwind\.config|postcss\.config|deploy/core\.frontend.*\.Dockerfile|deploy/nginx-default\.conf|deploy/openshift/base/nginx-app\.conf\.template|tests/smoke/|playwright\.config|package)'; then
+            FRONTEND=true
+          fi
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            BACKEND=true
+            FRONTEND=true
+          fi
+
+          echo "backend=$BACKEND" >> "$GITHUB_OUTPUT"
+          echo "frontend=$FRONTEND" >> "$GITHUB_OUTPUT"
+          echo "Backend: $BACKEND, Frontend: $FRONTEND"
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  version-bump:
+    name: Bump Version
+    needs: [test, detect-changes]
+    if: |
+      github.ref == 'refs/heads/main' &&
+      (needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.frontend == 'true')
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      build_sha: ${{ steps.push.outputs.build_sha }}
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Bump patch version
+        id: bump
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          NEW=$(npm version patch --no-git-tag-version)
+          while git ls-remote --tags origin "refs/tags/${NEW}" | grep -q .; do
+            echo "Tag ${NEW} already exists, bumping again..."
+            NEW=$(npm version patch --no-git-tag-version)
+          done
+          echo "Bumped ${CURRENT} -> ${NEW}"
+          echo "version=${NEW}" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and tag
+        id: push
+        run: |
+          VERSION=${{ steps.bump.outputs.version }}
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "release: ${VERSION} [skip ci]"
+          git tag "${VERSION}"
+          git push origin main --tags
+          BUILD_SHA=$(git rev-parse HEAD)
+          echo "build_sha=${BUILD_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Build SHA: ${BUILD_SHA}"
+
+  build-core-backend:
+    name: Build Core Backend
+    needs: [test, detect-changes, version-bump]
+    if: |
+      always() &&
+      needs.test.result == 'success' &&
+      needs.detect-changes.outputs.backend == 'true' &&
+      (needs.version-bump.result == 'success' || needs.version-bump.result == 'skipped')
+    runs-on: ubuntu-latest
+    env:
+      BUILD_SHA: ${{ needs.version-bump.outputs.build_sha || github.sha }}
+      BUILD_VERSION: ${{ needs.version-bump.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.version-bump.outputs.build_sha || github.sha }}
+
+      - name: Build core backend image
+        run: |
+          docker build \
+            -f deploy/core.backend.Dockerfile \
+            --build-arg GIT_SHA=${BUILD_SHA} \
+            --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+            -t ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA} \
+            .
+
+      - name: Smoke test core backend
+        run: |
+          docker run -d --name core-backend-smoke -p 3001:3001 \
+            -e DEMO_MODE=true \
+            ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA}
+          echo "Waiting for core backend to start..."
+          sleep 5
+          if curl -sf --max-time 5 http://localhost:3001/api/healthz > /dev/null 2>&1; then
+            echo "Core backend smoke test passed"
+          else
+            echo "Core backend smoke test failed"
+            docker logs core-backend-smoke
+            docker stop core-backend-smoke
+            exit 1
+          fi
+          docker stop core-backend-smoke
+
+      - name: Login to Quay.io
+        uses: docker/login-action@v4
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Push core backend image
+        run: |
+          docker tag ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA} ${{ env.CORE_BACKEND_IMAGE }}:latest
+          docker push ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA}
+          docker push ${{ env.CORE_BACKEND_IMAGE }}:latest
+          if [ -n "${BUILD_VERSION}" ]; then
+            docker tag ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA} ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_VERSION}
+            docker push ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_VERSION}
+          fi
+
+  build-core-frontend:
+    name: Build Core Frontend
+    needs: [test, detect-changes, version-bump]
+    if: |
+      always() &&
+      needs.test.result == 'success' &&
+      needs.detect-changes.outputs.frontend == 'true' &&
+      (needs.version-bump.result == 'success' || needs.version-bump.result == 'skipped')
+    runs-on: ubuntu-latest
+    env:
+      BUILD_SHA: ${{ needs.version-bump.outputs.build_sha || github.sha }}
+      BUILD_VERSION: ${{ needs.version-bump.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.version-bump.outputs.build_sha || github.sha }}
+
+      - name: Build core frontend image
+        run: |
+          docker build \
+            -f deploy/core.frontend.Dockerfile \
+            -t ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA} \
+            .
+
+      - name: Login to Quay.io
+        uses: docker/login-action@v4
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Push core frontend image
+        run: |
+          docker tag ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA} ${{ env.CORE_FRONTEND_IMAGE }}:latest
+          docker push ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA}
+          docker push ${{ env.CORE_FRONTEND_IMAGE }}:latest
+          if [ -n "${BUILD_VERSION}" ]; then
+            docker tag ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA} ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_VERSION}
+            docker push ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_VERSION}
+          fi
+
+  build-core-frontend-builder:
+    name: Build Core Frontend Builder
+    needs: [test, detect-changes, version-bump]
+    if: |
+      always() &&
+      needs.test.result == 'success' &&
+      needs.detect-changes.outputs.frontend == 'true' &&
+      (needs.version-bump.result == 'success' || needs.version-bump.result == 'skipped')
+    runs-on: ubuntu-latest
+    env:
+      BUILD_SHA: ${{ needs.version-bump.outputs.build_sha || github.sha }}
+      BUILD_VERSION: ${{ needs.version-bump.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.version-bump.outputs.build_sha || github.sha }}
+
+      - name: Build core frontend builder image
+        run: |
+          docker build \
+            -f deploy/core.frontend-builder.Dockerfile \
+            -t ${{ env.CORE_FRONTEND_IMAGE }}-builder:${BUILD_SHA} \
+            .
+
+      - name: Login to Quay.io
+        uses: docker/login-action@v4
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Push core frontend builder image
+        run: |
+          docker tag ${{ env.CORE_FRONTEND_IMAGE }}-builder:${BUILD_SHA} ${{ env.CORE_FRONTEND_IMAGE }}-builder:latest
+          docker push ${{ env.CORE_FRONTEND_IMAGE }}-builder:${BUILD_SHA}
+          docker push ${{ env.CORE_FRONTEND_IMAGE }}-builder:latest
+          if [ -n "${BUILD_VERSION}" ]; then
+            docker tag ${{ env.CORE_FRONTEND_IMAGE }}-builder:${BUILD_SHA} ${{ env.CORE_FRONTEND_IMAGE }}-builder:${BUILD_VERSION}
+            docker push ${{ env.CORE_FRONTEND_IMAGE }}-builder:${BUILD_VERSION}
+          fi
+
+  build-core-frontend-runtime:
+    name: Build Core Frontend Runtime
+    needs: [test, detect-changes, version-bump]
+    if: |
+      always() &&
+      needs.test.result == 'success' &&
+      needs.detect-changes.outputs.frontend == 'true' &&
+      (needs.version-bump.result == 'success' || needs.version-bump.result == 'skipped')
+    runs-on: ubuntu-latest
+    env:
+      BUILD_SHA: ${{ needs.version-bump.outputs.build_sha || github.sha }}
+      BUILD_VERSION: ${{ needs.version-bump.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.version-bump.outputs.build_sha || github.sha }}
+
+      - name: Build core frontend runtime image
+        run: |
+          docker build \
+            -f deploy/core.frontend-runtime.Dockerfile \
+            -t ${{ env.CORE_FRONTEND_IMAGE }}-runtime:${BUILD_SHA} \
+            .
+
+      - name: Login to Quay.io
+        uses: docker/login-action@v4
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Push core frontend runtime image
+        run: |
+          docker tag ${{ env.CORE_FRONTEND_IMAGE }}-runtime:${BUILD_SHA} ${{ env.CORE_FRONTEND_IMAGE }}-runtime:latest
+          docker push ${{ env.CORE_FRONTEND_IMAGE }}-runtime:${BUILD_SHA}
+          docker push ${{ env.CORE_FRONTEND_IMAGE }}-runtime:latest
+          if [ -n "${BUILD_VERSION}" ]; then
+            docker tag ${{ env.CORE_FRONTEND_IMAGE }}-runtime:${BUILD_SHA} ${{ env.CORE_FRONTEND_IMAGE }}-runtime:${BUILD_VERSION}
+            docker push ${{ env.CORE_FRONTEND_IMAGE }}-runtime:${BUILD_VERSION}
+          fi
+
+  smoke-test-core:
+    name: Core Smoke Tests
+    needs: [build-core-backend, build-core-frontend, version-bump]
+    if: |
+      always() &&
+      needs.build-core-backend.result == 'success' &&
+      needs.build-core-frontend.result == 'success'
+    runs-on: ubuntu-latest
+    env:
+      BUILD_SHA: ${{ needs.version-bump.outputs.build_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.version-bump.outputs.build_sha || github.sha }}
+
+      - name: Pull core images
+        run: |
+          docker pull ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA}
+          docker pull ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA}
+
+      - name: Run smoke tests against core images
+        run: |
+          make smoke-test-core \
+            CONTAINER_RUNTIME=docker \
+            CORE_BACKEND_IMAGE=${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA} \
+            CORE_FRONTEND_IMAGE=${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA}
+
+  update-deploy-image:
+    name: Update Deploy Image Tags
+    needs: [detect-changes, build-core-backend, build-core-frontend, version-bump]
+    if: |
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      (needs.build-core-backend.result == 'success' || needs.build-core-frontend.result == 'success') &&
+      needs.build-core-backend.result != 'failure' &&
+      needs.build-core-frontend.result != 'failure'
+    runs-on: ubuntu-latest
+    env:
+      BUILD_SHA: ${{ needs.version-bump.outputs.build_sha || github.sha }}
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Install kustomize
+        uses: imranismail/setup-kustomize@v3
+        with:
+          kustomize-version: '5.8.1'
+
+      - name: Update backend image tag
+        if: needs.build-core-backend.result == 'success'
+        working-directory: deploy/openshift/base
+        run: |
+          kustomize edit set image ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA}
+
+      - name: Update frontend image tag
+        if: needs.build-core-frontend.result == 'success'
+        working-directory: deploy/openshift/base
+        run: |
+          kustomize edit set image ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA}
+
+      - name: Validate kustomize build
+        run: kustomize build deploy/openshift/base > /dev/null
+
+      - name: Push deploy commit
+        run: |
+          VERSION=${{ needs.version-bump.outputs.version || 'unknown' }}
+          PARTS=""
+          if [ "${{ needs.build-core-backend.result }}" = "success" ]; then
+            PARTS="backend"
+          fi
+          if [ "${{ needs.build-core-frontend.result }}" = "success" ]; then
+            [ -n "$PARTS" ] && PARTS="$PARTS + "
+            PARTS="${PARTS}frontend"
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deploy/openshift/base/kustomization.yaml
+          git diff --cached --quiet && { echo "No changes to commit"; exit 0; }
+          git commit -m "deploy: update ${PARTS} image to ${VERSION} (${BUILD_SHA}) [skip ci]"
+          git push origin main

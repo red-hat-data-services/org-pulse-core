@@ -1,0 +1,123 @@
+name: Integration Tests
+
+on:
+  pull_request:
+    branches: [main]
+  merge_group:
+
+concurrency:
+  group: integration-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect-changes:
+    name: Detect Changed Modules
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      enabled-modules: ${{ steps.build-matrix.outputs.modules }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: dorny/paths-filter@v4
+        if: github.event_name == 'pull_request'
+        id: filter
+        with:
+          filters: |
+            shared-test-files:
+              - 'tests/integration/constants.js'
+              - 'tests/integration/helpers.js'
+            people-teams:
+              - 'modules/team-tracker/**'
+              - 'tests/integration/people-teams.spec.js'
+
+      - name: Detect changes via git diff
+        if: github.event_name == 'merge_group'
+        id: git-filter
+        run: |
+          BASE_SHA="${{ github.event.merge_group.base_sha }}"
+          if [ -z "$BASE_SHA" ]; then
+            echo "::error::BASE_SHA is empty — cannot detect changes"
+            exit 1
+          fi
+
+          CHANGED=$(git diff --name-only ${BASE_SHA} HEAD)
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          ALL_MODULES='["people-teams"]'
+
+          if echo "$CHANGED" | grep -qE '^tests/integration/(constants|helpers)\.js$'; then
+            echo "modules=$ALL_MODULES" >> "$GITHUB_OUTPUT"
+            echo "Shared test files changed — testing all modules"
+            exit 0
+          fi
+
+          MODULES="[]"
+
+          if echo "$CHANGED" | grep -qE "^(modules/team-tracker/|tests/integration/people-teams\.spec\.js)"; then
+            MODULES=$(echo "$MODULES" | jq -c '. + ["people-teams"]')
+          fi
+
+          echo "modules=$MODULES" >> "$GITHUB_OUTPUT"
+          echo "Testing modules: $MODULES"
+
+      - name: Build module matrix
+        id: build-matrix
+        run: |
+          if [ "${{ github.event_name }}" = "merge_group" ]; then
+            MODULES='${{ steps.git-filter.outputs.modules }}'
+          elif [ "${{ steps.filter.outputs.shared-test-files }}" == "true" ]; then
+            MODULES='["people-teams"]'
+          else
+            MODULES='${{ steps.filter.outputs.changes }}'
+            MODULES=$(echo "$MODULES" | jq -c 'map(select(. != "shared-test-files"))')
+          fi
+
+          echo "modules=$MODULES" >> $GITHUB_OUTPUT
+          echo "Testing modules: $MODULES"
+
+  run-tests:
+    name: Test ${{ matrix.module }}
+    needs: detect-changes
+    if: needs.detect-changes.outputs.enabled-modules != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJson(needs.detect-changes.outputs.enabled-modules) }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run Module Test
+        uses: ./.github/actions/test-org-pulse-module
+        with:
+          module: ${{ matrix.module }}
+
+  integration-test-status:
+    name: Integration Test Status
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [detect-changes, run-tests]
+    steps:
+      - name: Evaluate integration test results
+        run: |
+          MODULES='${{ needs.detect-changes.outputs.enabled-modules }}'
+          if [ "$MODULES" = "[]" ] || [ -z "$MODULES" ]; then
+            echo "No module changes — integration tests skipped"
+          elif [ "${{ needs.run-tests.result }}" = "success" ]; then
+            echo "All integration tests passed"
+          elif [ "${{ needs.run-tests.result }}" = "skipped" ]; then
+            echo "No module changes — integration tests skipped"
+          else
+            echo "Integration tests failed"
+            exit 1
+          fi

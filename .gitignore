@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Playwright
+playwright-report/
+test-results/
+.playwright/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local dev data
+data/
+data-backup.tar.gz
+
+# Google Sheets service account key
+secrets/
+org-roster.json
+
+output.txt
+
+# Claude Code (keep .claude/CLAUDE.md and commands tracked for contributors)
+.claude/*
+!.claude/CLAUDE.md
+!.claude/commands/
+# Journal plugin
+journal/

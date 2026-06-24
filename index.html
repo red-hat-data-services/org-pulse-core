@@ -1,0 +1,23 @@
+<!-- @org-pulse/core -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/redhat-logo.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Org Pulse</title>
+  </head>
+  <body>
+    <script>
+      // Apply theme before render to prevent flash
+      (function() {
+        var mode = 'system';
+        try { var s = localStorage.getItem('tt_theme'); if (s === 'light' || s === 'dark' || s === 'system') mode = s; } catch(e) {}
+        var dark = mode === 'dark' || (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        if (dark) document.documentElement.classList.add('dark');
+      })();
+    </script>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

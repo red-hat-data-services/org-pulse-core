@@ -1,0 +1,59 @@
+# Deployment files
+deploy/
+
+# GitHub Actions
+.github/
+
+# Smoke tests (integration test helpers are kept)
+tests/smoke/
+tests/integration/*.spec.js
+
+# Documentation
+docs/
+
+# Build tooling
+Makefile
+
+# Data
+data/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.production
+.env.example
+
+# Claude Code
+.claude/
+
+# Plan docs
+CORE-SPLIT-PLAN.md
+ALLOCATION-MIGRATION-PLAN.md
+MODULE-SECRETS-PLAN.md
+MODULE-SECRETS-PHASE2-PLAN.md
+NOTIFICATION-SYSTEM-PLAN.md
+FEATURE-UNIFICATION-PLAN.md
+SPIKE-0B-RESULTS.md
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Playwright
+playwright-report/
+test-results/
+.playwright/
+playwright.config.js
+
+# Other
+.editorconfig
+.prettierrc
+.gitignore
+CONTRIBUTING.md
+AGENTS.md
+README.md
