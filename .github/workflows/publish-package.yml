@@ -30,6 +30,7 @@ jobs:
     name: Publish to npm
     needs: validate
     runs-on: ubuntu-latest
+    environment: npm-publish
     permissions:
       contents: write
       id-token: write
@@ -45,8 +46,6 @@ jobs:
 
       - name: Publish
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Extract version from tag
         id: version
