@@ -56,7 +56,7 @@
     "chart.js": "^4.4.7",
     "compression": "^1.8.1",
     "dompurify": "^3.4.11",
-    "driver.js": "^1.4.0",
+    "driver.js": "^1.5.0",
     "express": "^5.2.1",
     "express-session": "^1.19.0",
     "googleapis": "^173.0.0",
@@ -68,7 +68,7 @@
     "swagger-jsdoc": "^6.3.0",
     "swagger-ui-express": "^5.0.1",
     "tar": "^7.5.16",
-    "vue": "^3.5.13",
+    "vue": "^3.5.38",
     "vue-chartjs": "^5.3.2"
   },
   "devDependencies": {
@@ -78,19 +78,19 @@
     "@tailwindcss/typography": "^0.5.20",
     "@vitejs/plugin-vue": "^6.0.7",
     "@vue/test-utils": "^2.4.11",
-    "autoprefixer": "^10.5.0",
+    "autoprefixer": "^10.5.1",
     "concurrently": "^10.0.3",
     "dotenv": "^17.4.2",
     "eslint": "^10.5.0",
     "eslint-plugin-vue": "^10.9.2",
-    "globals": "^17.6.0",
+    "globals": "^17.7.0",
     "husky": "^9.1.7",
-    "jsdom": "^25.0.1",
+    "jsdom": "^29.1.1",
     "lint-staged": "^17.0.7",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
-    "vite": "^8.0.16",
-    "vitest": "^4.1.8"
+    "vite": "^8.1.0",
+    "vitest": "^4.1.9"
   },
   "lint-staged": {
     "*.{js,mjs,cjs,vue}": "eslint --fix"
