@@ -34,7 +34,7 @@ function getResolvedModulePaths(projectRoot) {
  */
 export function createTailwindConfig(options = {}) {
   const coreDir = __dirname
-  const projectRoot = options.root || coreDir
+  const projectRoot = options.root || process.cwd()
 
   const content = [
     path.resolve(projectRoot, 'index.html'),
