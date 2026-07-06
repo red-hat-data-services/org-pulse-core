@@ -4,8 +4,7 @@
 
 - **Node.js 22+** and npm
 - **Red Hat VPN** connection (for LDAP roster sync)
-- A **Jira Cloud API token** for live data — [create one here](https://id.atlassian.com/manage-profile/security/api-tokens)
-- Or just use **Demo Mode** (no credentials needed)
+- A **Jira Cloud API token** for live data — [create one here](https://id.atlassian.com/manage-profile/security/api-tokens) or just use **Demo Mode** (no credentials needed)
 
 ## Getting Started
 
@@ -65,9 +64,10 @@ npm run lint        # linting
 
 ```
 src/
-  components/         # Vue components (App.vue is root with hash routing)
-  composables/        # Composition API hooks
-  __tests__/          # Frontend tests (Vitest + jsdom)
+  components/         # App shell components (App.vue, AppSidebar, SettingsView, etc.)
+  composables/        # Shell-only hooks (useModules, useTheme, useApiTokens, etc.)
+  module-loader.js    # Frontend module auto-discovery via import.meta.glob
+  __tests__/          # App shell tests (Vitest + jsdom)
 
 shared/
   client/             # Shared composables, services, components
@@ -91,6 +91,10 @@ deploy/
   openshift/
     base/               # Kustomize base manifests
     overlays/local/     # Local Kind cluster overlay
+
+tests/
+  smoke/              # Playwright smoke tests (container images)
+  integration/        # Playwright module integration tests
 
 fixtures/             # Demo mode fixture data
 data/                 # Local dev data (gitignored)
@@ -142,7 +146,7 @@ npm test            # Run all tests
 npm run test:watch  # Watch mode
 
 # Run a specific test file
-npx vitest run server/jira/__tests__/sprint-report.test.js
+npx vitest run modules/team-tracker/server/jira/__tests__/sprint-report.test.js
 ```
 
 #### Smoke tests
