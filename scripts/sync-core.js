@@ -52,6 +52,8 @@ if (fs.existsSync(coreModulesDir)) {
         if (path.resolve(path.dirname(link), existing) === target) {
           continue; // Already correct
         }
+        // Symlink points to wrong place — remove and recreate
+        fs.unlinkSync(link);
       } catch {
         // Not a symlink — consumer has their own directory, skip
         continue;
