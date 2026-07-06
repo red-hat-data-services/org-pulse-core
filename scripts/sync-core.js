@@ -65,6 +65,25 @@ if (fs.existsSync(coreModulesDir)) {
   }
 }
 
+// Symlink src/ into consumer's project root.
+// index.html references /src/main.js, which Vite resolves relative to root (projectRoot).
+const coreSrcDir = path.join(coreDir, 'src');
+const localSrcDir = path.join(projectRoot, 'src');
+
+if (fs.existsSync(coreSrcDir) && !fs.existsSync(localSrcDir)) {
+  fs.symlinkSync(coreSrcDir, localSrcDir, 'dir');
+  console.log('[@org-pulse/core] Symlinked src/');
+} else if (fs.existsSync(localSrcDir)) {
+  try {
+    const existing = fs.readlinkSync(localSrcDir);
+    if (path.resolve(path.dirname(localSrcDir), existing) !== coreSrcDir) {
+      // Points elsewhere or is a real directory — skip
+    }
+  } catch {
+    // Not a symlink — consumer has their own src/, skip
+  }
+}
+
 // Copy index.html to project root.
 // Overwrite if the existing copy matches a previous core version (stamp-based).
 // If the consumer has customized it (stamp missing), leave it alone.
