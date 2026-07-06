@@ -17,7 +17,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
  */
 export function createViteConfig(options = {}) {
   const coreDir = __dirname
-  const projectRoot = options.root || coreDir
+  const projectRoot = options.root || process.cwd()
 
   return defineConfig({
     root: projectRoot,
