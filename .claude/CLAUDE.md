@@ -131,7 +131,7 @@ Kustomize layers: `base/` (core platform + team-tracker) → `overlays/local/` (
 ### CI/CD
 - **`ci.yml`** — PRs + main: lint, test, build, kustomize validate. Required check: "Test & Build".
 - **`build-core-images.yml`** — main pushes: builds core images, runs smoke tests, pushes to Quay (`:<sha>` + `:latest` + `:v<version>`), commits deploy tag update directly to main (`[skip ci]`).
-- **`publish-package.yml`** — version tag pushes: validates, publishes to npmjs.com, creates GitHub Release, notifies consumer repos.
+- **`build-core-images.yml`** also includes a `publish-package` job that publishes to npmjs.com, creates a GitHub Release, and notifies consumer repos.
 - ConfigMap changes auto-trigger rollouts via kustomize `configMapGenerator`.
 
 ### Testing

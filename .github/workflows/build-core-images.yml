@@ -347,6 +347,49 @@ jobs:
             CORE_BACKEND_IMAGE=${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA} \
             CORE_FRONTEND_IMAGE=${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA}
 
+  publish-package:
+    name: Publish npm Package
+    needs: [test, version-bump]
+    if: needs.version-bump.result == 'success'
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      BUILD_SHA: ${{ needs.version-bump.outputs.build_sha }}
+      BUILD_VERSION: ${{ needs.version-bump.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.BUILD_SHA }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci
+
+      - name: Publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.BUILD_VERSION }}
+          generate_release_notes: true
+
+      - name: Notify consumer repo
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.GH_PAT }}
+          repository: red-hat-data-services/rhai-org-pulse
+          event-type: core-release
+          client-payload: '{"version": "${{ env.BUILD_VERSION }}"}'
+
   update-deploy-image:
     name: Update Deploy Image Tags
     needs: [detect-changes, build-core-backend, build-core-frontend, version-bump]
