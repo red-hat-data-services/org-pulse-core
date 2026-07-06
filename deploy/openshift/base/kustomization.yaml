@@ -28,4 +28,4 @@ images:
 - name: quay.io/org-pulse/org-pulse-core-backend
   newTag: e78e6e31601883a0b623e3a55803fa4b135447ca
 - name: quay.io/org-pulse/org-pulse-core-frontend
-  newTag: e78e6e31601883a0b623e3a55803fa4b135447ca
+  newTag: 108b645187a34253e83659c854e13a2041b65b07
