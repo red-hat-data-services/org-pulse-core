@@ -3,6 +3,7 @@ import { defineAsyncComponent } from 'vue'
 const aboutTabManifests = import.meta.glob('/platform/*/manifest.json', { eager: true })
 const aboutTabComponents = import.meta.glob('/platform/about-tabs/*.vue')
 const allocationStrategyComponents = import.meta.glob('/platform/allocation-strategy/*.vue')
+const moduleViewComponents = import.meta.glob('/platform/*/client/**/*.vue')
 
 export function loadPlatformAboutTabs() {
   const manifest = aboutTabManifests['/platform/about-tabs/manifest.json']
@@ -26,6 +27,41 @@ export function loadPlatformAboutTabs() {
       source: 'platform'
     }
   }).filter(Boolean)
+}
+
+/**
+ * Discover module-view extensions and return a map of target module slug
+ * to an object of { viewId: asyncComponent }.
+ * @returns {Object<string, Object<string, import('vue').Component>>}
+ */
+export function loadModuleViewExtensions() {
+  const result = {}
+  for (const [manifestPath, raw] of Object.entries(aboutTabManifests)) {
+    const manifest = raw.default || raw
+    if (manifest.type !== 'module-views') continue
+    if (!manifest.targetModule || !manifest.client?.views) continue
+
+    // Derive the extension directory name from the manifest path
+    // e.g., '/platform/jira-taxonomy/manifest.json' → 'jira-taxonomy'
+    const parts = manifestPath.split('/')
+    const extDir = parts[2] // '/platform/<dir>/manifest.json'
+
+    if (!result[manifest.targetModule]) {
+      result[manifest.targetModule] = {}
+    }
+
+    for (const [viewId, viewPath] of Object.entries(manifest.client.views)) {
+      const normalized = viewPath.replace(/^\.\//, '')
+      const globKey = `/platform/${extDir}/${normalized}`
+      const loader = moduleViewComponents[globKey]
+      if (!loader) {
+        console.warn(`[platform] module-views component not found: ${globKey}`)
+        continue
+      }
+      result[manifest.targetModule][viewId] = defineAsyncComponent(loader)
+    }
+  }
+  return result
 }
 
 export function loadAllocationStrategy() {

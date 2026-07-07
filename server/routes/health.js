@@ -63,16 +63,32 @@ function registerPreAuthRoutes(app, context) {
   app.get('/api/built-in-modules/manifests', function(req, res) {
     try {
       const modules = builtInModules.map(function(mod) {
-        return {
+        var manifest = {
           slug: mod.slug,
           name: mod.name,
           description: mod.description,
           icon: mod.icon,
           order: mod.order,
-          client: mod.client,
+          client: mod.client ? JSON.parse(JSON.stringify(mod.client)) : undefined,
           requires: mod.requires || [],
           defaultEnabled: mod.defaultEnabled
         };
+
+        // Merge navItems from module-views platform extensions targeting this module
+        var extensions = context.moduleViewExtensions || [];
+        var enabledSlugs = context.enabledSlugs;
+        for (var i = 0; i < extensions.length; i++) {
+          var ext = extensions[i];
+          if (ext.targetModule !== mod.slug) continue;
+          if (enabledSlugs && !enabledSlugs.has(mod.slug)) continue;
+          if (!manifest.client) manifest.client = {};
+          if (!manifest.client.navItems) manifest.client.navItems = [];
+          for (var j = 0; j < ext.navItems.length; j++) {
+            manifest.client.navItems.push(ext.navItems[j]);
+          }
+        }
+
+        return manifest;
       });
       res.json({ modules });
     } catch (error) {

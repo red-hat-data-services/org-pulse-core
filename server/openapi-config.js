@@ -292,7 +292,7 @@ function createOpenApiSpec() {
       },
       security: [{ forwardedEmail: [] }, { bearerToken: [] }]
     },
-    apis: ['server/dev-server.js', 'modules/*/server/**/*.js']
+    apis: ['server/dev-server.js', 'modules/*/server/**/*.js', 'platform/*/server/**/*.js']
   };
 
   return swaggerJsdoc(options);

@@ -42,6 +42,16 @@ function findUndocumentedRoutes() {
     }
   }
 
+  // Scan platform extension server directories
+  const platformDir = path.join(rootDir, 'platform');
+  if (fs.existsSync(platformDir)) {
+    for (const ext of fs.readdirSync(platformDir, { withFileTypes: true })) {
+      if (!ext.isDirectory()) continue;
+      const serverDir = path.join(platformDir, ext.name, 'server');
+      if (fs.existsSync(serverDir)) files.push(...collectJsFiles(serverDir));
+    }
+  }
+
   const routeRegex = /(?:router|app)\.(get|post|put|patch|delete)\(\s*['"`]([^'"`]+)['"`]/;
   const missing = [];
 
