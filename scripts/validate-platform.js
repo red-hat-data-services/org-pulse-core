@@ -218,7 +218,9 @@ for (const dirName of moduleViewsDirs) {
     }
   }
 
-  if (manifest.client && manifest.client.views) {
+  if (!manifest.client || !manifest.client.views || typeof manifest.client.views !== 'object' || Array.isArray(manifest.client.views)) {
+    error(`${dirName}: "client.views" is required and must be an object`)
+  } else {
     if (typeof manifest.client.views !== 'object' || Array.isArray(manifest.client.views)) {
       error(`${dirName}: "client.views" must be an object`)
     } else {
