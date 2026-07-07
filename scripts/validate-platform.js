@@ -221,24 +221,20 @@ for (const dirName of moduleViewsDirs) {
   if (!manifest.client || !manifest.client.views || typeof manifest.client.views !== 'object' || Array.isArray(manifest.client.views)) {
     error(`${dirName}: "client.views" is required and must be an object`)
   } else {
-    if (typeof manifest.client.views !== 'object' || Array.isArray(manifest.client.views)) {
-      error(`${dirName}: "client.views" must be an object`)
-    } else {
-      for (const [viewId, viewPath] of Object.entries(manifest.client.views)) {
-        if (typeof viewPath !== 'string') {
-          error(`${dirName}: client.views["${viewId}"] must be a string path`)
-          continue
-        }
-        const normalized = viewPath.replace(/^\.\//, '')
-        const fullPath = path.join(extDir, normalized)
-        if (!fs.existsSync(fullPath)) {
-          error(`${dirName}: client view file not found: ${viewPath} (expected at ${fullPath})`)
-        }
-        // Each view should have a corresponding navItem
-        const navIds = (manifest.navItems || []).map(n => n.id)
-        if (!navIds.includes(viewId)) {
-          console.warn(`  WARNING: ${dirName}: client view "${viewId}" has no matching navItem`)
-        }
+    for (const [viewId, viewPath] of Object.entries(manifest.client.views)) {
+      if (typeof viewPath !== 'string') {
+        error(`${dirName}: client.views["${viewId}"] must be a string path`)
+        continue
+      }
+      const normalized = viewPath.replace(/^\.\//, '')
+      const fullPath = path.join(extDir, normalized)
+      if (!fs.existsSync(fullPath)) {
+        error(`${dirName}: client view file not found: ${viewPath} (expected at ${fullPath})`)
+      }
+      // Each view should have a corresponding navItem
+      const navIds = (manifest.navItems || []).map(n => n.id)
+      if (!navIds.includes(viewId)) {
+        console.warn(`  WARNING: ${dirName}: client view "${viewId}" has no matching navItem`)
       }
     }
   }
