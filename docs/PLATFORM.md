@@ -151,6 +151,96 @@ module.exports = { classifyIssue, getJiraFields }
 3. Run `npm run validate:platform` to verify
 4. The allocation tab and report appear automatically
 
+## Module Views (`platform/<name>/`)
+
+Module-view extensions inject additional views, nav items, and API routes into
+existing core modules. This lets consumer repos add deployment-specific pages
+to core modules (e.g., adding a "Jira Taxonomy" page to team-tracker) without
+forking core code.
+
+### Manifest format
+
+```json
+{
+  "type": "module-views",
+  "targetModule": "team-tracker",
+  "navItems": [
+    {
+      "id": "jira-taxonomy",
+      "label": "Jira Taxonomy",
+      "icon": "Layers",
+      "order": 150
+    }
+  ],
+  "client": {
+    "views": {
+      "jira-taxonomy": "./client/JiraTaxonomyView.vue"
+    }
+  },
+  "server": {
+    "entry": "./server/index.js"
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | yes | Must be `"module-views"` |
+| `targetModule` | string | yes | Slug of the core module to extend |
+| `navItems` | array | yes | Nav items to inject into the target module's sidebar section |
+| `client.views` | object | yes | Map of view ID → Vue component path (relative to extension dir) |
+| `server.entry` | string | no | Path to CommonJS server entry (relative to extension dir) |
+
+Each nav item:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Unique view identifier (must match a key in `client.views`) |
+| `label` | string | yes | Display text in the sidebar |
+| `icon` | string | yes | Lucide icon name (resolved via shared ICON_MAP) |
+| `order` | number | no | Sort position among the target module's nav items. Core nav items default to `10, 20, 30, ...` based on array position. Set `150` to appear after all core items. |
+
+### Server entry
+
+The server entry follows the same contract as module server entries:
+
+```js
+module.exports = function(router, context) {
+  // context has the same shape as ModuleContext:
+  // storage, requireAuth, requireAdmin, requireScope, secrets, etc.
+  // Registrations (diagnostics, refresh) use a disambiguated slug
+  // (e.g., "team-tracker/jira-taxonomy") to avoid collisions.
+
+  router.get('/my-endpoint', context.requireScope('team-tracker:read'), async function(req, res) {
+    // ...
+  })
+}
+```
+
+Routes are mounted at `/api/modules/<targetModule>/` — the same path as the
+target module. The extension's router is mounted AFTER the module's router, so
+module routes take precedence.
+
+### How it works
+
+- **Server-side**: `server/platform-loader.js` discovers `module-views` manifests,
+  creates Express routers with the target module's context (disambiguated slug),
+  and mounts them after the module's own router.
+- **Frontend**: `src/platform-loader.js` discovers manifests via `import.meta.glob`
+  and resolves Vue components. `App.vue` merges platform views into the module's
+  routes when loading the module client.
+- **Nav items**: The `/api/built-in-modules/manifests` endpoint merges extension
+  nav items into the target module's manifest. The sidebar sorts items by `order`.
+- **Disabled modules**: Extensions are skipped when their target module is disabled.
+
+### Adding a module-view extension
+
+1. Create `platform/<name>/manifest.json` with `type: "module-views"`
+2. Create Vue components in `platform/<name>/client/`
+3. Optionally create `platform/<name>/server/index.js` for API routes
+4. Run `npm run validate:platform` to verify
+5. Views and nav items appear automatically in the target module
+
 ## Dockerfile layering
 
 The core frontend builder does NOT include `platform/`. Deployment-specific

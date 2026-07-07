@@ -325,6 +325,8 @@ const navSections = computed(() => {
       headerLabel: manifest.name,
       headerIcon: resolveIcon(manifest.icon),
       items: navItems
+        .map((item, idx) => ({ ...item, _order: item.order ?? (idx + 1) * 10 }))
+        .sort((a, b) => a._order - b._order)
         .filter(item => {
           if (item.requireCondition === 'in-app-mode' && props.teamDataSource !== 'in-app') return false
           if (!item.requireRole) return true

@@ -79,7 +79,8 @@ async function startServer(options = {}) {
 
   const { SecretRegistry } = require('../shared/server/secret-registry');
   const platformSecretGroups = require('../shared/server/platform-secrets');
-  const { loadAllocationStrategy } = require('./platform-loader');
+  const { loadAllocationStrategy, loadModuleViewExtensions } = require('./platform-loader');
+  const { buildModuleContext } = require('../shared/server/module-context');
 
   // ─── Module Discovery ───
 
@@ -470,6 +471,35 @@ async function startServer(options = {}) {
   }
 
   mountModuleRouters(app, builtInModules, moduleRouters);
+
+  // ─── Platform Module-View Extensions ───
+
+  const moduleViewExtensions = loadModuleViewExtensions(platformPaths);
+  for (const ext of moduleViewExtensions) {
+    if (!enabledSlugs.has(ext.targetModule)) {
+      console.log(`[platform] Skipping module-views extension "${ext.id}" — target module "${ext.targetModule}" is disabled`);
+      continue;
+    }
+    if (!ext.serverEntry) continue;
+    try {
+      const extRouter = express.Router();
+      const extSlug = ext.targetModule + '/' + ext.id;
+      const extCtx = buildModuleContext(coreServices, extSlug, registries);
+      const extExported = require(ext.serverEntry);
+      if (typeof extExported !== 'function') {
+        console.error(`[platform] module-views extension "${ext.id}": server entry does not export a function`);
+        continue;
+      }
+      extExported(extRouter, extCtx);
+      app.use('/api/modules/' + ext.targetModule, extRouter);
+      console.log(`[platform] Mounted module-views extension "${ext.id}" at /api/modules/${ext.targetModule}`);
+    } catch (err) {
+      console.error(`[platform] Failed to mount module-views extension "${ext.id}":`, err.message);
+    }
+  }
+
+  // Store extensions for manifest merging
+  routeContext.moduleViewExtensions = moduleViewExtensions;
 
   // ─── Health Metrics (core feature, not a module) ───
   const { createHealthMetricsRouter } = require('./health-metrics/routes');

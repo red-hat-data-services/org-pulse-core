@@ -24,7 +24,22 @@ const hasAboutTabs = fs.existsSync(ABOUT_TABS_DIR)
 const ALLOCATION_DIR = path.join(PLATFORM_DIR, 'allocation-strategy')
 const hasAllocation = fs.existsSync(ALLOCATION_DIR)
 
-if (!hasAboutTabs && !hasAllocation) {
+// Discover module-views extensions
+const moduleViewsDirs = []
+if (fs.existsSync(PLATFORM_DIR)) {
+  for (const entry of fs.readdirSync(PLATFORM_DIR, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const manifestPath = path.join(PLATFORM_DIR, entry.name, 'manifest.json')
+    if (!fs.existsSync(manifestPath)) continue
+    try {
+      const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+      if (m.type === 'module-views') moduleViewsDirs.push(entry.name)
+    } catch { /* skip */ }
+  }
+}
+const hasModuleViews = moduleViewsDirs.length > 0
+
+if (!hasAboutTabs && !hasAllocation && !hasModuleViews) {
   console.log('No platform extensions found — skipping validation')
   process.exit(0)
 }
@@ -157,6 +172,85 @@ if (hasAllocation) {
         console.log(`  Strategy "${allocManifest.id}" with ${allocManifest.categories?.length || 0} categories validated successfully`)
       }
     }
+  }
+}
+
+// --- Module-Views Validation ---
+
+for (const dirName of moduleViewsDirs) {
+  const extDir = path.join(PLATFORM_DIR, dirName)
+  const manifestPath = path.join(extDir, 'manifest.json')
+  let manifest
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+  } catch (e) {
+    error(`${dirName}/manifest.json is not valid JSON: ${e.message}`)
+    continue
+  }
+
+  console.log(`Validating platform/${dirName}/manifest.json (module-views)...`)
+
+  if (!manifest.targetModule || typeof manifest.targetModule !== 'string') {
+    error(`${dirName}: "targetModule" must be a non-empty string`)
+  }
+
+  if (!Array.isArray(manifest.navItems) || manifest.navItems.length === 0) {
+    error(`${dirName}: "navItems" must be a non-empty array`)
+  } else {
+    const REQUIRED_NAV_FIELDS = ['id', 'label', 'icon']
+    const seenIds = new Set()
+
+    for (const item of manifest.navItems) {
+      for (const field of REQUIRED_NAV_FIELDS) {
+        if (typeof item[field] !== 'string' || !item[field]) {
+          error(`${dirName}: navItem "${item.id || '(unnamed)'}" missing required string field "${field}"`)
+        }
+      }
+      if (item.id) {
+        if (seenIds.has(item.id)) {
+          error(`${dirName}: duplicate navItem ID "${item.id}"`)
+        }
+        seenIds.add(item.id)
+      }
+      if (item.order !== undefined && typeof item.order !== 'number') {
+        error(`${dirName}: navItem "${item.id}": "order" must be a number`)
+      }
+    }
+  }
+
+  if (manifest.client && manifest.client.views) {
+    if (typeof manifest.client.views !== 'object' || Array.isArray(manifest.client.views)) {
+      error(`${dirName}: "client.views" must be an object`)
+    } else {
+      for (const [viewId, viewPath] of Object.entries(manifest.client.views)) {
+        if (typeof viewPath !== 'string') {
+          error(`${dirName}: client.views["${viewId}"] must be a string path`)
+          continue
+        }
+        const normalized = viewPath.replace(/^\.\//, '')
+        const fullPath = path.join(extDir, normalized)
+        if (!fs.existsSync(fullPath)) {
+          error(`${dirName}: client view file not found: ${viewPath} (expected at ${fullPath})`)
+        }
+        // Each view should have a corresponding navItem
+        const navIds = (manifest.navItems || []).map(n => n.id)
+        if (!navIds.includes(viewId)) {
+          console.warn(`  WARNING: ${dirName}: client view "${viewId}" has no matching navItem`)
+        }
+      }
+    }
+  }
+
+  if (manifest.server && manifest.server.entry) {
+    const entryFile = manifest.server.entry.replace(/^\.\//, '')
+    const entryPath = path.join(extDir, entryFile)
+    if (!fs.existsSync(entryPath)) {
+      error(`${dirName}: server entry not found: ${manifest.server.entry} (expected at ${entryPath})`)
+    }
+  }
+
+  if (errors === 0) {
+    console.log(`  Extension "${dirName}" → ${manifest.targetModule}: ${manifest.navItems?.length || 0} navItem(s) validated successfully`)
   }
 }
 

@@ -220,7 +220,7 @@ import { useModules } from '../composables/useModules'
 import { useTheme } from '../composables/useTheme'
 import { refreshMetrics, getLastRefreshed, apiRequest, getSiteConfig } from '@shared/client/services/api'
 import { loadModuleManifests, loadModuleClient } from '../module-loader'
-import { loadPlatformAboutTabs } from '../platform-loader'
+import { loadPlatformAboutTabs, loadModuleViewExtensions } from '../platform-loader'
 import { resolveIcon } from '../utils/icon-map'
 
 export default {
@@ -353,11 +353,17 @@ export default {
 
     // Module client cache
     const moduleClients = ref({})
+    const platformViewExtensions = loadModuleViewExtensions()
 
     async function ensureModuleClient(slug) {
       if (moduleClients.value[slug]) return moduleClients.value[slug]
       const client = await loadModuleClient(slug)
       if (client) {
+        // Merge platform view extensions into the module's routes
+        const platformViews = platformViewExtensions[slug]
+        if (platformViews) {
+          client.routes = { ...client.routes, ...platformViews }
+        }
         moduleClients.value[slug] = client
       }
       return client
