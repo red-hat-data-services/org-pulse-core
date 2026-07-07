@@ -382,14 +382,6 @@ jobs:
           tag_name: ${{ env.BUILD_VERSION }}
           generate_release_notes: true
 
-      - name: Notify consumer repo
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.GH_PAT }}
-          repository: red-hat-data-services/rhai-org-pulse
-          event-type: core-release
-          client-payload: '{"version": "${{ env.BUILD_VERSION }}"}'
-
   update-deploy-image:
     name: Update Deploy Image Tags
     needs: [detect-changes, build-core-backend, build-core-frontend, version-bump]
