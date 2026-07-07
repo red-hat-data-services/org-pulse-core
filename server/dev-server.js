@@ -94,6 +94,16 @@ async function startServer(options = {}) {
       secretRegistry.registerModuleSecrets(mod.slug, mod.secrets);
     }
   }
+
+  // Register platform extension secrets before resolving
+  const moduleViewExtensions = loadModuleViewExtensions(platformPaths);
+  for (const ext of moduleViewExtensions) {
+    if (ext.secrets) {
+      const extSlug = ext.targetModule + '/' + ext.id;
+      secretRegistry.registerModuleSecrets(extSlug, ext.secrets);
+    }
+  }
+
   secretRegistry.resolve();
 
   // ─── Platform Secret Validators ───
@@ -474,7 +484,6 @@ async function startServer(options = {}) {
 
   // ─── Platform Module-View Extensions ───
 
-  const moduleViewExtensions = loadModuleViewExtensions(platformPaths);
   for (const ext of moduleViewExtensions) {
     if (!enabledSlugs.has(ext.targetModule)) {
       console.log(`[platform] Skipping module-views extension "${ext.id}" — target module "${ext.targetModule}" is disabled`);

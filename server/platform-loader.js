@@ -158,6 +158,7 @@ function loadModuleViewExtensions(platformDirs) {
         targetModule: manifest.targetModule,
         navItems: manifest.navItems,
         serverEntry: serverEntry,
+        secrets: manifest.secrets || null,
         _dir: extDir
       })
 
