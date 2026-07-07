@@ -366,6 +366,7 @@ export default {
           ? { ...client, routes: { ...client.routes, ...platformViews } }
           : client
         moduleClients.value[slug] = merged
+        return merged
       }
       return client
     }
