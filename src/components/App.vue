@@ -360,11 +360,12 @@ export default {
       const client = await loadModuleClient(slug)
       if (client) {
         // Merge platform view extensions into the module's routes
+        // Wrap in a new object because ES module exports are read-only
         const platformViews = platformViewExtensions[slug]
-        if (platformViews) {
-          client.routes = { ...client.routes, ...platformViews }
-        }
-        moduleClients.value[slug] = client
+        const merged = platformViews
+          ? { ...client, routes: { ...client.routes, ...platformViews } }
+          : client
+        moduleClients.value[slug] = merged
       }
       return client
     }
