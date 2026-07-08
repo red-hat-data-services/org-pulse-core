@@ -26,6 +26,6 @@ configMapGenerator:
 
 images:
 - name: quay.io/org-pulse/org-pulse-core-backend
-  newTag: 6279e18d4467a2805f1be3bf228947a47aec739b
+  newTag: b14ce496c886df671d5e404d58257f440e3f410d
 - name: quay.io/org-pulse/org-pulse-core-frontend
-  newTag: 6279e18d4467a2805f1be3bf228947a47aec739b
+  newTag: b14ce496c886df671d5e404d58257f440e3f410d
