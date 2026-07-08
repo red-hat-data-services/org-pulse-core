@@ -3,7 +3,8 @@ import { ref, computed, onMounted, inject } from 'vue'
 import { apiRequest } from '@shared/client/services/api.js'
 import { useFieldDefinitions } from '@shared/client/composables/useFieldDefinitions'
 import { useFieldFilters } from '../composables/useFieldFilters'
-import FieldFilterPanel from '../components/FieldFilterPanel.vue'
+import MultiSelectDropdown from '../components/MultiSelectDropdown.vue'
+import ColumnHeaderFilter, { NOT_SET } from '../components/ColumnHeaderFilter.vue'
 
 const nav = inject('moduleNav')
 
@@ -15,6 +16,9 @@ const loading = ref(true)
 const search = ref('')
 const selectedOrgs = ref([])
 const selectedGeos = ref([])
+const selectedTitles = ref([])
+const selectedLocations = ref([])
+const selectedTeams = ref([])
 const selectedOrgType = ref('all')
 const sortField = ref('name')
 const sortAsc = ref(true)
@@ -31,10 +35,8 @@ const activePeople = computed(() => people.value.filter(p => p.status === 'activ
 const {
   activeFilters: fieldActiveFilters,
   setFilter: setFieldFilter,
-  clearFilter: clearFieldFilter,
   clearAll: clearAllFieldFilters,
-  filtered: fieldFiltered,
-  filterCounts: fieldFilterCounts
+  filtered: fieldFiltered
 } = useFieldFilters(
   activePeople,
   personFieldDefs,
@@ -61,27 +63,65 @@ async function loadData() {
   }
 }
 
-function orgName(uid) {
-  return orgDisplayNames.value[uid] || uid
-}
-
-const orgs = computed(() => {
+// Distinct values for column filters
+const orgOptions = computed(() => {
   const set = new Set()
-  for (const p of people.value) {
-    if (p.orgRoot) set.add(p.orgRoot)
+  for (const p of activePeople.value) {
+    if (p.orgDisplayName) set.add(p.orgDisplayName)
   }
-  return Array.from(set)
-    .map(uid => ({ uid, name: orgName(uid) }))
-    .sort((a, b) => a.name.localeCompare(b.name))
+  return Array.from(set).sort()
 })
 
-const geos = computed(() => {
+const geoOptions = computed(() => {
   const set = new Set()
-  for (const p of people.value) {
+  for (const p of activePeople.value) {
     if (p.geo) set.add(p.geo)
   }
   return Array.from(set).sort()
 })
+
+const titleOptions = computed(() => {
+  const set = new Set()
+  for (const p of activePeople.value) {
+    if (p.title) set.add(p.title)
+  }
+  return Array.from(set).sort()
+})
+
+const locationOptions = computed(() => {
+  const set = new Set()
+  for (const p of activePeople.value) {
+    if (p.location) set.add(p.location)
+  }
+  return Array.from(set).sort()
+})
+
+const teamOptions = computed(() => {
+  const set = new Set()
+  for (const p of activePeople.value) {
+    for (const t of (p.teams || [])) set.add(t)
+    for (const t of (p.associatedTeamNames || [])) set.add(t)
+  }
+  return Array.from(set).sort()
+})
+
+const hasAnyColumnFilter = computed(() =>
+  selectedOrgs.value.length > 0 ||
+  selectedGeos.value.length > 0 ||
+  selectedTitles.value.length > 0 ||
+  selectedLocations.value.length > 0 ||
+  selectedTeams.value.length > 0 ||
+  Object.values(fieldActiveFilters.value).some(v => v && v.length > 0)
+)
+
+function clearAllColumnFilters() {
+  selectedOrgs.value = []
+  selectedGeos.value = []
+  selectedTitles.value = []
+  selectedLocations.value = []
+  selectedTeams.value = []
+  clearAllFieldFilters()
+}
 
 const filteredStats = computed(() => {
   const list = filtered.value
@@ -107,11 +147,32 @@ const filtered = computed(() => {
 
   if (selectedOrgs.value.length > 0) {
     const orgSet = new Set(selectedOrgs.value)
-    list = list.filter(p => orgSet.has(p.orgRoot))
+    const includeNotSet = orgSet.has(NOT_SET)
+    list = list.filter(p => orgSet.has(p.orgDisplayName) || (includeNotSet && !p.orgDisplayName))
   }
   if (selectedGeos.value.length > 0) {
     const geoSet = new Set(selectedGeos.value)
-    list = list.filter(p => geoSet.has(p.geo))
+    const includeNotSet = geoSet.has(NOT_SET)
+    list = list.filter(p => geoSet.has(p.geo) || (includeNotSet && !p.geo))
+  }
+  if (selectedTitles.value.length > 0) {
+    const titleSet = new Set(selectedTitles.value)
+    const includeNotSet = titleSet.has(NOT_SET)
+    list = list.filter(p => titleSet.has(p.title) || (includeNotSet && !p.title))
+  }
+  if (selectedLocations.value.length > 0) {
+    const locSet = new Set(selectedLocations.value)
+    const includeNotSet = locSet.has(NOT_SET)
+    list = list.filter(p => locSet.has(p.location) || (includeNotSet && !p.location))
+  }
+  if (selectedTeams.value.length > 0) {
+    const teamSet = new Set(selectedTeams.value)
+    const includeNotSet = teamSet.has(NOT_SET)
+    list = list.filter(p => {
+      const teams = personTeamList(p)
+      if (teams.length === 0) return includeNotSet
+      return teams.some(t => teamSet.has(t))
+    })
   }
   if (search.value) {
     const term = search.value.toLowerCase()
@@ -154,11 +215,15 @@ function personFieldValue(p, fieldId) {
   return val || ''
 }
 
-function personTeamDisplay(p) {
+function personTeamList(p) {
   if ((p.orgType || 'engineering') === 'auxiliary') {
-    return (p.associatedTeamNames || []).join(', ')
+    return p.associatedTeamNames || []
   }
-  return (p.teams || []).join(', ')
+  return p.teams || []
+}
+
+function personTeamDisplay(p) {
+  return personTeamList(p).join(', ')
 }
 
 function toggleSort(field) {
@@ -236,7 +301,7 @@ onMounted(loadData)
 
     <!-- Search + Filters + Table -->
     <div v-else-if="!loading" class="space-y-4">
-      <div class="flex flex-col sm:flex-row gap-3">
+      <div class="flex flex-col sm:flex-row gap-3 items-center">
         <div class="flex-1 relative">
           <input
             v-model="search"
@@ -245,78 +310,22 @@ onMounted(loadData)
             class="w-full pl-4 pr-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
           />
         </div>
-        <button @click="exportCsv" class="px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex-shrink-0">Export CSV</button>
-      </div>
-
-      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 flex flex-wrap items-start gap-6">
-        <!-- Type filter -->
-        <div>
-          <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 uppercase mb-1">Type</label>
-          <div class="flex gap-1">
-            <button
-              v-for="opt in [{ value: 'all', label: 'All' }, { value: 'engineering', label: 'Engineering' }, { value: 'auxiliary', label: 'Non-Engineering' }]"
-              :key="opt.value"
-              @click="selectedOrgType = opt.value"
-              class="px-2.5 py-1 text-xs rounded-md border transition-colors"
-              :class="selectedOrgType === opt.value
-                ? 'bg-primary-50 dark:bg-primary-900/30 border-primary-300 dark:border-primary-700 text-primary-700 dark:text-primary-300 font-medium'
-                : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'"
-            >{{ opt.label }}</button>
-          </div>
-        </div>
-
-        <!-- Orgs -->
-        <div v-if="orgs.length > 0">
-          <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 uppercase mb-1">Orgs</label>
-          <div class="space-y-1 max-h-48 overflow-y-auto">
-            <label
-              v-for="org in orgs"
-              :key="org.uid"
-              class="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
-            >
-              <input
-                type="checkbox"
-                :value="org.uid"
-                v-model="selectedOrgs"
-                class="rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
-              />
-              <span class="text-sm text-gray-700 dark:text-gray-300">{{ org.name }}</span>
-            </label>
-          </div>
-        </div>
-
-        <!-- Geos -->
-        <div v-if="geos.length > 0">
-          <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 uppercase mb-1">Geo</label>
-          <div class="space-y-1 max-h-48 overflow-y-auto">
-            <label
-              v-for="geo in geos"
-              :key="geo"
-              class="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
-            >
-              <input
-                type="checkbox"
-                :value="geo"
-                v-model="selectedGeos"
-                class="rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
-              />
-              <span class="text-sm text-gray-700 dark:text-gray-300">{{ geo }}</span>
-            </label>
-          </div>
-        </div>
-
-        <!-- Custom field filters -->
-        <FieldFilterPanel
-          v-if="personFieldDefs.length > 0"
-          :field-definitions="personFieldDefs"
-          :active-filters="fieldActiveFilters"
-          :filter-counts="fieldFilterCounts"
-          @update:filter="({ fieldId, values }) => setFieldFilter(fieldId, values)"
-          @clear:filter="clearFieldFilter"
-          @clear:all="clearAllFieldFilters"
+        <MultiSelectDropdown
+          label="Org Membership"
+          :options="[{ value: 'engineering', label: 'Org Member' }, { value: 'auxiliary', label: 'Extended' }]"
+          :model-value="selectedOrgType === 'all' ? [] : [selectedOrgType]"
+          :option-label="o => o.label"
+          :option-value="o => o.value"
+          info="Org Members belong directly to a team in the org hierarchy. Extended members are people outside the org (e.g., PMs, designers, TPMs) who are associated with org teams."
+          @update:model-value="selectedOrgType = $event.length === 1 ? $event[0] : 'all'"
         />
-
-        <span class="text-sm text-gray-500 dark:text-gray-400 self-center ml-auto">{{ filtered.length }} results</span>
+        <button
+          v-if="hasAnyColumnFilter"
+          @click="clearAllColumnFilters"
+          class="px-3 py-2.5 text-xs text-primary-600 dark:text-primary-400 hover:underline flex-shrink-0"
+        >Clear all filters</button>
+        <button @click="exportCsv" class="px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex-shrink-0">Export CSV</button>
+        <span class="text-sm text-gray-500 dark:text-gray-400 flex-shrink-0">{{ filtered.length }} results</span>
       </div>
 
       <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
@@ -324,18 +333,74 @@ onMounted(loadData)
           <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
             <thead class="bg-gray-50 dark:bg-gray-800/50">
               <tr>
-                <th @click="toggleSort('orgDisplayName')" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer hover:text-gray-700 dark:hover:text-gray-200">Org{{ sortIcon('orgDisplayName') }}</th>
-                <th @click="toggleSort('name')" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer hover:text-gray-700 dark:hover:text-gray-200">Name{{ sortIcon('name') }}</th>
-                <th @click="toggleSort('title')" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 hidden md:table-cell">Title{{ sortIcon('title') }}</th>
-                <th @click="toggleSort('geo')" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 hidden lg:table-cell">Geo{{ sortIcon('geo') }}</th>
-                <th @click="toggleSort('location')" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 hidden lg:table-cell">Location{{ sortIcon('location') }}</th>
-                <th @click="toggleSort('teams')" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 hidden md:table-cell">Team(s){{ sortIcon('teams') }}</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
+                  <div class="flex items-center gap-1">
+                    <span class="cursor-pointer hover:text-gray-700 dark:hover:text-gray-200" @click="toggleSort('orgDisplayName')">Org{{ sortIcon('orgDisplayName') }}</span>
+                    <ColumnHeaderFilter
+                      :options="orgOptions"
+                      v-model="selectedOrgs"
+                      show-not-set
+                    />
+                  </div>
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
+                  <span class="cursor-pointer hover:text-gray-700 dark:hover:text-gray-200" @click="toggleSort('name')">Name{{ sortIcon('name') }}</span>
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden md:table-cell">
+                  <div class="flex items-center gap-1">
+                    <span class="cursor-pointer hover:text-gray-700 dark:hover:text-gray-200" @click="toggleSort('title')">Title{{ sortIcon('title') }}</span>
+                    <ColumnHeaderFilter
+                      :options="titleOptions"
+                      v-model="selectedTitles"
+                      show-not-set
+                    />
+                  </div>
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden lg:table-cell">
+                  <div class="flex items-center gap-1">
+                    <span class="cursor-pointer hover:text-gray-700 dark:hover:text-gray-200" @click="toggleSort('geo')">Geo{{ sortIcon('geo') }}</span>
+                    <ColumnHeaderFilter
+                      :options="geoOptions"
+                      v-model="selectedGeos"
+                      show-not-set
+                    />
+                  </div>
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden lg:table-cell">
+                  <div class="flex items-center gap-1">
+                    <span class="cursor-pointer hover:text-gray-700 dark:hover:text-gray-200" @click="toggleSort('location')">Location{{ sortIcon('location') }}</span>
+                    <ColumnHeaderFilter
+                      :options="locationOptions"
+                      v-model="selectedLocations"
+                      show-not-set
+                    />
+                  </div>
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden md:table-cell">
+                  <div class="flex items-center gap-1">
+                    <span class="cursor-pointer hover:text-gray-700 dark:hover:text-gray-200" @click="toggleSort('teams')">Team(s){{ sortIcon('teams') }}</span>
+                    <ColumnHeaderFilter
+                      :options="teamOptions"
+                      v-model="selectedTeams"
+                      show-not-set
+                    />
+                  </div>
+                </th>
                 <th
                   v-for="fd in personFieldDefs"
                   :key="fd.id"
-                  @click="toggleSort('_field_' + fd.id)"
-                  class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 hidden lg:table-cell"
-                >{{ fd.label }}{{ sortIcon('_field_' + fd.id) }}</th>
+                  class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden lg:table-cell"
+                >
+                  <div class="flex items-center gap-1">
+                    <span class="cursor-pointer hover:text-gray-700 dark:hover:text-gray-200" @click="toggleSort('_field_' + fd.id)">{{ fd.label }}{{ sortIcon('_field_' + fd.id) }}</span>
+                    <ColumnHeaderFilter
+                      :options="fd.allowedValues || []"
+                      :model-value="fieldActiveFilters[fd.id] || []"
+                      show-not-set
+                      @update:model-value="setFieldFilter(fd.id, $event)"
+                    />
+                  </div>
+                </th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
@@ -352,7 +417,7 @@ onMounted(loadData)
                     <span
                       v-if="(p.orgType || 'engineering') === 'auxiliary'"
                       class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300"
-                    >Non-Eng</span>
+                    >Extended</span>
                   </div>
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 hidden md:table-cell">{{ p.title }}</td>

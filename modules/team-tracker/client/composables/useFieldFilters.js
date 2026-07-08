@@ -1,4 +1,5 @@
 import { ref, computed } from 'vue'
+import { NOT_SET } from '../components/MultiSelectDropdown.vue'
 
 /**
  * Coerce a field value for display/filtering based on the field definition.
@@ -52,9 +53,13 @@ export function useFieldFilters(items, fieldDefinitions, getFieldValues) {
         const raw = vals[field.id]
         const coerced = coerceForDisplay(raw, field)
         const arr = Array.isArray(coerced) ? coerced : (coerced ? [coerced] : [])
-        for (const v of arr) {
-          if (counts[field.id] && v != null) {
-            counts[field.id][v] = (counts[field.id][v] || 0) + 1
+        if (arr.length === 0) {
+          counts[field.id][NOT_SET] = (counts[field.id][NOT_SET] || 0) + 1
+        } else {
+          for (const v of arr) {
+            if (counts[field.id] && v != null) {
+              counts[field.id][v] = (counts[field.id][v] || 0) + 1
+            }
           }
         }
       }
@@ -78,6 +83,7 @@ export function useFieldFilters(items, fieldDefinitions, getFieldValues) {
         const raw = vals[fieldId]
         const coerced = coerceForDisplay(raw, field)
         const arr = Array.isArray(coerced) ? coerced : (coerced ? [coerced] : [])
+        if (arr.length === 0) return selectedValues.includes(NOT_SET)
         // OR within a field: any selected value matches
         return arr.some(v => selectedValues.includes(v))
       })
