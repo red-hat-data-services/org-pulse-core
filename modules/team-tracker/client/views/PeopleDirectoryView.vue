@@ -3,6 +3,7 @@ import { ref, computed, onMounted, inject } from 'vue'
 import { apiRequest } from '@shared/client/services/api.js'
 import { useFieldDefinitions } from '@shared/client/composables/useFieldDefinitions'
 import { useFieldFilters } from '../composables/useFieldFilters'
+import MultiSelectDropdown, { NOT_SET } from '../components/MultiSelectDropdown.vue'
 import FieldFilterPanel from '../components/FieldFilterPanel.vue'
 
 const nav = inject('moduleNav')
@@ -107,11 +108,13 @@ const filtered = computed(() => {
 
   if (selectedOrgs.value.length > 0) {
     const orgSet = new Set(selectedOrgs.value)
-    list = list.filter(p => orgSet.has(p.orgRoot))
+    const includeNotSet = orgSet.has(NOT_SET)
+    list = list.filter(p => orgSet.has(p.orgRoot) || (includeNotSet && !p.orgRoot))
   }
   if (selectedGeos.value.length > 0) {
     const geoSet = new Set(selectedGeos.value)
-    list = list.filter(p => geoSet.has(p.geo))
+    const includeNotSet = geoSet.has(NOT_SET)
+    list = list.filter(p => geoSet.has(p.geo) || (includeNotSet && !p.geo))
   }
   if (search.value) {
     const term = search.value.toLowerCase()
@@ -248,73 +251,52 @@ onMounted(loadData)
         <button @click="exportCsv" class="px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex-shrink-0">Export CSV</button>
       </div>
 
-      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 flex flex-wrap items-start gap-6">
-        <!-- Type filter -->
-        <div>
-          <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 uppercase mb-1">Type</label>
-          <div class="flex gap-1">
-            <button
-              v-for="opt in [{ value: 'all', label: 'All' }, { value: 'engineering', label: 'Engineering' }, { value: 'auxiliary', label: 'Non-Engineering' }]"
-              :key="opt.value"
-              @click="selectedOrgType = opt.value"
-              class="px-2.5 py-1 text-xs rounded-md border transition-colors"
-              :class="selectedOrgType === opt.value
-                ? 'bg-primary-50 dark:bg-primary-900/30 border-primary-300 dark:border-primary-700 text-primary-700 dark:text-primary-300 font-medium'
-                : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'"
-            >{{ opt.label }}</button>
-          </div>
-        </div>
-
-        <!-- Orgs -->
-        <div v-if="orgs.length > 0">
-          <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 uppercase mb-1">Orgs</label>
-          <div class="space-y-1 max-h-48 overflow-y-auto">
-            <label
-              v-for="org in orgs"
-              :key="org.uid"
-              class="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
-            >
-              <input
-                type="checkbox"
-                :value="org.uid"
-                v-model="selectedOrgs"
-                class="rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
-              />
-              <span class="text-sm text-gray-700 dark:text-gray-300">{{ org.name }}</span>
-            </label>
-          </div>
-        </div>
-
-        <!-- Geos -->
-        <div v-if="geos.length > 0">
-          <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 uppercase mb-1">Geo</label>
-          <div class="space-y-1 max-h-48 overflow-y-auto">
-            <label
-              v-for="geo in geos"
-              :key="geo"
-              class="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
-            >
-              <input
-                type="checkbox"
-                :value="geo"
-                v-model="selectedGeos"
-                class="rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
-              />
-              <span class="text-sm text-gray-700 dark:text-gray-300">{{ geo }}</span>
-            </label>
-          </div>
-        </div>
-
-        <!-- Custom field filters -->
-        <FieldFilterPanel
-          v-if="personFieldDefs.length > 0"
-          :field-definitions="personFieldDefs"
-          :active-filters="fieldActiveFilters"
-          :filter-counts="fieldFilterCounts"
-          @update:filter="({ fieldId, values }) => setFieldFilter(fieldId, values)"
-          @clear:filter="clearFieldFilter"
-          @clear:all="clearAllFieldFilters"
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 flex flex-wrap items-center gap-3">
+        <!-- Org membership filter -->
+        <MultiSelectDropdown
+          label="Org Membership"
+          :options="[{ value: 'engineering', label: 'Org Member' }, { value: 'auxiliary', label: 'Extended' }]"
+          :model-value="selectedOrgType === 'all' ? [] : [selectedOrgType]"
+          :option-label="o => o.label"
+          :option-value="o => o.value"
+          info="Org Members belong directly to a team in the org hierarchy. Extended members are people outside the org (e.g., PMs, designers, TPMs) who are associated with org teams."
+          @update:model-value="selectedOrgType = $event.length === 1 ? $event[0] : 'all'"
         />
+
+        <!-- Org dropdown -->
+        <MultiSelectDropdown
+          v-if="orgs.length > 0"
+          label="Org"
+          :options="orgs"
+          :model-value="selectedOrgs"
+          :option-label="o => o.name"
+          :option-value="o => o.uid"
+          show-not-set
+          @update:model-value="selectedOrgs = $event"
+        />
+
+        <!-- Geo dropdown -->
+        <MultiSelectDropdown
+          v-if="geos.length > 0"
+          label="Geo"
+          :options="geos"
+          :model-value="selectedGeos"
+          show-not-set
+          @update:model-value="selectedGeos = $event"
+        />
+
+        <!-- Custom field filter dropdowns -->
+        <template v-if="personFieldDefs.length > 0">
+          <div class="w-px h-6 bg-gray-200 dark:bg-gray-700" />
+          <FieldFilterPanel
+            :field-definitions="personFieldDefs"
+            :active-filters="fieldActiveFilters"
+            :filter-counts="fieldFilterCounts"
+            @update:filter="({ fieldId, values }) => setFieldFilter(fieldId, values)"
+            @clear:filter="clearFieldFilter"
+            @clear:all="clearAllFieldFilters"
+          />
+        </template>
 
         <span class="text-sm text-gray-500 dark:text-gray-400 self-center ml-auto">{{ filtered.length }} results</span>
       </div>
