@@ -1,9 +1,6 @@
-<script>
-export const NOT_SET = '__not_set__'
-</script>
-
 <script setup>
 import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { NOT_SET } from '../utils/field-helpers.js'
 
 const props = defineProps({
   options: { type: Array, default: () => [] },

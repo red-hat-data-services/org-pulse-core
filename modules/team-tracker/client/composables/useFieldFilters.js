@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue'
-import { NOT_SET } from '../components/MultiSelectDropdown.vue'
+import { NOT_SET } from '../utils/field-helpers.js'
 
 /**
  * Coerce a field value for display/filtering based on the field definition.

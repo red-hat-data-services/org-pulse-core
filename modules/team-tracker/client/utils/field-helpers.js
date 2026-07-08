@@ -3,6 +3,8 @@
  * Used by DataQualityTab and ManagerDashboardView.
  */
 
+export const NOT_SET = '__not_set__'
+
 /**
  * Check if a field value is empty (not set).
  */

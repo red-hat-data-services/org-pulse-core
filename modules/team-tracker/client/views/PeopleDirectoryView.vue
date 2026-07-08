@@ -4,7 +4,8 @@ import { apiRequest } from '@shared/client/services/api.js'
 import { useFieldDefinitions } from '@shared/client/composables/useFieldDefinitions'
 import { useFieldFilters } from '../composables/useFieldFilters'
 import MultiSelectDropdown from '../components/MultiSelectDropdown.vue'
-import ColumnHeaderFilter, { NOT_SET } from '../components/ColumnHeaderFilter.vue'
+import ColumnHeaderFilter from '../components/ColumnHeaderFilter.vue'
+import { NOT_SET } from '../utils/field-helpers.js'
 
 const nav = inject('moduleNav')
 
@@ -123,17 +124,6 @@ function clearAllColumnFilters() {
   clearAllFieldFilters()
 }
 
-const filteredStats = computed(() => {
-  const list = filtered.value
-  const ghCount = list.filter(p => p.github && p.github.username).length
-  const glCount = list.filter(p => p.gitlab && p.gitlab.username).length
-  return {
-    total: list.length,
-    github: ghCount,
-    gitlab: glCount
-  }
-})
-
 const filtered = computed(() => {
   // Start with field-filtered set (from full active list with absolute counts)
   const fieldFilteredUids = new Set(fieldFiltered.value.map(p => p.uid))
@@ -207,6 +197,17 @@ const filtered = computed(() => {
   })
 
   return list
+})
+
+const filteredStats = computed(() => {
+  const list = filtered.value
+  const ghCount = list.filter(p => p.github && p.github.username).length
+  const glCount = list.filter(p => p.gitlab && p.gitlab.username).length
+  return {
+    total: list.length,
+    github: ghCount,
+    gitlab: glCount
+  }
 })
 
 function personFieldValue(p, fieldId) {

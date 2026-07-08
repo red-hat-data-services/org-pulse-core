@@ -1,9 +1,6 @@
-<script>
-export const NOT_SET = '__not_set__'
-</script>
-
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { NOT_SET } from '../utils/field-helpers.js'
 
 const props = defineProps({
   label: { type: String, required: true },
