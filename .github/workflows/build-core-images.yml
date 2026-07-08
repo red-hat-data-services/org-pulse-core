@@ -180,22 +180,15 @@ jobs:
           fi
           docker stop core-backend-smoke
 
-      - name: Login to Quay.io
-        uses: docker/login-action@v4
-        with:
-          registry: quay.io
-          username: ${{ secrets.QUAY_USERNAME }}
-          password: ${{ secrets.QUAY_PASSWORD }}
+      - name: Save image artifact
+        run: docker save ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA} -o /tmp/core-backend.tar
 
-      - name: Push core backend image
-        run: |
-          docker tag ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA} ${{ env.CORE_BACKEND_IMAGE }}:latest
-          docker push ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA}
-          docker push ${{ env.CORE_BACKEND_IMAGE }}:latest
-          if [ -n "${BUILD_VERSION}" ]; then
-            docker tag ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA} ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_VERSION}
-            docker push ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_VERSION}
-          fi
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-backend-image
+          path: /tmp/core-backend.tar
+          retention-days: 1
 
   build-core-frontend:
     name: Build Core Frontend
@@ -221,22 +214,15 @@ jobs:
             -t ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA} \
             .
 
-      - name: Login to Quay.io
-        uses: docker/login-action@v4
-        with:
-          registry: quay.io
-          username: ${{ secrets.QUAY_USERNAME }}
-          password: ${{ secrets.QUAY_PASSWORD }}
+      - name: Save image artifact
+        run: docker save ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA} -o /tmp/core-frontend.tar
 
-      - name: Push core frontend image
-        run: |
-          docker tag ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA} ${{ env.CORE_FRONTEND_IMAGE }}:latest
-          docker push ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA}
-          docker push ${{ env.CORE_FRONTEND_IMAGE }}:latest
-          if [ -n "${BUILD_VERSION}" ]; then
-            docker tag ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA} ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_VERSION}
-            docker push ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_VERSION}
-          fi
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-frontend-image
+          path: /tmp/core-frontend.tar
+          retention-days: 1
 
   build-core-frontend-builder:
     name: Build Core Frontend Builder
@@ -335,10 +321,22 @@ jobs:
         with:
           ref: ${{ needs.version-bump.outputs.build_sha || github.sha }}
 
-      - name: Pull core images
+      - name: Download backend image
+        uses: actions/download-artifact@v4
+        with:
+          name: core-backend-image
+          path: /tmp
+
+      - name: Download frontend image
+        uses: actions/download-artifact@v4
+        with:
+          name: core-frontend-image
+          path: /tmp
+
+      - name: Load images
         run: |
-          docker pull ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA}
-          docker pull ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA}
+          docker load -i /tmp/core-backend.tar
+          docker load -i /tmp/core-frontend.tar
 
       - name: Run smoke tests against core images
         run: |
@@ -346,6 +344,68 @@ jobs:
             CONTAINER_RUNTIME=docker \
             CORE_BACKEND_IMAGE=${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA} \
             CORE_FRONTEND_IMAGE=${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA}
+
+  push-core-images:
+    name: Push Core Images
+    needs: [smoke-test-core, build-core-backend, build-core-frontend, detect-changes, version-bump]
+    if: |
+      always() &&
+      (needs.smoke-test-core.result == 'success' || needs.smoke-test-core.result == 'skipped') &&
+      needs.build-core-backend.result != 'failure' &&
+      needs.build-core-frontend.result != 'failure' &&
+      (needs.build-core-backend.result == 'success' || needs.build-core-frontend.result == 'success')
+    runs-on: ubuntu-latest
+    env:
+      BUILD_SHA: ${{ needs.version-bump.outputs.build_sha || github.sha }}
+      BUILD_VERSION: ${{ needs.version-bump.outputs.version }}
+    steps:
+      - name: Download backend image
+        if: needs.build-core-backend.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: core-backend-image
+          path: /tmp
+
+      - name: Download frontend image
+        if: needs.build-core-frontend.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: core-frontend-image
+          path: /tmp
+
+      - name: Load images
+        run: |
+          if [ -f /tmp/core-backend.tar ]; then docker load -i /tmp/core-backend.tar; fi
+          if [ -f /tmp/core-frontend.tar ]; then docker load -i /tmp/core-frontend.tar; fi
+
+      - name: Login to Quay.io
+        uses: docker/login-action@v4
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Push backend image
+        if: needs.build-core-backend.result == 'success'
+        run: |
+          docker tag ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA} ${{ env.CORE_BACKEND_IMAGE }}:latest
+          docker push ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA}
+          docker push ${{ env.CORE_BACKEND_IMAGE }}:latest
+          if [ -n "${BUILD_VERSION}" ]; then
+            docker tag ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA} ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_VERSION}
+            docker push ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_VERSION}
+          fi
+
+      - name: Push frontend image
+        if: needs.build-core-frontend.result == 'success'
+        run: |
+          docker tag ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA} ${{ env.CORE_FRONTEND_IMAGE }}:latest
+          docker push ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA}
+          docker push ${{ env.CORE_FRONTEND_IMAGE }}:latest
+          if [ -n "${BUILD_VERSION}" ]; then
+            docker tag ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA} ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_VERSION}
+            docker push ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_VERSION}
+          fi
 
   publish-package:
     name: Publish npm Package
@@ -384,13 +444,11 @@ jobs:
 
   update-deploy-image:
     name: Update Deploy Image Tags
-    needs: [detect-changes, build-core-backend, build-core-frontend, version-bump]
+    needs: [detect-changes, push-core-images, build-core-backend, build-core-frontend, version-bump]
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
-      (needs.build-core-backend.result == 'success' || needs.build-core-frontend.result == 'success') &&
-      needs.build-core-backend.result != 'failure' &&
-      needs.build-core-frontend.result != 'failure'
+      needs.push-core-images.result == 'success'
     runs-on: ubuntu-latest
     env:
       BUILD_SHA: ${{ needs.version-bump.outputs.build_sha || github.sha }}
