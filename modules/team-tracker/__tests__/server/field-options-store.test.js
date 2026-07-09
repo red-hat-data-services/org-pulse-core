@@ -299,4 +299,214 @@ describe('field-options-store', () => {
       expect(fieldOptionsStore.getValues(storage, 'component')).toEqual(['A', 'B'])
     })
   })
+
+  describe('external source management', () => {
+    it('listFieldOptions includes source in summary', () => {
+      const storage = makeStorage({
+        'team-data/field-options/component.json': {
+          name: 'component', label: 'Components', values: ['A', 'B'], source: 'jira'
+        },
+        'team-data/field-options/tags.json': {
+          name: 'tags', label: 'Tags', values: ['X']
+        }
+      })
+      const result = fieldOptionsStore.listFieldOptions(storage)
+      expect(result[0]).toEqual({ name: 'component', label: 'Components', count: 2, source: 'jira' })
+      expect(result[1]).toEqual({ name: 'tags', label: 'Tags', count: 1 })
+    })
+
+    it('rejects addValues on externally-managed set', () => {
+      const storage = makeStorage({
+        'team-data/field-options/component.json': {
+          name: 'component', label: 'Components', values: ['A'], source: 'jira'
+        }
+      })
+      expect(() => {
+        fieldOptionsStore.addValues(storage, 'component', ['B'], 'user@test.com')
+      }).toThrow('managed by external source')
+    })
+
+    it('rejects replaceValues on externally-managed set', () => {
+      const storage = makeStorage({
+        'team-data/field-options/component.json': {
+          name: 'component', label: 'Components', values: ['A'], source: 'jira'
+        }
+      })
+      expect(() => {
+        fieldOptionsStore.replaceValues(storage, 'component', ['B'], 'Components', 'user@test.com')
+      }).toThrow('managed by external source')
+    })
+
+    it('rejects removeValues on externally-managed set', () => {
+      const storage = makeStorage({
+        'team-data/field-options/component.json': {
+          name: 'component', label: 'Components', values: ['A'], source: 'jira'
+        }
+      })
+      expect(() => {
+        fieldOptionsStore.removeValues(storage, 'component', ['A'], 'user@test.com')
+      }).toThrow('managed by external source')
+    })
+
+    it('rejects renameValue on externally-managed set', () => {
+      const storage = makeStorage({
+        'team-data/field-options/component.json': {
+          name: 'component', label: 'Components', values: ['A', 'B'], source: 'jira'
+        }
+      })
+      expect(() => {
+        fieldOptionsStore.renameValue(storage, 'component', 'A', 'C', 'user@test.com')
+      }).toThrow('managed by external source')
+    })
+  })
+
+  describe('syncFromExternal', () => {
+    it('writes values with source metadata', () => {
+      const storage = makeStorage({ 'audit-log.json': { entries: [] } })
+      const result = fieldOptionsStore.syncFromExternal(storage, 'component', {
+        source: 'jira',
+        sourceProject: 'RHAI',
+        values: ['Dashboard', 'KServe', 'Notebooks'],
+        label: 'Components',
+        richValues: {
+          Dashboard: { id: '10003', description: 'Web console' },
+          KServe: { id: '10005', description: 'Model serving' },
+          Notebooks: { id: '10008', description: 'Jupyter notebooks' }
+        }
+      })
+
+      expect(result.added).toEqual(['Dashboard', 'KServe', 'Notebooks'])
+      expect(result.removed).toEqual([])
+      expect(result.orphanedValues).toEqual([])
+
+      const saved = storage._data['team-data/field-options/component.json']
+      expect(saved.source).toBe('jira')
+      expect(saved.sourceProject).toBe('RHAI')
+      expect(saved.syncedAt).toBeDefined()
+      expect(saved.updatedBy).toBe('jira-sync')
+      expect(saved.values).toEqual(['Dashboard', 'KServe', 'Notebooks'])
+      expect(saved.richValues.Dashboard.id).toBe('10003')
+    })
+
+    it('detects added and removed values', () => {
+      const storage = makeStorage({
+        'team-data/field-options/component.json': {
+          name: 'component', label: 'Components', values: ['A', 'B', 'C'], source: 'jira'
+        },
+        'team-data/field-definitions.json': { personFields: [], teamFields: [] },
+        'audit-log.json': { entries: [] }
+      })
+      const result = fieldOptionsStore.syncFromExternal(storage, 'component', {
+        source: 'jira',
+        sourceProject: 'RHAI',
+        values: ['B', 'D']
+      })
+
+      expect(result.added).toEqual(['D'])
+      expect(result.removed).toEqual(['A', 'C'])
+    })
+
+    it('detects orphaned values when removed values are still referenced', () => {
+      const storage = makeStorage({
+        'team-data/field-options/component.json': {
+          name: 'component', label: 'Components', values: ['Alpha', 'Beta', 'Gamma'], source: 'jira'
+        },
+        'team-data/field-definitions.json': {
+          personFields: [
+            { id: 'field_comp', type: 'constrained', optionsRef: 'component', deleted: false }
+          ],
+          teamFields: []
+        },
+        'team-data/registry.json': {
+          people: {
+            alice: { uid: 'alice', name: 'Alice', _appFields: { field_comp: 'Beta' } }
+          }
+        },
+        'team-data/teams.json': { teams: {} },
+        'audit-log.json': { entries: [] }
+      })
+
+      // Sync removes Beta from source
+      const result = fieldOptionsStore.syncFromExternal(storage, 'component', {
+        source: 'jira',
+        sourceProject: 'RHAI',
+        values: ['Alpha', 'Gamma', 'Delta']
+      })
+
+      expect(result.removed).toEqual(['Beta'])
+      expect(result.orphanedValues).toEqual(['Beta'])
+
+      const saved = storage._data['team-data/field-options/component.json']
+      expect(saved.orphanedValues).toEqual(['Beta'])
+    })
+
+    it('clears orphanedValues when no orphans remain', () => {
+      const storage = makeStorage({
+        'team-data/field-options/component.json': {
+          name: 'component', label: 'Components', values: ['Alpha', 'Beta'], source: 'jira', orphanedValues: ['OldVal']
+        },
+        'team-data/field-definitions.json': { personFields: [], teamFields: [] },
+        'audit-log.json': { entries: [] }
+      })
+
+      fieldOptionsStore.syncFromExternal(storage, 'component', {
+        source: 'jira',
+        sourceProject: 'RHAI',
+        values: ['Alpha', 'Beta']
+      })
+
+      const saved = storage._data['team-data/field-options/component.json']
+      expect(saved.orphanedValues).toBeUndefined()
+    })
+  })
+
+  describe('findReferencedValues', () => {
+    it('finds values referenced in person records', () => {
+      const storage = makeStorage({
+        'team-data/field-definitions.json': {
+          personFields: [
+            { id: 'field_comp', type: 'constrained', optionsRef: 'component', deleted: false }
+          ],
+          teamFields: []
+        },
+        'team-data/registry.json': {
+          people: {
+            alice: { uid: 'alice', _appFields: { field_comp: ['X', 'Y'] } },
+            bob: { uid: 'bob', _appFields: { field_comp: 'Z' } }
+          }
+        },
+        'team-data/teams.json': { teams: {} }
+      })
+
+      const result = fieldOptionsStore.findReferencedValues(storage, 'component', ['X', 'Z', 'NOTFOUND'])
+      expect(result).toEqual(['X', 'Z'])
+    })
+
+    it('finds values referenced in team records', () => {
+      const storage = makeStorage({
+        'team-data/field-definitions.json': {
+          personFields: [],
+          teamFields: [
+            { id: 'field_tc', type: 'constrained', optionsRef: 'component', deleted: false }
+          ]
+        },
+        'team-data/registry.json': { people: {} },
+        'team-data/teams.json': {
+          teams: {
+            team1: { metadata: { field_tc: 'Alpha' } }
+          }
+        }
+      })
+
+      const result = fieldOptionsStore.findReferencedValues(storage, 'component', ['Alpha', 'Beta'])
+      expect(result).toEqual(['Alpha'])
+    })
+
+    it('returns empty for no matches', () => {
+      const storage = makeStorage({
+        'team-data/field-definitions.json': { personFields: [], teamFields: [] }
+      })
+      expect(fieldOptionsStore.findReferencedValues(storage, 'component', ['X'])).toEqual([])
+    })
+  })
 })

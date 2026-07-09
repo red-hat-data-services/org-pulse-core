@@ -26,7 +26,7 @@ function writeFieldOptions(storage, name, data) {
 }
 
 /**
- * List all field option sets (summary: name, label, value count).
+ * List all field option sets (summary: name, label, value count, source).
  */
 function listFieldOptions(storage) {
   const files = storage.listStorageFiles(FIELD_OPTIONS_DIR);
@@ -34,7 +34,10 @@ function listFieldOptions(storage) {
     .filter(f => f.endsWith('.json'))
     .map(f => {
       const data = storage.readFromStorage(`${FIELD_OPTIONS_DIR}/${f}`);
-      return data ? { name: data.name, label: data.label, count: (data.values || []).length } : null;
+      if (!data) return null;
+      const summary = { name: data.name, label: data.label, count: (data.values || []).length };
+      if (data.source) summary.source = data.source;
+      return summary;
     })
     .filter(Boolean);
 }
@@ -50,9 +53,13 @@ function getValues(storage, name) {
 
 /**
  * Add values to a field option set. Creates the option set if it does not exist.
+ * Rejects writes to externally-managed option sets.
  */
 function addValues(storage, name, values, actorEmail) {
   let options = readFieldOptions(storage, name);
+  if (options && options.source) {
+    throw new Error(`Option set "${name}" is managed by external source "${options.source}" and cannot be manually modified`);
+  }
   if (!options) {
     options = { name, label: name.charAt(0).toUpperCase() + name.slice(1), values: [] };
   }
@@ -88,8 +95,13 @@ function addValues(storage, name, values, actorEmail) {
 
 /**
  * Replace all values in a field option set.
+ * Rejects writes to externally-managed option sets (source !== undefined).
  */
 function replaceValues(storage, name, values, label, actorEmail) {
+  const existing = readFieldOptions(storage, name);
+  if (existing && existing.source) {
+    throw new Error(`Option set "${name}" is managed by external source "${existing.source}" and cannot be manually replaced`);
+  }
   const deduped = [...new Set(values.map(v => v.trim()).filter(Boolean))].sort();
   const options = {
     name,
@@ -112,11 +124,145 @@ function replaceValues(storage, name, values, label, actorEmail) {
 }
 
 /**
+ * Sync an option set from an external source (e.g. Jira).
+ * Replaces values and writes rich metadata. Detects orphaned values
+ * that are still referenced by person/team records but no longer in the source.
+ *
+ * @param {object} storage
+ * @param {string} name - The option set name (e.g. "components")
+ * @param {object} opts
+ * @param {string} opts.source - External source identifier (e.g. "jira")
+ * @param {string} opts.sourceProject - Source project key (e.g. "RHAI")
+ * @param {string[]} opts.values - The new canonical values from the source
+ * @param {string} [opts.label] - Display label
+ * @param {object} [opts.richValues] - Keyed by value name, contains enriched data
+ * @returns {{ orphanedValues: string[], added: string[], removed: string[] }}
+ */
+function syncFromExternal(storage, name, opts) {
+  const { source, sourceProject, values, label, richValues } = opts;
+  const deduped = [...new Set(values.map(v => v.trim()).filter(Boolean))].sort();
+
+  const existing = readFieldOptions(storage, name);
+  const previousValues = existing ? (existing.values || []) : [];
+
+  const newSet = new Set(deduped);
+  const oldSet = new Set(previousValues);
+  const added = deduped.filter(v => !oldSet.has(v));
+  const removed = previousValues.filter(v => !newSet.has(v));
+
+  // Detect orphaned values — removed from source but still referenced by records
+  const orphanedValues = removed.length > 0
+    ? findReferencedValues(storage, name, removed)
+    : [];
+
+  const now = new Date().toISOString();
+  const options = {
+    name,
+    label: label || (existing && existing.label) || name.charAt(0).toUpperCase() + name.slice(1),
+    values: deduped,
+    source,
+    sourceProject: sourceProject || null,
+    syncedAt: now,
+    updatedAt: now,
+    updatedBy: source + '-sync'
+  };
+  if (richValues) {
+    options.richValues = richValues;
+  }
+  if (orphanedValues.length > 0) {
+    options.orphanedValues = orphanedValues;
+  } else {
+    // Clear any previously tracked orphans
+    delete options.orphanedValues;
+  }
+
+  writeFieldOptions(storage, name, options);
+
+  if (added.length > 0 || removed.length > 0) {
+    appendAuditEntry(storage, {
+      action: 'field-options.external-sync',
+      actor: source + '-sync',
+      entityType: 'field-options',
+      entityId: name,
+      detail: `Synced from ${source} (project: ${sourceProject || 'unknown'}): ${deduped.length} values (${added.length} added, ${removed.length} removed, ${orphanedValues.length} orphaned)`
+    });
+  }
+
+  return { orphanedValues, added, removed };
+}
+
+/**
+ * Find values from a candidate list that are still referenced by person/team records
+ * via fields that use this option set.
+ *
+ * @param {object} storage
+ * @param {string} optionSetName - The option set name
+ * @param {string[]} candidates - Values to check
+ * @returns {string[]} Values from candidates that are still in use
+ */
+function findReferencedValues(storage, optionSetName, candidates) {
+  if (!candidates || candidates.length === 0) return [];
+  const candidateSet = new Set(candidates);
+  const referenced = new Set();
+
+  // Find field definitions that use this option set
+  const fieldDefs = storage.readFromStorage('team-data/field-definitions.json') || { personFields: [], teamFields: [] };
+  const personFieldIds = (fieldDefs.personFields || []).filter(f => !f.deleted && f.optionsRef === optionSetName).map(f => f.id);
+  const teamFieldIds = (fieldDefs.teamFields || []).filter(f => !f.deleted && f.optionsRef === optionSetName).map(f => f.id);
+
+  // Scan person records
+  if (personFieldIds.length > 0) {
+    const registry = storage.readFromStorage('team-data/registry.json');
+    if (registry && registry.people) {
+      for (const person of Object.values(registry.people)) {
+        if (!person._appFields) continue;
+        for (const fieldId of personFieldIds) {
+          const val = person._appFields[fieldId];
+          if (typeof val === 'string' && candidateSet.has(val)) {
+            referenced.add(val);
+          } else if (Array.isArray(val)) {
+            for (const v of val) {
+              if (candidateSet.has(v)) referenced.add(v);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Scan team records
+  if (teamFieldIds.length > 0) {
+    const teamsData = storage.readFromStorage('team-data/teams.json');
+    if (teamsData && teamsData.teams) {
+      for (const team of Object.values(teamsData.teams)) {
+        if (!team.metadata) continue;
+        for (const fieldId of teamFieldIds) {
+          const val = team.metadata[fieldId];
+          if (typeof val === 'string' && candidateSet.has(val)) {
+            referenced.add(val);
+          } else if (Array.isArray(val)) {
+            for (const v of val) {
+              if (candidateSet.has(v)) referenced.add(v);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return [...referenced].sort();
+}
+
+/**
  * Remove values from a field option set.
+ * Rejects writes to externally-managed option sets.
  */
 function removeValues(storage, name, valuesToRemove, actorEmail) {
   const options = readFieldOptions(storage, name);
   if (!options) return null;
+  if (options.source) {
+    throw new Error(`Option set "${name}" is managed by external source "${options.source}" and cannot be manually modified`);
+  }
 
   const removeSet = new Set(valuesToRemove);
   const before = options.values.length;
@@ -154,6 +300,9 @@ function removeValues(storage, name, valuesToRemove, actorEmail) {
 function renameValue(storage, name, oldValue, newValue, actorEmail) {
   const options = readFieldOptions(storage, name);
   if (!options) return null;
+  if (options.source) {
+    throw new Error(`Option set "${name}" is managed by external source "${options.source}" and cannot be manually modified`);
+  }
 
   const idx = options.values.indexOf(oldValue);
   if (idx === -1) {
@@ -255,6 +404,8 @@ module.exports = {
   replaceValues,
   removeValues,
   renameValue,
+  syncFromExternal,
+  findReferencedValues,
   readFieldOptions,
   writeFieldOptions,
   FIELD_OPTIONS_DIR

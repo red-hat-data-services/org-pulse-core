@@ -22,15 +22,23 @@
         <span
           v-for="v in normalizedArray"
           :key="v"
-          class="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300"
-        >{{ v }}</span>
+          class="inline-flex items-center px-1.5 py-0.5 rounded text-xs"
+          :class="isOrphanedValue(v)
+            ? 'bg-yellow-100 dark:bg-yellow-800/40 text-yellow-800 dark:text-yellow-200'
+            : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'"
+          :title="isOrphanedValue(v) ? 'This value is no longer in the allowed options' : ''"
+        >{{ v }}<span v-if="isOrphanedValue(v)" class="ml-0.5 text-yellow-600 dark:text-yellow-400">!</span></span>
         <span v-if="normalizedArray.length === 0" class="text-gray-400 dark:text-gray-500">—</span>
       </div>
     </template>
 
     <!-- Plain text (free-text, constrained single-value) -->
     <template v-else>
-      <span class="text-gray-900 dark:text-gray-100">{{ displayValue }}</span>
+      <span
+        class="text-gray-900 dark:text-gray-100"
+        :class="{ 'text-yellow-700 dark:text-yellow-300': field.type === 'constrained' && isOrphanedValue(displayValue) }"
+        :title="field.type === 'constrained' && isOrphanedValue(displayValue) ? 'This value is no longer in the allowed options' : ''"
+      >{{ displayValue }}<span v-if="field.type === 'constrained' && displayValue !== '—' && isOrphanedValue(displayValue)" class="ml-0.5 text-yellow-600 dark:text-yellow-400 text-xs">!</span></span>
     </template>
 
     <!-- Pencil icon -->
@@ -82,4 +90,12 @@ const displayValue = computed(() => {
   const val = Array.isArray(raw) ? raw[0] : raw
   return val || '—'
 })
+
+function isOrphanedValue(val) {
+  if (!val || val === '—') return false
+  if (props.field.type !== 'constrained') return false
+  const allowed = props.field.allowedValues
+  if (!allowed || allowed.length === 0) return false
+  return !allowed.includes(val)
+}
 </script>
