@@ -2189,32 +2189,32 @@ module.exports = function registerRoutes(router, context) {
       }
 
       // Suggest replacements for orphaned values from current values
-      var suggestions = {};
-      var orphanedKeys = Object.keys(orphanedUsage);
-      var valuesArray = data.values || [];
-      for (var oi = 0; oi < orphanedKeys.length; oi++) {
-        var old = orphanedKeys[oi];
-        var oldLower = old.toLowerCase();
-        var oldWords = oldLower.split(/[\s\-_/]+/).filter(Boolean);
-        var best = null;
-        var bestScore = 0;
-        for (var ci = 0; ci < valuesArray.length; ci++) {
-          var candidate = valuesArray[ci];
-          var candLower = candidate.toLowerCase();
+      const suggestions = {};
+      const orphanedKeys = Object.keys(orphanedUsage);
+      const valuesArray = data.values || [];
+      for (let oi = 0; oi < orphanedKeys.length; oi++) {
+        const old = orphanedKeys[oi];
+        const oldLower = old.toLowerCase();
+        const oldWords = oldLower.split(/[\s\-_/]+/).filter(Boolean);
+        let best = null;
+        let bestScore = 0;
+        for (let ci = 0; ci < valuesArray.length; ci++) {
+          const candidate = valuesArray[ci];
+          const candLower = candidate.toLowerCase();
           if (candLower.includes(oldLower) || oldLower.includes(candLower)) {
             if (100 > bestScore) { bestScore = 100; best = candidate; }
             continue;
           }
-          var candWords = candLower.split(/[\s\-_/]+/).filter(Boolean);
-          var overlap = 0;
-          for (var wi = 0; wi < oldWords.length; wi++) {
+          const candWords = candLower.split(/[\s\-_/]+/).filter(Boolean);
+          let overlap = 0;
+          for (let wi = 0; wi < oldWords.length; wi++) {
             if (oldWords[wi].length < 2) continue;
-            for (var cwi = 0; cwi < candWords.length; cwi++) {
+            for (let cwi = 0; cwi < candWords.length; cwi++) {
               if (candWords[cwi].includes(oldWords[wi]) || oldWords[wi].includes(candWords[cwi])) { overlap++; break; }
             }
           }
           if (oldWords.length > 0 && overlap > 0) {
-            var score = (overlap / oldWords.length) * 50;
+            const score = (overlap / oldWords.length) * 50;
             if (score > bestScore) { bestScore = score; best = candidate; }
           }
         }
@@ -2475,10 +2475,10 @@ module.exports = function registerRoutes(router, context) {
 
     try {
       if (DEMO_MODE) {
-        var demoValues = ['Demo Component A', 'Demo Component B'];
-        var demoCurrent = fieldOptionsStore.getValues(storage, safeName) || [];
-        var demoCurrentSet = new Set(demoCurrent);
-        var demoNewSet = new Set(demoValues);
+        const demoValues = ['Demo Component A', 'Demo Component B'];
+        const demoCurrent = fieldOptionsStore.getValues(storage, safeName) || [];
+        const demoCurrentSet = new Set(demoCurrent);
+        const demoNewSet = new Set(demoValues);
         return res.json({
           optionSet: safeName,
           projectKey,
@@ -2510,7 +2510,7 @@ module.exports = function registerRoutes(router, context) {
       const kept = values.filter(v => currentSet.has(v));
 
       // Find who is assigned to removed values
-      var removedUsage = {};
+      const removedUsage = {};
       if (removed.length > 0) {
         const fieldDefs = readFromStorage('team-data/field-definitions.json') || { personFields: [], teamFields: [] };
         const personFieldIds = (fieldDefs.personFields || []).filter(f => !f.deleted && f.optionsRef === safeName).map(f => f.id);
@@ -2557,13 +2557,13 @@ module.exports = function registerRoutes(router, context) {
       }
 
       // Suggest replacements for removed values from the new value set
-      var removedSuggestions = {};
+      const removedSuggestions = {};
       if (removed.length > 0) {
         for (const old of removed) {
           const oldLower = old.toLowerCase();
           const oldWords = oldLower.split(/[\s\-_/]+/).filter(Boolean);
-          var best = null;
-          var bestScore = 0;
+          let best = null;
+          let bestScore = 0;
           for (const candidate of values) {
             const candLower = candidate.toLowerCase();
             // Exact substring match in either direction scores highest
@@ -2574,7 +2574,7 @@ module.exports = function registerRoutes(router, context) {
             }
             // Word overlap score
             const candWords = candLower.split(/[\s\-_/]+/).filter(Boolean);
-            var overlap = 0;
+            let overlap = 0;
             for (const w of oldWords) {
               if (w.length < 2) continue;
               for (const cw of candWords) {

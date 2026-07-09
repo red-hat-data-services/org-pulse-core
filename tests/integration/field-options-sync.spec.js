@@ -32,11 +32,12 @@ test.describe('Field Options Sync @people-teams', () => {
     expect(response.ok()).toBe(true);
 
     const data = await response.json();
-    expect(Array.isArray(data)).toBe(true);
-    expect(data.length).toBeGreaterThan(0);
+    expect(data.options).toBeDefined();
+    expect(Array.isArray(data.options)).toBe(true);
+    expect(data.options.length).toBeGreaterThan(0);
 
     // The fixture has a "component" option set
-    const component = data.find(s => s.name === 'components' || s.name === 'component');
+    const component = data.options.find(s => s.name === 'components' || s.name === 'component');
     expect(component).toBeDefined();
     expect(component.count).toBeGreaterThan(0);
   });
@@ -139,15 +140,19 @@ test.describe('Field Options Sync @people-teams', () => {
         headers: { 'Content-Type': 'application/json' }
       }
     );
-    // Demo write guard returns 403
-    expect(response.status()).toBe(403);
+    // Demo write guard returns 200 with { demo: true }
+    expect(response.ok()).toBe(true);
+    const data = await response.json();
+    expect(data.demo).toBe(true);
   });
 
   test('unlink endpoint is blocked in demo mode', async ({ page }) => {
     const response = await page.request.post(
       '/api/modules/team-tracker/field-options/component/sync/unlink'
     );
-    expect(response.status()).toBe(403);
+    expect(response.ok()).toBe(true);
+    const data = await response.json();
+    expect(data.demo).toBe(true);
   });
 
   test('migration apply is blocked in demo mode', async ({ page }) => {
@@ -158,7 +163,9 @@ test.describe('Field Options Sync @people-teams', () => {
         headers: { 'Content-Type': 'application/json' }
       }
     );
-    expect(response.status()).toBe(403);
+    expect(response.ok()).toBe(true);
+    const data = await response.json();
+    expect(data.demo).toBe(true);
   });
 });
 

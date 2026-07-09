@@ -20,7 +20,7 @@ const SUPPORTED_ENTITY_TYPES = ['components'];
  * @returns {Promise<Array<{ key: string, name: string }>>}
  */
 async function fetchJiraProjects(jiraRequest, query) {
-  var url = '/rest/api/3/project/search?maxResults=50&orderBy=key';
+  let url = '/rest/api/3/project/search?maxResults=50&orderBy=key';
   if (query) {
     url += '&query=' + encodeURIComponent(query);
   }

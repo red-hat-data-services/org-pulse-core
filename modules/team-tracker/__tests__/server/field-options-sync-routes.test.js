@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 
 /**
  * Tests for field-options sync and migration route handler logic.
@@ -437,9 +437,6 @@ describe('migration preview — orphan detection', () => {
     data['team-data/registry.json'].people.alice._appFields.field_comp = 'OldComponent'
     const storage = makeStorage(data)
 
-    const optionData = fieldOptionsStore.readFieldOptions(storage, 'component')
-    const currentValues = new Set(optionData.values)
-
     // Scan for values in records that aren't in the option set
     const usage = scanOrphanedUsage(storage, 'component', ['OldComponent'])
     expect(usage.OldComponent).toBeDefined()
@@ -470,7 +467,7 @@ describe('migration apply — cascading changes', () => {
 
   it('remaps values in array fields', () => {
     const storage = makeStorage(baseStorageData())
-    const result = applyMigration(storage, 'component', { Notebooks: 'Operator' })
+    applyMigration(storage, 'component', { Notebooks: 'Operator' })
 
     const registry = storage._data['team-data/registry.json']
     // Bob had ['Dashboard', 'Notebooks'] => ['Dashboard', 'Operator']
@@ -481,7 +478,7 @@ describe('migration apply — cascading changes', () => {
 
   it('remaps string values in team records', () => {
     const storage = makeStorage(baseStorageData())
-    const result = applyMigration(storage, 'component', { Operator: 'Dashboard' })
+    applyMigration(storage, 'component', { Operator: 'Dashboard' })
 
     const teams = storage._data['team-data/teams.json']
     expect(teams.teams.team_2.metadata.field_tcomp).toBe('Dashboard')
@@ -489,7 +486,7 @@ describe('migration apply — cascading changes', () => {
 
   it('remaps values in team array fields', () => {
     const storage = makeStorage(baseStorageData())
-    const result = applyMigration(storage, 'component', { Notebooks: 'Operator' })
+    applyMigration(storage, 'component', { Notebooks: 'Operator' })
 
     const teams = storage._data['team-data/teams.json']
     // team_1 had ['Dashboard', 'Notebooks'] => ['Dashboard', 'Operator']
