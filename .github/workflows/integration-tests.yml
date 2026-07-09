@@ -35,6 +35,7 @@ jobs:
             people-teams:
               - 'modules/team-tracker/**'
               - 'tests/integration/people-teams.spec.js'
+              - 'tests/integration/field-options-sync.spec.js'
 
       - name: Detect changes via git diff
         if: github.event_name == 'merge_group'
@@ -60,7 +61,7 @@ jobs:
 
           MODULES="[]"
 
-          if echo "$CHANGED" | grep -qE "^(modules/team-tracker/|tests/integration/people-teams\.spec\.js)"; then
+          if echo "$CHANGED" | grep -qE "^(modules/team-tracker/|tests/integration/(people-teams|field-options-sync)\.spec\.js)"; then
             MODULES=$(echo "$MODULES" | jq -c '. + ["people-teams"]')
           fi
 
