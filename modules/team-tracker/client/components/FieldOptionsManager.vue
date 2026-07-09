@@ -979,8 +979,8 @@ const syncResult = ref(null)
 const syncError = ref(false)
 const showUnlinkConfirm = ref(false)
 
-var linkSearchTimer = null
-var linkSearchSeq = 0
+let linkSearchTimer = null
+let linkSearchSeq = 0
 
 watch(linkProjectQuery, (val) => {
   linkProjectHighlight.value = 0
