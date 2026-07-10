@@ -36,11 +36,11 @@ vi.mock('chart.js', () => ({
 }))
 
 const sampleIssues = [
-  { key: 'RHOAI-1', summary: 'Fix cert rotate', issueType: 'Bug', priority: 'Major', pipelineState: 'autofix-merged', assignee: 'Alice', components: ['AI Core Platform'], created: '2026-05-20', updated: '2026-05-28', labels: [] },
-  { key: 'RHOAI-2', summary: 'Bot too aggressive', issueType: 'Bug', priority: 'Minor', pipelineState: 'autofix-review', assignee: 'Bob', components: ['AI Core Platform'], created: '2026-05-21', updated: '2026-05-29', labels: [] },
-  { key: 'RHOAI-3', summary: 'Other team issue', issueType: 'Bug', priority: 'Major', pipelineState: 'autofix-merged', assignee: null, components: ['Dashboard'], created: '2026-05-22', updated: '2026-05-30', labels: [] },
-  { key: 'RHOAI-4', summary: 'Rejected fix', issueType: 'Story', priority: 'Major', pipelineState: 'autofix-rejected', assignee: 'Carol', components: ['AI Core Platform'], created: '2026-05-23', updated: '2026-05-31', labels: [] },
-  { key: 'RHOAI-5', summary: 'Max retries hit', issueType: 'Bug', priority: 'Critical', pipelineState: 'autofix-max-retries', assignee: 'Dave', components: ['AI Core Platform', 'Security'], created: '2026-05-24', updated: '2026-06-01', labels: [] }
+  { key: 'RHOAI-1', summary: 'Fix cert rotate', issueType: 'Bug', priority: 'Major', pipelineState: 'autofix-merged', assignee: 'Alice', components: ['AI Core Platform'], created: '2026-05-20', updated: '2026-05-28', labels: [], terminalAt: '2026-05-22', effortScore: 1, effortTier: 'Quick Win' },
+  { key: 'RHOAI-2', summary: 'Bot too aggressive', issueType: 'Bug', priority: 'Minor', pipelineState: 'autofix-review', assignee: 'Bob', components: ['AI Core Platform'], created: '2026-05-21', updated: '2026-05-29', labels: [], effortScore: null, effortTier: null },
+  { key: 'RHOAI-3', summary: 'Other team issue', issueType: 'Bug', priority: 'Major', pipelineState: 'autofix-merged', assignee: null, components: ['Dashboard'], created: '2026-05-22', updated: '2026-05-30', labels: [], terminalAt: '2026-05-24', effortScore: 3, effortTier: 'Standard Fix' },
+  { key: 'RHOAI-4', summary: 'Rejected fix', issueType: 'Story', priority: 'Major', pipelineState: 'autofix-rejected', assignee: 'Carol', components: ['AI Core Platform'], created: '2026-05-23', updated: '2026-05-31', labels: [], effortScore: null, effortTier: null },
+  { key: 'RHOAI-5', summary: 'Max retries hit', issueType: 'Bug', priority: 'Critical', pipelineState: 'autofix-max-retries', assignee: 'Dave', components: ['AI Core Platform', 'Security'], created: '2026-05-24', updated: '2026-06-01', labels: [], effortScore: null, effortTier: null }
 ]
 
 const sampleApiResponse = {
@@ -278,5 +278,38 @@ describe('TeamAutofixTab', () => {
     await flushPromises()
 
     expect(wrapper.text()).not.toContain('Failed to load autofix data')
+  })
+
+  // Test 14
+  it('renders priority distribution section', async () => {
+    setupFetchSuccess()
+    const wrapper = mountTab({ teamDetail: { components: ['AI Core Platform'] } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Priority Distribution')
+  })
+
+  // Test 15
+  it('renders effort breakdown when merged issues have effort data', async () => {
+    const dataWithEffort = {
+      ...sampleApiResponse,
+      issues: sampleIssues.map(i => i.key === 'RHOAI-1'
+        ? { ...i, effortScore: 1, effortTier: 'Quick Win', terminalAt: '2026-05-22' }
+        : i
+      )
+    }
+    setupFetchSuccess(dataWithEffort)
+    const wrapper = mountTab({ teamDetail: { components: ['AI Core Platform'] } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Effort Breakdown')
+    expect(wrapper.text()).toContain('Quick Win')
+  })
+
+  // Test 16
+  it('renders time to fix section', async () => {
+    setupFetchSuccess()
+    const wrapper = mountTab({ teamDetail: { components: ['AI Core Platform'] } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Time to Fix')
+    expect(wrapper.text()).toContain('Median Time to Fix')
   })
 })

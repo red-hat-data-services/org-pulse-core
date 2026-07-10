@@ -124,6 +124,21 @@ export function computeTeamMetrics(issues, timeWindow) {
   const terminalTotal = autofixStates.merged + autofixStates.rejected + autofixStates.maxRetries
   const successRate = terminalTotal > 0 ? Math.round((autofixStates.merged / terminalTotal) * 100) : 0
 
+  const priorityBreakdown = computePriorityBreakdown(windowIssues)
+
+  const mergedWindowIssues = windowIssues.filter(i => i.pipelineState === 'autofix-merged')
+  const medianTimeToFixDays = computeMedianTimeToFix(mergedWindowIssues)
+
+  const effortBreakdown = { quickWin: 0, standardFix: 0, complexFix: 0 }
+  let totalImpactScore = 0
+  for (const issue of mergedWindowIssues) {
+    const tier = issue.effortTier
+    if (tier === 'Quick Win') effortBreakdown.quickWin++
+    else if (tier === 'Standard Fix') effortBreakdown.standardFix++
+    else if (tier === 'Complex Fix') effortBreakdown.complexFix++
+    totalImpactScore += (issue.effortScore || 0)
+  }
+
   return {
     triageTotal,
     triageVerdicts,
@@ -131,6 +146,10 @@ export function computeTeamMetrics(issues, timeWindow) {
     autofixTotal: triageVerdicts.ready,
     successRate,
     terminalTotal,
+    priorityBreakdown,
+    medianTimeToFixDays,
+    effortBreakdown,
+    totalImpactScore,
     windowTotal: windowIssues.length,
     totalIssues: issues.length
   }
@@ -173,4 +192,37 @@ export function buildTeamTrendData(issues, timeWindow) {
     })
   }
   return points
+}
+
+export function computePriorityBreakdown(issues) {
+  const breakdown = {}
+  for (const issue of issues) {
+    const p = issue.priority || 'Undefined'
+    breakdown[p] = (breakdown[p] || 0) + 1
+  }
+  return breakdown
+}
+
+export function computeMedianTimeToFix(issues) {
+  const days = []
+  for (const issue of issues) {
+    if (issue.pipelineState !== 'autofix-merged') continue
+    if (!issue.terminalAt || !issue.created) continue
+    const d = (new Date(issue.terminalAt).getTime() - new Date(issue.created).getTime()) / (24 * 60 * 60 * 1000)
+    days.push(d)
+  }
+  if (days.length === 0) return null
+  days.sort((a, b) => a - b)
+  const mid = Math.floor(days.length / 2)
+  if (days.length % 2 === 0) {
+    return Math.round(((days[mid - 1] + days[mid]) / 2) * 10) / 10
+  }
+  return Math.round(days[mid] * 10) / 10
+}
+
+export function effortTierColorClass(tier) {
+  if (tier === 'Quick Win') return 'bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400'
+  if (tier === 'Standard Fix') return 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400'
+  if (tier === 'Complex Fix') return 'bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-400'
+  return ''
 }
