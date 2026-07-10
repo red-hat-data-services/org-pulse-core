@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { computeTeamMetrics, buildTeamTrendData, STATE_OPTIONS, getLastWeekBounds } from '../../../client/components/autofix/autofix-constants.js'
+import { computeTeamMetrics, buildTeamTrendData, STATE_OPTIONS, getLastWeekBounds, computePriorityBreakdown, computeMedianTimeToFix } from '../../../client/components/autofix/autofix-constants.js'
 
 describe('autofix-constants', () => {
   beforeEach(() => {
@@ -32,6 +32,19 @@ describe('autofix-constants', () => {
       expect(result.autofixStates.maxRetries).toBe(1)
       expect(result.terminalTotal).toBe(3) // merged + rejected + maxRetries
       expect(result.successRate).toBe(33) // 1/3 = 33%
+    })
+
+    it('includes priorityBreakdown, effortBreakdown, medianTimeToFixDays, and totalImpactScore', () => {
+      const issues = [
+        { key: 'A-1', created: '2026-05-20', terminalAt: '2026-05-22', pipelineState: 'autofix-merged', issueType: 'Bug', priority: 'Blocker', effortScore: 3, effortTier: 'Standard Fix' },
+        { key: 'A-2', created: '2026-05-21', pipelineState: 'autofix-review', issueType: 'Bug', priority: 'Major' },
+        { key: 'A-3', created: '2026-05-22', terminalAt: '2026-05-23', pipelineState: 'autofix-merged', issueType: 'Bug', priority: 'Major', effortScore: 1, effortTier: 'Quick Win' }
+      ]
+      const result = computeTeamMetrics(issues, 'month')
+      expect(result.priorityBreakdown).toEqual({ Blocker: 1, Major: 2 })
+      expect(result.medianTimeToFixDays).toBeGreaterThan(0)
+      expect(result.effortBreakdown).toEqual({ quickWin: 1, standardFix: 1, complexFix: 0 })
+      expect(result.totalImpactScore).toBe(4)
     })
   })
 
@@ -77,6 +90,45 @@ describe('autofix-constants', () => {
     it('returns 4 weekly buckets for lastWeek', () => {
       const result = buildTeamTrendData([], 'lastWeek')
       expect(result).toHaveLength(4)
+    })
+  })
+
+  describe('computePriorityBreakdown', () => {
+    it('counts issues by priority', () => {
+      const issues = [
+        { priority: 'Blocker' },
+        { priority: 'Major' },
+        { priority: 'Major' },
+        { priority: 'Undefined' }
+      ]
+      expect(computePriorityBreakdown(issues)).toEqual({ Blocker: 1, Major: 2, Undefined: 1 })
+    })
+
+    it('returns empty object for empty array', () => {
+      expect(computePriorityBreakdown([])).toEqual({})
+    })
+  })
+
+  describe('computeMedianTimeToFix', () => {
+    it('returns median for merged issues with terminalAt', () => {
+      const issues = [
+        { pipelineState: 'autofix-merged', created: '2026-06-01T00:00:00Z', terminalAt: '2026-06-02T00:00:00Z' },
+        { pipelineState: 'autofix-merged', created: '2026-06-01T00:00:00Z', terminalAt: '2026-06-04T00:00:00Z' },
+        { pipelineState: 'autofix-merged', created: '2026-06-01T00:00:00Z', terminalAt: '2026-06-11T00:00:00Z' }
+      ]
+      expect(computeMedianTimeToFix(issues)).toBe(3)
+    })
+
+    it('returns null when no merged issues', () => {
+      expect(computeMedianTimeToFix([{ pipelineState: 'autofix-review' }])).toBeNull()
+    })
+
+    it('skips non-merged issues', () => {
+      const issues = [
+        { pipelineState: 'autofix-rejected', created: '2026-06-01T00:00:00Z', terminalAt: '2026-06-02T00:00:00Z' },
+        { pipelineState: 'autofix-merged', created: '2026-06-01T00:00:00Z', terminalAt: '2026-06-06T00:00:00Z' }
+      ]
+      expect(computeMedianTimeToFix(issues)).toBe(5)
     })
   })
 

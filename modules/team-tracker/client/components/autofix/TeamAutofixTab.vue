@@ -95,6 +95,95 @@
         </div>
       </div>
 
+      <!-- Impact Metrics -->
+      <div v-if="prioritySegmentTotal > 0 || effortSegmentTotal > 0" class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+        <!-- Priority Distribution -->
+        <div v-if="prioritySegmentTotal > 0" class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+              Priority Distribution
+              <span class="relative group">
+                <svg class="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div class="absolute left-0 top-6 z-20 hidden group-hover:block w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-3 text-xs text-gray-700 dark:text-gray-300">
+                  Distribution of Jira priorities across all issues in the selected time window.
+                </div>
+              </span>
+            </h4>
+            <span class="text-xs text-gray-400 dark:text-gray-500">{{ prioritySegmentTotal }} issues</span>
+          </div>
+          <div class="flex h-4 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-700 mb-3">
+            <div v-for="seg in prioritySegments" :key="seg.label" :class="seg.color" :style="{ width: (seg.count / prioritySegmentTotal * 100) + '%' }" :title="`${seg.label}: ${seg.count}`" class="transition-all" />
+          </div>
+          <div class="space-y-1.5">
+            <div v-for="seg in prioritySegments" :key="seg.label" class="flex items-center justify-between text-xs">
+              <div class="flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-sm shrink-0" :class="seg.color" />
+                <span class="text-gray-600 dark:text-gray-300">{{ seg.label }}</span>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <span class="font-semibold" :class="seg.textClass">{{ seg.count }}</span>
+                <span class="text-gray-400 w-8 text-right">{{ Math.round(seg.count / prioritySegmentTotal * 100) }}%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Effort Breakdown -->
+        <div v-if="effortSegmentTotal > 0" class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+              Effort Breakdown
+              <span class="relative group">
+                <svg class="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div class="absolute left-0 top-6 z-20 hidden group-hover:block w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-3 text-xs text-gray-700 dark:text-gray-300">
+                  Effort score measures fix complexity based on observable pipeline signals. Scoring: Base (1 pt), CI failures (+1), Extra review rounds (+1 each), Was blocked (+2), Time-to-fix over 7 days (+1), Blocker/Critical priority (+2). Tiers: Quick Win (1-2 pts), Standard Fix (3-4 pts), Complex Fix (5+ pts).
+                </div>
+              </span>
+            </h4>
+            <span class="text-xs text-gray-400 dark:text-gray-500">{{ effortSegmentTotal }} issues</span>
+          </div>
+          <div class="flex h-4 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-700 mb-3">
+            <div v-for="seg in effortSegments" :key="seg.label" :class="seg.color" :style="{ width: (seg.count / effortSegmentTotal * 100) + '%' }" :title="`${seg.label}: ${seg.count}`" class="transition-all" />
+          </div>
+          <div class="space-y-1.5">
+            <div v-for="seg in effortSegments" :key="seg.label" class="flex items-center justify-between text-xs">
+              <div class="flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-sm shrink-0" :class="seg.color" />
+                <span class="text-gray-600 dark:text-gray-300">{{ seg.label }}</span>
+              </div>
+              <span class="font-semibold" :class="seg.textClass">{{ seg.count }}</span>
+            </div>
+          </div>
+          <div class="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 flex items-center justify-between text-xs">
+            <span class="text-gray-500 dark:text-gray-400">Total Impact Score</span>
+            <span class="text-sm font-bold text-gray-900 dark:text-gray-100">{{ metrics.totalImpactScore }}</span>
+          </div>
+        </div>
+
+        <!-- Time to Fix -->
+        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 flex flex-col items-center justify-center">
+          <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-1.5 mb-3">
+            Time to Fix
+            <span class="relative group">
+              <svg class="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div class="absolute right-0 top-6 z-20 hidden group-hover:block w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-3 text-xs text-gray-700 dark:text-gray-300">
+                Median elapsed time from issue creation to merged fix for successfully resolved issues in the selected time window.
+              </div>
+            </span>
+          </h4>
+          <div class="text-3xl font-bold" :class="metrics.medianTimeToFixDays !== null ? 'text-gray-900 dark:text-gray-100' : 'text-gray-300 dark:text-gray-600'">
+            {{ metrics.medianTimeToFixDays !== null ? metrics.medianTimeToFixDays + ' days' : 'N/A' }}
+          </div>
+          <div class="text-xs text-gray-500 dark:text-gray-400 mt-1 uppercase tracking-wide">Median Time to Fix</div>
+        </div>
+      </div>
+
       <!-- Filters -->
       <div class="flex flex-wrap items-center gap-3 mb-4">
         <div class="flex rounded-md overflow-hidden border border-gray-300 dark:border-gray-600">
@@ -187,6 +276,7 @@
               <th class="pb-2 pr-4 font-medium">Type</th>
               <th class="pb-2 pr-4 font-medium">Priority</th>
               <th class="pb-2 pr-4 font-medium">Pipeline State</th>
+              <th class="pb-2 pr-4 font-medium">Effort</th>
               <th class="pb-2 pr-4 font-medium">Assignee</th>
               <th class="pb-2 font-medium">Updated</th>
             </tr>
@@ -222,6 +312,10 @@
                   :class="getStateColorClass(issue.pipelineState)"
                   class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
                 >{{ getStateLabel(issue.pipelineState) }}</span>
+              </td>
+              <td class="py-2 pr-4">
+                <span v-if="issue.effortTier" :class="getEffortTierClass(issue.effortTier)" class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium">{{ issue.effortTier }}</span>
+                <span v-else class="text-gray-300 dark:text-gray-600">—</span>
               </td>
               <td class="py-2 pr-4 text-gray-600 dark:text-gray-400">{{ issue.assignee || '—' }}</td>
               <td class="py-2 text-gray-500 dark:text-gray-400">{{ formatRelativeDate(issue.updated) }}</td>
@@ -266,6 +360,7 @@ import {
   PIPELINE_BAR_SEGMENTS,
   stateLabel,
   stateColorClass,
+  effortTierColorClass,
   computeTeamMetrics,
   buildTeamTrendData,
   getLastWeekBounds,
@@ -397,6 +492,42 @@ const pipelineSegments = computed(() => {
     .filter(seg => seg.count > 0)
 })
 
+const PRIORITY_COLORS = {
+  Blocker: { bar: 'bg-red-500', text: 'text-red-600 dark:text-red-400' },
+  Critical: { bar: 'bg-orange-500', text: 'text-orange-600 dark:text-orange-400' },
+  Major: { bar: 'bg-yellow-500', text: 'text-yellow-600 dark:text-yellow-400' },
+  Normal: { bar: 'bg-blue-500', text: 'text-blue-600 dark:text-blue-400' },
+  Minor: { bar: 'bg-green-500', text: 'text-green-600 dark:text-green-400' },
+  Trivial: { bar: 'bg-teal-500', text: 'text-teal-600 dark:text-teal-400' },
+  Undefined: { bar: 'bg-gray-400', text: 'text-gray-500 dark:text-gray-400' }
+}
+const PRIORITY_ORDER = ['Blocker', 'Critical', 'Major', 'Normal', 'Minor', 'Trivial', 'Undefined']
+
+const prioritySegments = computed(() => {
+  if (!metrics.value?.priorityBreakdown) return []
+  const pb = metrics.value.priorityBreakdown
+  return PRIORITY_ORDER
+    .filter(p => (pb[p] || 0) > 0)
+    .map(p => ({
+      label: p,
+      count: pb[p] || 0,
+      color: PRIORITY_COLORS[p]?.bar || 'bg-gray-400',
+      textClass: PRIORITY_COLORS[p]?.text || 'text-gray-500'
+    }))
+})
+const prioritySegmentTotal = computed(() => prioritySegments.value.reduce((s, v) => s + v.count, 0))
+
+const effortSegments = computed(() => {
+  if (!metrics.value?.effortBreakdown) return []
+  const eb = metrics.value.effortBreakdown
+  return [
+    { label: 'Quick Win', count: eb.quickWin || 0, color: 'bg-green-500', textClass: 'text-green-600 dark:text-green-400' },
+    { label: 'Standard Fix', count: eb.standardFix || 0, color: 'bg-blue-500', textClass: 'text-blue-600 dark:text-blue-400' },
+    { label: 'Complex Fix', count: eb.complexFix || 0, color: 'bg-purple-500', textClass: 'text-purple-600 dark:text-purple-400' }
+  ].filter(s => s.count > 0)
+})
+const effortSegmentTotal = computed(() => effortSegments.value.reduce((s, v) => s + v.count, 0))
+
 const timeFilteredIssues = computed(() => {
   const isLW = timeWindow.value === 'lastWeek'
   let windowStart, windowEnd
@@ -519,6 +650,7 @@ function handleClickOutside(e) {
 
 function getStateLabel(state) { return stateLabel(state) }
 function getStateColorClass(state) { return stateColorClass(state) }
+function getEffortTierClass(tier) { return effortTierColorClass(tier) }
 
 function formatRelativeDate(iso) {
   if (!iso) return ''
