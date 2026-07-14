@@ -2438,15 +2438,10 @@ module.exports = async function registerRoutes(router, context) {
    * /api/modules/team-tracker/field-options/{name}/sync/preview:
    *   get:
    *     tags: ['TT: Structure']
-   *     summary: Preview linking an option set to a Jira project entity
+   *     summary: Preview linking an option set to a Jira entity
    *     parameters:
    *       - in: path
    *         name: name
-   *         required: true
-   *         schema:
-   *           type: string
-   *       - in: query
-   *         name: projectKey
    *         required: true
    *         schema:
    *           type: string
@@ -2455,6 +2450,21 @@ module.exports = async function registerRoutes(router, context) {
    *         required: true
    *         schema:
    *           type: string
+   *       - in: query
+   *         name: projectKey
+   *         schema:
+   *           type: string
+   *         description: Required for entityType=components
+   *       - in: query
+   *         name: orgId
+   *         schema:
+   *           type: string
+   *         description: Required for entityType=teams
+   *       - in: query
+   *         name: siteId
+   *         schema:
+   *           type: string
+   *         description: Optional for entityType=teams
    *     responses:
    *       200:
    *         description: Preview of values that would be synced
@@ -2466,28 +2476,39 @@ module.exports = async function registerRoutes(router, context) {
   router.get('/field-options/:name/sync/preview', requireAdmin, requireScope('team-tracker:read'), async function(req, res) {
     const safeName = sanitizeOptionsName(req.params.name);
     if (!safeName) return res.status(400).json({ error: 'Invalid option set name' });
-    const { projectKey, entityType } = req.query;
-    if (!projectKey) return res.status(400).json({ error: 'projectKey query parameter is required' });
+    const { entityType, projectKey, orgId, siteId } = req.query;
     if (!entityType) return res.status(400).json({ error: 'entityType query parameter is required' });
     if (!fieldOptionsSync.SUPPORTED_ENTITY_TYPES.includes(entityType)) {
       return res.status(400).json({ error: 'Unsupported entityType. Must be one of: ' + fieldOptionsSync.SUPPORTED_ENTITY_TYPES.join(', ') });
     }
+    if (entityType === 'components' && !projectKey) {
+      return res.status(400).json({ error: 'projectKey query parameter is required for components' });
+    }
+    if (entityType === 'teams' && !orgId) {
+      return res.status(400).json({ error: 'orgId query parameter is required for teams' });
+    }
+
+    var sourceConfig = entityType === 'teams'
+      ? { entityType: entityType, orgId: orgId, siteId: siteId || null }
+      : { entityType: entityType, projectKey: projectKey };
 
     try {
       if (DEMO_MODE) {
-        const demoValues = ['Demo Component A', 'Demo Component B'];
+        var demoValues = entityType === 'teams'
+          ? ['Demo Team Alpha', 'Demo Team Beta']
+          : ['Demo Component A', 'Demo Component B'];
+        var demoRichValues = entityType === 'teams'
+          ? { 'Demo Team Alpha': { id: 'team-1', teamType: 'OPEN' }, 'Demo Team Beta': { id: 'team-2', teamType: 'MEMBER_INVITE' } }
+          : { 'Demo Component A': { id: '1', description: 'A demo component' }, 'Demo Component B': { id: '2', description: 'Another demo component' } };
         const demoCurrent = (await fieldOptionsStore.getValues(storage, safeName)) || [];
         const demoCurrentSet = new Set(demoCurrent);
         const demoNewSet = new Set(demoValues);
         return res.json({
           optionSet: safeName,
-          projectKey,
           entityType,
+          sourceConfig,
           values: demoValues,
-          richValues: {
-            'Demo Component A': { id: '1', description: 'A demo component' },
-            'Demo Component B': { id: '2', description: 'Another demo component' }
-          },
+          richValues: demoRichValues,
           currentValues: demoCurrent,
           diff: {
             added: demoValues.filter(function(v) { return !demoCurrentSet.has(v); }),
@@ -2499,7 +2520,7 @@ module.exports = async function registerRoutes(router, context) {
         });
       }
 
-      const { values, richValues } = await fieldOptionsSync.fetchEntityData(jiraRequest, entityType, projectKey);
+      const { values, richValues } = await fieldOptionsSync.fetchEntityData(jiraRequest, sourceConfig);
       const currentValues = (await fieldOptionsStore.getValues(storage, safeName)) || [];
 
       // Compute diff
@@ -2592,8 +2613,8 @@ module.exports = async function registerRoutes(router, context) {
 
       res.json({
         optionSet: safeName,
-        projectKey,
         entityType,
+        sourceConfig,
         values,
         richValues,
         currentValues,
@@ -2612,7 +2633,7 @@ module.exports = async function registerRoutes(router, context) {
    * /api/modules/team-tracker/field-options/{name}/sync/link:
    *   post:
    *     tags: ['TT: Structure']
-   *     summary: Link an option set to a Jira project entity
+   *     summary: Link an option set to a Jira entity
    *     parameters:
    *       - in: path
    *         name: name
@@ -2626,10 +2647,17 @@ module.exports = async function registerRoutes(router, context) {
    *           schema:
    *             type: object
    *             properties:
-   *               projectKey:
-   *                 type: string
    *               entityType:
    *                 type: string
+   *               projectKey:
+   *                 type: string
+   *                 description: Required for entityType=components
+   *               orgId:
+   *                 type: string
+   *                 description: Required for entityType=teams
+   *               siteId:
+   *                 type: string
+   *                 description: Optional for entityType=teams
    *     responses:
    *       200:
    *         description: Link result with sync summary
@@ -2644,11 +2672,13 @@ module.exports = async function registerRoutes(router, context) {
     const safeName = sanitizeOptionsName(req.params.name);
     if (!safeName) return res.status(400).json({ error: 'Invalid option set name' });
 
-    const { projectKey, entityType } = req.body;
+    const { entityType, projectKey, orgId, siteId } = req.body;
     try {
       const result = await fieldOptionsSync.linkToJira(storage, jiraRequest, safeName, {
-        projectKey,
         entityType,
+        projectKey,
+        orgId,
+        siteId,
         label: req.body.label
       });
       res.json(result);
