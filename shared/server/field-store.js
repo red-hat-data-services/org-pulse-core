@@ -4,14 +4,8 @@
  */
 
 const crypto = require('crypto');
-const { Mutex } = require('async-mutex');
 const { appendAuditEntry } = require('./audit-log');
-
-const storageMutexes = new Map();
-function getStorageMutex(key) {
-  if (!storageMutexes.has(key)) storageMutexes.set(key, new Mutex());
-  return storageMutexes.get(key);
-}
+const { getStorageMutex } = require('./storage-mutex');
 
 const FIELD_DEFS_KEY = 'team-data/field-definitions.json';
 const REGISTRY_KEY = 'team-data/registry.json';

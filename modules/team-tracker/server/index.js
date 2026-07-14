@@ -2071,7 +2071,7 @@ module.exports = async function registerRoutes(router, context) {
       if (!fieldId || typeof fieldId !== 'string') {
         return res.status(400).json({ error: 'fieldId query parameter is required' });
       }
-      const result = fieldOptionsMigration.previewMigration(storage, fieldId);
+      const result = await fieldOptionsMigration.previewMigration(storage, fieldId);
       if (result.error) return res.status(400).json({ error: result.error });
       res.json(result);
     } catch (err) {
@@ -2101,7 +2101,7 @@ module.exports = async function registerRoutes(router, context) {
       if (typeof optionSetName !== 'string' || !/^[a-z0-9_-]+$/.test(optionSetName)) {
         return res.status(400).json({ error: 'optionSetName must be lowercase alphanumeric with hyphens/underscores' });
       }
-      const result = fieldOptionsMigration.executeMigration(storage, {
+      const result = await fieldOptionsMigration.executeMigration(storage, {
         sourceFieldId, optionSetName, optionSetLabel, createCounterpart, counterpartLabel, seedFromMembers
       }, req.auditActor);
       if (result.error) return res.status(400).json({ error: result.error });
@@ -2680,7 +2680,7 @@ module.exports = async function registerRoutes(router, context) {
     const safeName = sanitizeOptionsName(req.params.name);
     if (!safeName) return res.status(400).json({ error: 'Invalid option set name' });
     try {
-      const result = fieldOptionsSync.unlinkFromJira(storage, safeName);
+      const result = await fieldOptionsSync.unlinkFromJira(storage, safeName);
       res.json(result);
     } catch (err) {
       res.status(400).json({ error: err.message });
@@ -4611,7 +4611,7 @@ module.exports = async function registerRoutes(router, context) {
   }
 
   async function generateSnapshotsForTeam(teamKey) {
-    const team = findTeamFromRoster(teamKey);
+    const team = await findTeamFromRoster(teamKey);
     if (!team) return [];
 
     const periods = [...snapshots.getCompletedPeriods()];
@@ -4653,7 +4653,7 @@ module.exports = async function registerRoutes(router, context) {
   router.get('/snapshots/:teamKey', requireScope('team-tracker:read'), async function(req, res) {
     try {
       const teamKey = decodeURIComponent(req.params.teamKey);
-      const data = getOrGenerateTeamSnapshots(teamKey);
+      const data = await getOrGenerateTeamSnapshots(teamKey);
       res.json({ snapshots: data });
     } catch (error) {
       console.error('Read team snapshots error:', error);
@@ -4688,7 +4688,7 @@ module.exports = async function registerRoutes(router, context) {
     try {
       const teamKey = decodeURIComponent(req.params.teamKey);
       const personName = decodeURIComponent(req.params.personName);
-      const allSnapshots = getOrGenerateTeamSnapshots(teamKey);
+      const allSnapshots = await getOrGenerateTeamSnapshots(teamKey);
       // Filter to person
       const personData = allSnapshots.map(s => ({
         periodStart: s.periodStart,

@@ -4,14 +4,8 @@
  */
 
 const crypto = require('crypto');
-const { Mutex } = require('async-mutex');
 const { appendAuditEntry } = require('./audit-log');
-
-const storageMutexes = new Map();
-function getStorageMutex(key) {
-  if (!storageMutexes.has(key)) storageMutexes.set(key, new Mutex());
-  return storageMutexes.get(key);
-}
+const { getStorageMutex } = require('./storage-mutex');
 
 async function acquireMultiLock(keys) {
   const sorted = [...keys].sort();
@@ -451,9 +445,6 @@ function extractBoardId(url) {
 
 async function updateTeamBoards(storage, teamId, boards, actorEmail) {
   if (!isSafeKey(teamId)) return null;
-  const data = await readTeams(storage);
-  const team = data.teams[teamId];
-  if (!team) return null;
 
   if (boards.length > MAX_BOARDS) {
     throw new Error(`boards array exceeds maximum of ${MAX_BOARDS} entries`);
@@ -474,33 +465,38 @@ async function updateTeamBoards(storage, teamId, boards, actorEmail) {
       url: b.url,
       name: typeof b.name === 'string' ? b.name.slice(0, MAX_NAME_LENGTH) : ''
     };
-    // boardId: use explicit value if provided, otherwise auto-extract from URL
     const explicitId = typeof b.boardId === 'number' ? b.boardId : null;
     entry.boardId = explicitId ?? extractBoardId(b.url);
-    // sprintFilter: optional string for filtering sprints by name
     if (typeof b.sprintFilter === 'string' && b.sprintFilter.trim()) {
       entry.sprintFilter = b.sprintFilter.trim().slice(0, MAX_SPRINT_FILTER_LENGTH);
     }
     return entry;
   });
 
-  const oldBoards = team.boards || [];
-  team.boards = normalized;
-  await writeTeams(storage, data);
+  const mutex = getStorageMutex(TEAMS_KEY);
+  return mutex.runExclusive(async () => {
+    const data = await readTeams(storage);
+    const team = data.teams[teamId];
+    if (!team) return null;
 
-  await appendAuditEntry(storage, {
-    action: 'team.boards.update',
-    actor: actorEmail,
-    entityType: 'team',
-    entityId: teamId,
-    entityLabel: team.name,
-    field: 'boards',
-    oldValue: oldBoards,
-    newValue: normalized,
-    detail: `Updated boards for team "${team.name}" (${normalized.length} boards)`
+    const oldBoards = team.boards || [];
+    team.boards = normalized;
+    await writeTeams(storage, data);
+
+    await appendAuditEntry(storage, {
+      action: 'team.boards.update',
+      actor: actorEmail,
+      entityType: 'team',
+      entityId: teamId,
+      entityLabel: team.name,
+      field: 'boards',
+      oldValue: oldBoards,
+      newValue: normalized,
+      detail: `Updated boards for team "${team.name}" (${normalized.length} boards)`
+    });
+
+    return normalized;
   });
-
-  return normalized;
 }
 
 module.exports = {

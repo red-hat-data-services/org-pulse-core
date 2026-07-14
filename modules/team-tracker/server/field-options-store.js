@@ -331,7 +331,7 @@ async function removeValues(storage, name, valuesToRemove, actorEmail) {
  */
 async function renameValue(storage, name, oldValue, newValue, actorEmail) {
   const release = await acquireMultiLock([
-    `${FIELD_OPTIONS_DIR}/${name}.json`,
+    optionsKey(name),
     'team-data/registry.json',
     'team-data/teams.json'
   ]);
