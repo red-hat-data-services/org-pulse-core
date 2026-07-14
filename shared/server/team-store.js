@@ -4,7 +4,23 @@
  */
 
 const crypto = require('crypto');
+const { Mutex } = require('async-mutex');
 const { appendAuditEntry } = require('./audit-log');
+
+const storageMutexes = new Map();
+function getStorageMutex(key) {
+  if (!storageMutexes.has(key)) storageMutexes.set(key, new Mutex());
+  return storageMutexes.get(key);
+}
+
+async function acquireMultiLock(keys) {
+  const sorted = [...keys].sort();
+  const releases = [];
+  for (const key of sorted) {
+    releases.push(await getStorageMutex(key).acquire());
+  }
+  return () => releases.forEach(r => r());
+}
 
 const TEAMS_KEY = 'team-data/teams.json';
 const REGISTRY_KEY = 'team-data/registry.json';
@@ -23,191 +39,159 @@ function generateTeamId(existingIds) {
   return 'team_' + crypto.randomBytes(6).toString('hex');
 }
 
-function readTeams(storage) {
-  return storage.readFromStorage(TEAMS_KEY) || { teams: {} };
+async function readTeams(storage) {
+  return (await storage.readFromStorage(TEAMS_KEY)) || { teams: {} };
 }
 
-function writeTeams(storage, data) {
-  storage.writeToStorage(TEAMS_KEY, data);
+async function writeTeams(storage, data) {
+  await storage.writeToStorage(TEAMS_KEY, data);
 }
 
 /**
  * Create a new team.
  * @returns {object} The created team
  */
-function createTeam(storage, name, orgKey, actorEmail) {
-  const data = readTeams(storage);
-  const existingIds = new Set(Object.keys(data.teams));
-  const id = generateTeamId(existingIds);
+async function createTeam(storage, name, orgKey, actorEmail) {
+  const mutex = getStorageMutex(TEAMS_KEY);
+  return mutex.runExclusive(async () => {
+    const data = await readTeams(storage);
+    const existingIds = new Set(Object.keys(data.teams));
+    const id = generateTeamId(existingIds);
 
-  const team = {
-    id,
-    name,
-    orgKey,
-    createdAt: new Date().toISOString(),
-    createdBy: actorEmail,
-    metadata: {},
-    boards: []
-  };
+    const team = {
+      id,
+      name,
+      orgKey,
+      createdAt: new Date().toISOString(),
+      createdBy: actorEmail,
+      metadata: {},
+      boards: []
+    };
 
-  if (!isSafeKey(id)) throw new Error('Generated team ID is invalid');
-  data.teams[id] = team;
-  writeTeams(storage, data);
+    if (!isSafeKey(id)) throw new Error('Generated team ID is invalid');
+    data.teams[id] = team;
+    await writeTeams(storage, data);
 
-  appendAuditEntry(storage, {
-    action: 'team.create',
-    actor: actorEmail,
-    entityType: 'team',
-    entityId: id,
-    entityLabel: name,
-    detail: `Created team "${name}" in org ${orgKey}`
+    await appendAuditEntry(storage, {
+      action: 'team.create',
+      actor: actorEmail,
+      entityType: 'team',
+      entityId: id,
+      entityLabel: name,
+      detail: `Created team "${name}" in org ${orgKey}`
+    });
+
+    return team;
   });
-
-  return team;
 }
 
 /**
  * Rename a team.
  * @returns {object} The updated team
  */
-function renameTeam(storage, teamId, newName, actorEmail) {
+async function renameTeam(storage, teamId, newName, actorEmail) {
   if (!isSafeKey(teamId)) return null;
-  const data = readTeams(storage);
-  const team = data.teams[teamId];
-  if (!team) return null;
+  const mutex = getStorageMutex(TEAMS_KEY);
+  return mutex.runExclusive(async () => {
+    const data = await readTeams(storage);
+    const team = data.teams[teamId];
+    if (!team) return null;
 
-  const oldName = team.name;
-  team.name = newName;
-  writeTeams(storage, data);
+    const oldName = team.name;
+    team.name = newName;
+    await writeTeams(storage, data);
 
-  appendAuditEntry(storage, {
-    action: 'team.rename',
-    actor: actorEmail,
-    entityType: 'team',
-    entityId: teamId,
-    entityLabel: newName,
-    field: 'name',
-    oldValue: oldName,
-    newValue: newName,
-    detail: `Renamed team from "${oldName}" to "${newName}"`
+    await appendAuditEntry(storage, {
+      action: 'team.rename',
+      actor: actorEmail,
+      entityType: 'team',
+      entityId: teamId,
+      entityLabel: newName,
+      field: 'name',
+      oldValue: oldName,
+      newValue: newName,
+      detail: `Renamed team from "${oldName}" to "${newName}"`
+    });
+
+    return team;
   });
-
-  return team;
 }
 
 /**
  * Delete a team. Removes teamId from all person records.
  */
-function deleteTeam(storage, teamId, actorEmail) {
+async function deleteTeam(storage, teamId, actorEmail) {
   if (!isSafeKey(teamId)) return null;
-  const data = readTeams(storage);
-  const team = data.teams[teamId];
-  if (!team) return null;
+  const release = await acquireMultiLock([REGISTRY_KEY, TEAMS_KEY]);
+  try {
+    const data = await readTeams(storage);
+    const team = data.teams[teamId];
+    if (!team) return null;
 
-  const teamName = team.name;
-  delete data.teams[teamId];
-  writeTeams(storage, data);
+    const teamName = team.name;
+    delete data.teams[teamId];
+    await writeTeams(storage, data);
 
-  // Remove teamId from all persons
-  const registry = storage.readFromStorage(REGISTRY_KEY);
-  if (registry && registry.people) {
-    let changed = false;
-    for (const person of Object.values(registry.people)) {
-      if (Array.isArray(person.teamIds)) {
-        const idx = person.teamIds.indexOf(teamId);
-        if (idx !== -1) {
-          person.teamIds.splice(idx, 1);
-          changed = true;
+    // Remove teamId from all persons
+    const registry = await storage.readFromStorage(REGISTRY_KEY);
+    if (registry && registry.people) {
+      let changed = false;
+      for (const person of Object.values(registry.people)) {
+        if (Array.isArray(person.teamIds)) {
+          const idx = person.teamIds.indexOf(teamId);
+          if (idx !== -1) {
+            person.teamIds.splice(idx, 1);
+            changed = true;
+          }
         }
       }
+      if (changed) {
+        await storage.writeToStorage(REGISTRY_KEY, registry);
+      }
     }
-    if (changed) {
-      storage.writeToStorage(REGISTRY_KEY, registry);
-    }
+
+    await appendAuditEntry(storage, {
+      action: 'team.delete',
+      actor: actorEmail,
+      entityType: 'team',
+      entityId: teamId,
+      entityLabel: teamName,
+      detail: `Deleted team "${teamName}"`
+    });
+
+    return { id: teamId, name: teamName };
+  } finally {
+    release();
   }
-
-  appendAuditEntry(storage, {
-    action: 'team.delete',
-    actor: actorEmail,
-    entityType: 'team',
-    entityId: teamId,
-    entityLabel: teamName,
-    detail: `Deleted team "${teamName}"`
-  });
-
-  return { id: teamId, name: teamName };
 }
 
 /**
  * Assign a person to a team.
  */
-function assignMember(storage, teamId, uid, actorEmail) {
+async function assignMember(storage, teamId, uid, actorEmail) {
   if (!isSafeKey(teamId)) return { error: 'Invalid team ID' };
   if (!isSafeKey(uid)) return { error: 'Invalid person UID' };
-  const data = readTeams(storage);
+  const data = await readTeams(storage);
   if (!data.teams[teamId]) return { error: 'Team not found' };
 
-  const registry = storage.readFromStorage(REGISTRY_KEY);
-  if (!registry || !registry.people || !registry.people[uid]) {
-    return { error: 'Person not found' };
-  }
+  const mutex = getStorageMutex(REGISTRY_KEY);
+  return mutex.runExclusive(async () => {
+    const registry = await storage.readFromStorage(REGISTRY_KEY);
+    if (!registry || !registry.people || !registry.people[uid]) {
+      return { error: 'Person not found' };
+    }
 
-  const person = registry.people[uid];
-  if (!Array.isArray(person.teamIds)) person.teamIds = [];
-
-  if (person.teamIds.includes(teamId)) {
-    return { skipped: true, reason: 'Already assigned' };
-  }
-
-  person.teamIds.push(teamId);
-  storage.writeToStorage(REGISTRY_KEY, registry);
-
-  appendAuditEntry(storage, {
-    action: 'person.team.assign',
-    actor: actorEmail,
-    entityType: 'person',
-    entityId: uid,
-    entityLabel: person.name,
-    field: 'teamIds',
-    oldValue: person.teamIds.slice(0, -1),
-    newValue: [...person.teamIds],
-    detail: `Assigned to team "${data.teams[teamId].name}"`
-  });
-
-  return { assigned: true };
-}
-
-/**
- * Bulk assign persons to a team. All-or-nothing semantics
- * (permission checking is done by the route handler before calling this).
- * @returns {{ assigned: string[], skipped: string[] }}
- */
-function assignMembersBulk(storage, teamId, uids, actorEmail) {
-  if (!isSafeKey(teamId)) return { error: 'Invalid team ID' };
-  const data = readTeams(storage);
-  if (!data.teams[teamId]) return { error: 'Team not found' };
-
-  const registry = storage.readFromStorage(REGISTRY_KEY);
-  if (!registry || !registry.people) return { error: 'Registry not found' };
-
-  const assigned = [];
-  const skipped = [];
-
-  for (const uid of uids) {
-    if (!isSafeKey(uid)) { skipped.push(uid); continue; }
     const person = registry.people[uid];
-    if (!person) { skipped.push(uid); continue; }
-
     if (!Array.isArray(person.teamIds)) person.teamIds = [];
+
     if (person.teamIds.includes(teamId)) {
-      skipped.push(uid);
-      continue;
+      return { skipped: true, reason: 'Already assigned' };
     }
 
     person.teamIds.push(teamId);
-    assigned.push(uid);
+    await storage.writeToStorage(REGISTRY_KEY, registry);
 
-    appendAuditEntry(storage, {
+    await appendAuditEntry(storage, {
       action: 'person.team.assign',
       actor: actorEmail,
       entityType: 'person',
@@ -216,54 +200,106 @@ function assignMembersBulk(storage, teamId, uids, actorEmail) {
       field: 'teamIds',
       oldValue: person.teamIds.slice(0, -1),
       newValue: [...person.teamIds],
-      detail: `Assigned to team "${data.teams[teamId].name}" (bulk)`
+      detail: `Assigned to team "${data.teams[teamId].name}"`
     });
-  }
 
-  if (assigned.length > 0) {
-    storage.writeToStorage(REGISTRY_KEY, registry);
-  }
+    return { assigned: true };
+  });
+}
 
-  return { assigned, skipped };
+/**
+ * Bulk assign persons to a team. All-or-nothing semantics
+ * (permission checking is done by the route handler before calling this).
+ * @returns {{ assigned: string[], skipped: string[] }}
+ */
+async function assignMembersBulk(storage, teamId, uids, actorEmail) {
+  if (!isSafeKey(teamId)) return { error: 'Invalid team ID' };
+  const data = await readTeams(storage);
+  if (!data.teams[teamId]) return { error: 'Team not found' };
+
+  const mutex = getStorageMutex(REGISTRY_KEY);
+  return mutex.runExclusive(async () => {
+    const registry = await storage.readFromStorage(REGISTRY_KEY);
+    if (!registry || !registry.people) return { error: 'Registry not found' };
+
+    const assigned = [];
+    const skipped = [];
+
+    for (const uid of uids) {
+      if (!isSafeKey(uid)) { skipped.push(uid); continue; }
+      const person = registry.people[uid];
+      if (!person) { skipped.push(uid); continue; }
+
+      if (!Array.isArray(person.teamIds)) person.teamIds = [];
+      if (person.teamIds.includes(teamId)) {
+        skipped.push(uid);
+        continue;
+      }
+
+      person.teamIds.push(teamId);
+      assigned.push(uid);
+
+      await appendAuditEntry(storage, {
+        action: 'person.team.assign',
+        actor: actorEmail,
+        entityType: 'person',
+        entityId: uid,
+        entityLabel: person.name,
+        field: 'teamIds',
+        oldValue: person.teamIds.slice(0, -1),
+        newValue: [...person.teamIds],
+        detail: `Assigned to team "${data.teams[teamId].name}" (bulk)`
+      });
+    }
+
+    if (assigned.length > 0) {
+      await storage.writeToStorage(REGISTRY_KEY, registry);
+    }
+
+    return { assigned, skipped };
+  });
 }
 
 /**
  * Unassign a person from a team.
  */
-function unassignMember(storage, teamId, uid, actorEmail) {
+async function unassignMember(storage, teamId, uid, actorEmail) {
   if (!isSafeKey(teamId)) return { error: 'Invalid team ID' };
   if (!isSafeKey(uid)) return { error: 'Invalid person UID' };
-  const data = readTeams(storage);
+  const data = await readTeams(storage);
   if (!data.teams[teamId]) return { error: 'Team not found' };
 
-  const registry = storage.readFromStorage(REGISTRY_KEY);
-  if (!registry || !registry.people || !registry.people[uid]) {
-    return { error: 'Person not found' };
-  }
+  const mutex = getStorageMutex(REGISTRY_KEY);
+  return mutex.runExclusive(async () => {
+    const registry = await storage.readFromStorage(REGISTRY_KEY);
+    if (!registry || !registry.people || !registry.people[uid]) {
+      return { error: 'Person not found' };
+    }
 
-  const person = registry.people[uid];
-  if (!Array.isArray(person.teamIds)) return { skipped: true, reason: 'Not assigned' };
+    const person = registry.people[uid];
+    if (!Array.isArray(person.teamIds)) return { skipped: true, reason: 'Not assigned' };
 
-  const idx = person.teamIds.indexOf(teamId);
-  if (idx === -1) return { skipped: true, reason: 'Not assigned' };
+    const idx = person.teamIds.indexOf(teamId);
+    if (idx === -1) return { skipped: true, reason: 'Not assigned' };
 
-  const oldTeamIds = [...person.teamIds];
-  person.teamIds.splice(idx, 1);
-  storage.writeToStorage(REGISTRY_KEY, registry);
+    const oldTeamIds = [...person.teamIds];
+    person.teamIds.splice(idx, 1);
+    await storage.writeToStorage(REGISTRY_KEY, registry);
 
-  appendAuditEntry(storage, {
-    action: 'person.team.unassign',
-    actor: actorEmail,
-    entityType: 'person',
-    entityId: uid,
-    entityLabel: person.name,
-    field: 'teamIds',
-    oldValue: oldTeamIds,
-    newValue: [...person.teamIds],
-    detail: `Unassigned from team "${data.teams[teamId].name}"`
+    await appendAuditEntry(storage, {
+      action: 'person.team.unassign',
+      actor: actorEmail,
+      entityType: 'person',
+      entityId: uid,
+      entityLabel: person.name,
+      field: 'teamIds',
+      oldValue: oldTeamIds,
+      newValue: [...person.teamIds],
+      detail: `Unassigned from team "${data.teams[teamId].name}"`
+    });
+
+    return { unassigned: true };
   });
-
-  return { unassigned: true };
 }
 
 /**
@@ -314,62 +350,68 @@ function getUnassigned(storage, scope, actorUid, isAdmin, managerMap, registry) 
  */
 const MAX_DESCRIPTION_LENGTH = 2000;
 
-function updateTeamDescription(storage, teamId, description, actorEmail) {
+async function updateTeamDescription(storage, teamId, description, actorEmail) {
   if (!isSafeKey(teamId)) return null;
-  const data = readTeams(storage);
-  const team = data.teams[teamId];
-  if (!team) return null;
+  const mutex = getStorageMutex(TEAMS_KEY);
+  return mutex.runExclusive(async () => {
+    const data = await readTeams(storage);
+    const team = data.teams[teamId];
+    if (!team) return null;
 
-  const oldDescription = team.description || null;
-  team.description = description || null;
-  writeTeams(storage, data);
+    const oldDescription = team.description || null;
+    team.description = description || null;
+    await writeTeams(storage, data);
 
-  appendAuditEntry(storage, {
-    action: 'team.description.update',
-    actor: actorEmail,
-    entityType: 'team',
-    entityId: teamId,
-    entityLabel: team.name,
-    field: 'description',
-    oldValue: oldDescription,
-    newValue: team.description
+    await appendAuditEntry(storage, {
+      action: 'team.description.update',
+      actor: actorEmail,
+      entityType: 'team',
+      entityId: teamId,
+      entityLabel: team.name,
+      field: 'description',
+      oldValue: oldDescription,
+      newValue: team.description
+    });
+
+    return team;
   });
-
-  return team;
 }
 
 /**
  * Update team-level field values.
  */
-function updateTeamFields(storage, teamId, fields, actorEmail) {
+async function updateTeamFields(storage, teamId, fields, actorEmail) {
   if (!isSafeKey(teamId)) return null;
-  const data = readTeams(storage);
-  const team = data.teams[teamId];
-  if (!team) return null;
+  const mutex = getStorageMutex(TEAMS_KEY);
+  return mutex.runExclusive(async () => {
+    const data = await readTeams(storage);
+    const team = data.teams[teamId];
+    if (!team) return null;
 
-  if (!team.metadata) team.metadata = Object.create(null);
+    if (!team.metadata) team.metadata = Object.create(null);
 
-  for (const [fieldId, value] of Object.entries(fields)) {
-    if (!isSafeKey(fieldId)) {
-      throw new Error(`Invalid field key: ${fieldId}`);
+    for (const [fieldId, value] of Object.entries(fields)) {
+      if (!isSafeKey(fieldId)) {
+        throw new Error(`Invalid field key: ${fieldId}`);
+      }
+      const oldValue = team.metadata[fieldId] || null;
+      team.metadata[fieldId] = value;
+
+      await appendAuditEntry(storage, {
+        action: 'team.field.update',
+        actor: actorEmail,
+        entityType: 'team',
+        entityId: teamId,
+        entityLabel: team.name,
+        field: fieldId,
+        oldValue,
+        newValue: value
+      });
     }
-    const oldValue = team.metadata[fieldId] || null;
-    team.metadata[fieldId] = value;
 
-    appendAuditEntry(storage, {
-      action: 'team.field.update',
-      actor: actorEmail,
-      entityType: 'team',
-      entityId: teamId,
-      entityLabel: team.name,
-      field: fieldId,
-      oldValue,
-      newValue: value
-    });
-  }
-
-  writeTeams(storage, data);
-  return team;
+    await writeTeams(storage, data);
+    return team;
+  });
 }
 
 /**
@@ -407,9 +449,9 @@ function extractBoardId(url) {
   return null;
 }
 
-function updateTeamBoards(storage, teamId, boards, actorEmail) {
+async function updateTeamBoards(storage, teamId, boards, actorEmail) {
   if (!isSafeKey(teamId)) return null;
-  const data = readTeams(storage);
+  const data = await readTeams(storage);
   const team = data.teams[teamId];
   if (!team) return null;
 
@@ -444,9 +486,9 @@ function updateTeamBoards(storage, teamId, boards, actorEmail) {
 
   const oldBoards = team.boards || [];
   team.boards = normalized;
-  writeTeams(storage, data);
+  await writeTeams(storage, data);
 
-  appendAuditEntry(storage, {
+  await appendAuditEntry(storage, {
     action: 'team.boards.update',
     actor: actorEmail,
     entityType: 'team',

@@ -5,9 +5,9 @@ const fieldOptionsSync = require('../../server/field-options-sync')
 function makeStorage(initial = {}) {
   const data = { ...initial }
   return {
-    readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
-    writeToStorage: vi.fn((key, val) => { data[key] = JSON.parse(JSON.stringify(val)) }),
-    listStorageFiles(dir) {
+    async readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
+    writeToStorage: vi.fn(async (key, val) => { data[key] = JSON.parse(JSON.stringify(val)) }),
+    async listStorageFiles(dir) {
       return Object.keys(data)
         .filter(k => k.startsWith(dir + '/') && k.endsWith('.json'))
         .map(k => k.split('/').pop())
@@ -105,7 +105,7 @@ describe('field-options-sync', () => {
   })
 
   describe('unlinkFromJira', () => {
-    it('removes source metadata and preserves values', () => {
+    it('removes source metadata and preserves values', async () => {
       const storage = makeStorage({
         'team-data/field-options/components.json': {
           name: 'components', label: 'Components', values: ['A', 'B'],
@@ -114,7 +114,7 @@ describe('field-options-sync', () => {
         }
       })
 
-      const result = fieldOptionsSync.unlinkFromJira(storage, 'components')
+      const result = await fieldOptionsSync.unlinkFromJira(storage, 'components')
       expect(result.unlinked).toBe(true)
       expect(result.valuesPreserved).toBe(2)
 
@@ -127,16 +127,16 @@ describe('field-options-sync', () => {
       expect(saved.values).toEqual(['A', 'B'])
     })
 
-    it('throws for non-existent option set', () => {
+    it('throws for non-existent option set', async () => {
       const storage = makeStorage({})
-      expect(() => fieldOptionsSync.unlinkFromJira(storage, 'nope')).toThrow('not found')
+      await expect(fieldOptionsSync.unlinkFromJira(storage, 'nope')).rejects.toThrow('not found')
     })
 
-    it('throws for non-linked option set', () => {
+    it('throws for non-linked option set', async () => {
       const storage = makeStorage({
         'team-data/field-options/tags.json': { name: 'tags', label: 'Tags', values: ['X'] }
       })
-      expect(() => fieldOptionsSync.unlinkFromJira(storage, 'tags')).toThrow('not linked')
+      await expect(fieldOptionsSync.unlinkFromJira(storage, 'tags')).rejects.toThrow('not linked')
     })
   })
 

@@ -21,8 +21,8 @@ const REGISTRY_KEY = 'team-data/registry.json';
  * @param {string} sourceFieldId - The field definition ID to extract values from
  * @returns {{ field, scope, uniqueValues, recordCount } | { error }}
  */
-function previewMigration(storage, sourceFieldId) {
-  const fieldDefs = fieldStore.readFieldDefinitions(storage);
+async function previewMigration(storage, sourceFieldId) {
+  const fieldDefs = await fieldStore.readFieldDefinitions(storage);
 
   // Find the source field in either scope
   let scope = null;
@@ -41,7 +41,7 @@ function previewMigration(storage, sourceFieldId) {
   let recordCount = 0;
 
   if (scope === 'person') {
-    const registry = storage.readFromStorage(REGISTRY_KEY);
+    const registry = await storage.readFromStorage(REGISTRY_KEY);
     if (registry?.people) {
       for (const person of Object.values(registry.people)) {
         const val = person._appFields?.[sourceFieldId];
@@ -55,7 +55,7 @@ function previewMigration(storage, sourceFieldId) {
       }
     }
   } else {
-    const teamsData = teamStore.readTeams(storage);
+    const teamsData = await teamStore.readTeams(storage);
     for (const team of Object.values(teamsData.teams || {})) {
       const val = team.metadata?.[sourceFieldId];
       if (val != null) {
@@ -88,17 +88,17 @@ function previewMigration(storage, sourceFieldId) {
  * @param {boolean} [params.seedFromMembers] - Seed counterpart team field from person members
  * @param {string} actorEmail
  */
-function executeMigration(storage, params, actorEmail) {
+async function executeMigration(storage, params, actorEmail) {
   const { sourceFieldId, optionSetName, optionSetLabel, createCounterpart, counterpartLabel, seedFromMembers } = params;
 
   // Validate option set doesn't already exist
-  const existing = fieldOptionsStore.readFieldOptions(storage, optionSetName);
+  const existing = await fieldOptionsStore.readFieldOptions(storage, optionSetName);
   if (existing) {
     return { error: `Field option set "${optionSetName}" already exists` };
   }
 
   // Preview to get values and validate
-  const preview = previewMigration(storage, sourceFieldId);
+  const preview = await previewMigration(storage, sourceFieldId);
   if (preview.error) return preview;
 
   const summary = {
@@ -111,10 +111,10 @@ function executeMigration(storage, params, actorEmail) {
   };
 
   // Step 1: Create the field option set from extracted values
-  fieldOptionsStore.replaceValues(storage, optionSetName, preview.uniqueValues, optionSetLabel, actorEmail);
+  await fieldOptionsStore.replaceValues(storage, optionSetName, preview.uniqueValues, optionSetLabel, actorEmail);
 
   // Step 2: Update the source field to link to the option set
-  fieldStore.updateFieldDefinition(storage, preview.scope, sourceFieldId, {
+  await fieldStore.updateFieldDefinition(storage, preview.scope, sourceFieldId, {
     type: 'constrained',
     multiValue: true,
     optionsRef: optionSetName,
@@ -123,7 +123,7 @@ function executeMigration(storage, params, actorEmail) {
 
   // Step 2b: Convert any string values to arrays in source records
   if (preview.scope === 'person') {
-    const registry = storage.readFromStorage(REGISTRY_KEY);
+    const registry = await storage.readFromStorage(REGISTRY_KEY);
     if (registry?.people) {
       let converted = 0;
       for (const person of Object.values(registry.people)) {
@@ -134,12 +134,12 @@ function executeMigration(storage, params, actorEmail) {
         }
       }
       if (converted > 0) {
-        storage.writeToStorage(REGISTRY_KEY, registry);
+        await storage.writeToStorage(REGISTRY_KEY, registry);
         summary.valuesConverted = converted;
       }
     }
   } else {
-    const teamsData = teamStore.readTeams(storage);
+    const teamsData = await teamStore.readTeams(storage);
     let converted = 0;
     for (const team of Object.values(teamsData.teams || {})) {
       const val = team.metadata?.[sourceFieldId];
@@ -149,7 +149,7 @@ function executeMigration(storage, params, actorEmail) {
       }
     }
     if (converted > 0) {
-      storage.writeToStorage('team-data/teams.json', teamsData);
+      await storage.writeToStorage('team-data/teams.json', teamsData);
       summary.valuesConverted = converted;
     }
   }
@@ -159,7 +159,7 @@ function executeMigration(storage, params, actorEmail) {
     const counterpartScope = preview.scope === 'person' ? 'team' : 'person';
     const label = counterpartLabel || optionSetLabel || preview.field.label;
 
-    const counterpartField = fieldStore.createFieldDefinition(storage, counterpartScope, {
+    const counterpartField = await fieldStore.createFieldDefinition(storage, counterpartScope, {
       label,
       type: 'constrained',
       multiValue: true,
@@ -173,8 +173,8 @@ function executeMigration(storage, params, actorEmail) {
 
     // Step 4: Seed counterpart team field from person members
     if (seedFromMembers && preview.scope === 'person' && counterpartScope === 'team') {
-      const registry = storage.readFromStorage(REGISTRY_KEY);
-      const teamsData = teamStore.readTeams(storage);
+      const registry = await storage.readFromStorage(REGISTRY_KEY);
+      const teamsData = await teamStore.readTeams(storage);
 
       if (registry?.people && teamsData?.teams) {
         for (const [teamId, _team] of Object.entries(teamsData.teams)) {
@@ -193,7 +193,7 @@ function executeMigration(storage, params, actorEmail) {
           }
 
           if (memberComponents.size > 0) {
-            teamStore.updateTeamFields(storage, teamId, {
+            await teamStore.updateTeamFields(storage, teamId, {
               [counterpartField.id]: [...memberComponents].sort()
             }, actorEmail);
             summary.teamsSeeded++;
@@ -203,7 +203,7 @@ function executeMigration(storage, params, actorEmail) {
     }
   }
 
-  appendAuditEntry(storage, {
+  await appendAuditEntry(storage, {
     action: 'migration.field-to-options',
     actor: actorEmail,
     entityType: 'migration',

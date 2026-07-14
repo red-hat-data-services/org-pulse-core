@@ -15,16 +15,16 @@ function createMockStorage(initialData = {}) {
     store[key] = JSON.parse(JSON.stringify(val));
   }
   return {
-    readFromStorage(key) { return store[key] ? JSON.parse(JSON.stringify(store[key])) : null; },
-    writeToStorage(key, data) { store[key] = JSON.parse(JSON.stringify(data)); },
+    async readFromStorage(key) { return store[key] ? JSON.parse(JSON.stringify(store[key])) : null; },
+    async writeToStorage(key, data) { store[key] = JSON.parse(JSON.stringify(data)); },
     _store: store
   };
 }
 
 describe('createFieldDefinition', () => {
-  it('creates a person field definition', () => {
+  it('creates a person field definition', async () => {
     const storage = createMockStorage();
-    const field = createFieldDefinition(storage, 'person', {
+    const field = await createFieldDefinition(storage, 'person', {
       label: 'Focus Area',
       type: 'free-text'
     }, 'admin@example.com');
@@ -35,40 +35,40 @@ describe('createFieldDefinition', () => {
     expect(field.deleted).toBe(false);
     expect(field.order).toBe(0);
 
-    const defs = readFieldDefinitions(storage);
+    const defs = await readFieldDefinitions(storage);
     expect(defs.personFields).toHaveLength(1);
     expect(defs.teamFields).toHaveLength(0);
   });
 
-  it('creates a team field definition', () => {
+  it('creates a team field definition', async () => {
     const storage = createMockStorage();
-    const field = createFieldDefinition(storage, 'team', {
+    const field = await createFieldDefinition(storage, 'team', {
       label: 'Product Manager',
       type: 'person-reference-linked'
     }, 'admin@example.com');
 
     expect(field.label).toBe('Product Manager');
-    const defs = readFieldDefinitions(storage);
+    const defs = await readFieldDefinitions(storage);
     expect(defs.teamFields).toHaveLength(1);
   });
 
-  it('auto-increments order', () => {
+  it('auto-increments order', async () => {
     const storage = createMockStorage();
-    createFieldDefinition(storage, 'person', { label: 'First' }, 'admin@example.com');
-    const second = createFieldDefinition(storage, 'person', { label: 'Second' }, 'admin@example.com');
+    await createFieldDefinition(storage, 'person', { label: 'First' }, 'admin@example.com');
+    const second = await createFieldDefinition(storage, 'person', { label: 'Second' }, 'admin@example.com');
     expect(second.order).toBe(1);
   });
 
-  it('writes audit log entry', () => {
+  it('writes audit log entry', async () => {
     const storage = createMockStorage();
-    createFieldDefinition(storage, 'person', { label: 'Test' }, 'admin@example.com');
-    const log = storage.readFromStorage('audit-log.json');
+    await createFieldDefinition(storage, 'person', { label: 'Test' }, 'admin@example.com');
+    const log = await storage.readFromStorage('audit-log.json');
     expect(log.entries[0].action).toBe('field.create');
   });
 });
 
 describe('updateFieldDefinition', () => {
-  it('updates allowed properties', () => {
+  it('updates allowed properties', async () => {
     const storage = createMockStorage({
       'team-data/field-definitions.json': {
         personFields: [{ id: 'field_abc', label: 'Old', type: 'free-text', visible: true, order: 0, deleted: false }],
@@ -76,7 +76,7 @@ describe('updateFieldDefinition', () => {
       }
     });
 
-    const result = updateFieldDefinition(storage, 'person', 'field_abc', {
+    const result = await updateFieldDefinition(storage, 'person', 'field_abc', {
       label: 'New',
       visible: false
     }, 'admin@example.com');
@@ -85,14 +85,14 @@ describe('updateFieldDefinition', () => {
     expect(result.visible).toBe(false);
   });
 
-  it('returns null for non-existent field', () => {
+  it('returns null for non-existent field', async () => {
     const storage = createMockStorage({
       'team-data/field-definitions.json': { personFields: [], teamFields: [] }
     });
-    expect(updateFieldDefinition(storage, 'person', 'field_xxx', { label: 'New' }, 'admin@example.com')).toBeNull();
+    expect(await updateFieldDefinition(storage, 'person', 'field_xxx', { label: 'New' }, 'admin@example.com')).toBeNull();
   });
 
-  it('ignores unknown properties', () => {
+  it('ignores unknown properties', async () => {
     const storage = createMockStorage({
       'team-data/field-definitions.json': {
         personFields: [{ id: 'field_abc', label: 'Test', type: 'free-text', visible: true, order: 0, deleted: false }],
@@ -100,7 +100,7 @@ describe('updateFieldDefinition', () => {
       }
     });
 
-    const result = updateFieldDefinition(storage, 'person', 'field_abc', {
+    const result = await updateFieldDefinition(storage, 'person', 'field_abc', {
       label: 'Updated',
       hackerField: 'evil'
     }, 'admin@example.com');
@@ -111,7 +111,7 @@ describe('updateFieldDefinition', () => {
 });
 
 describe('softDeleteField', () => {
-  it('marks field as deleted', () => {
+  it('marks field as deleted', async () => {
     const storage = createMockStorage({
       'team-data/field-definitions.json': {
         personFields: [{ id: 'field_abc', label: 'Test', deleted: false }],
@@ -119,13 +119,13 @@ describe('softDeleteField', () => {
       }
     });
 
-    const result = softDeleteField(storage, 'person', 'field_abc', 'admin@example.com');
+    const result = await softDeleteField(storage, 'person', 'field_abc', 'admin@example.com');
     expect(result.deleted).toBe(true);
   });
 });
 
 describe('reorderFields', () => {
-  it('reorders fields by provided ID array', () => {
+  it('reorders fields by provided ID array', async () => {
     const storage = createMockStorage({
       'team-data/field-definitions.json': {
         personFields: [
@@ -137,9 +137,9 @@ describe('reorderFields', () => {
       }
     });
 
-    reorderFields(storage, 'person', ['field_c', 'field_a', 'field_b'], 'admin@example.com');
+    await reorderFields(storage, 'person', ['field_c', 'field_a', 'field_b'], 'admin@example.com');
 
-    const defs = readFieldDefinitions(storage);
+    const defs = await readFieldDefinitions(storage);
     expect(defs.personFields[0].id).toBe('field_c');
     expect(defs.personFields[1].id).toBe('field_a');
     expect(defs.personFields[2].id).toBe('field_b');
@@ -147,36 +147,36 @@ describe('reorderFields', () => {
 });
 
 describe('updatePersonFields', () => {
-  it('updates _appFields on a person', () => {
+  it('updates _appFields on a person', async () => {
     const storage = createMockStorage({
       'team-data/registry.json': {
         people: { bsmith: { uid: 'bsmith', name: 'Bob', status: 'active' } }
       }
     });
 
-    const result = updatePersonFields(storage, 'bsmith', { field_abc: 'backend' }, 'admin@example.com');
+    const result = await updatePersonFields(storage, 'bsmith', { field_abc: 'backend' }, 'admin@example.com');
     expect(result.field_abc).toBe('backend');
 
-    const reg = storage.readFromStorage('team-data/registry.json');
+    const reg = await storage.readFromStorage('team-data/registry.json');
     expect(reg.people.bsmith._appFields.field_abc).toBe('backend');
   });
 
-  it('returns null for non-existent person', () => {
+  it('returns null for non-existent person', async () => {
     const storage = createMockStorage({
       'team-data/registry.json': { people: {} }
     });
-    expect(updatePersonFields(storage, 'nobody', { field_abc: 'val' }, 'admin@example.com')).toBeNull();
+    expect(await updatePersonFields(storage, 'nobody', { field_abc: 'val' }, 'admin@example.com')).toBeNull();
   });
 
-  it('writes audit log entry per field', () => {
+  it('writes audit log entry per field', async () => {
     const storage = createMockStorage({
       'team-data/registry.json': {
         people: { bsmith: { uid: 'bsmith', name: 'Bob', status: 'active' } }
       }
     });
 
-    updatePersonFields(storage, 'bsmith', { f1: 'a', f2: 'b' }, 'admin@example.com');
-    const log = storage.readFromStorage('audit-log.json');
+    await updatePersonFields(storage, 'bsmith', { f1: 'a', f2: 'b' }, 'admin@example.com');
+    const log = await storage.readFromStorage('audit-log.json');
     expect(log.entries.filter(e => e.action === 'person.field.update')).toHaveLength(2);
   });
 });

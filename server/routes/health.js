@@ -198,9 +198,9 @@ function registerPostAuthRoutes(app, context) {
    *                   type: string
    *                   description: Auth email domain for role matching (e.g. cluster.local)
    */
-  app.get('/api/site-config', function(req, res) {
+  app.get('/api/site-config', async function(req, res) {
     try {
-      const config = readFromStorage('site-config.json') || {};
+      const config = (await readFromStorage('site-config.json')) || {};
       res.json({
         titlePrefix: config.titlePrefix || '',
         authEmailDomain: config.authEmailDomain || ''
@@ -235,12 +235,12 @@ function registerPostAuthRoutes(app, context) {
    *       200:
    *         description: Updated site configuration
    */
-  app.post('/api/site-config', requireAdmin, requireScope('admin:manage'), function(req, res) {
+  app.post('/api/site-config', requireAdmin, requireScope('admin:manage'), async function(req, res) {
     try {
       if (DEMO_MODE) {
         return res.json({ status: 'skipped', message: 'Configuration changes disabled in demo mode' });
       }
-      const existing = readFromStorage('site-config.json') || {};
+      const existing = (await readFromStorage('site-config.json')) || {};
       const updates = {};
 
       if (req.body.titlePrefix !== undefined) {
@@ -259,10 +259,10 @@ function registerPostAuthRoutes(app, context) {
       }
 
       const config = { ...existing, ...updates };
-      writeToStorage('site-config.json', config);
+      await writeToStorage('site-config.json', config);
 
       if (updates.authEmailDomain !== undefined && updates.authEmailDomain !== existing.authEmailDomain) {
-        auditLog.appendAuditEntry({ readFromStorage, writeToStorage }, {
+        await auditLog.appendAuditEntry({ readFromStorage, writeToStorage }, {
           action: 'config.authEmailDomain.change',
           actor: req.userEmail || 'unknown',
           entityType: 'config',
@@ -274,7 +274,7 @@ function registerPostAuthRoutes(app, context) {
         });
 
         roleStore.invalidateCache();
-        const count = roleStore.migrateEmailDomains();
+        const count = await roleStore.migrateEmailDomains();
         if (count > 0) {
           console.log(`site-config: authEmailDomain changed, migrated ${count} role(s)`);
         }
@@ -300,7 +300,7 @@ function registerPostAuthRoutes(app, context) {
 
     try {
       const computed = await context.messageRegistry.getMessages(userContext);
-      const stored = readFromStorage('messages.json') || [];
+      const stored = (await readFromStorage('messages.json')) || [];
       const all = [...computed, ...stored];
       res.json({ messages: all });
     } catch (err) {
@@ -309,7 +309,7 @@ function registerPostAuthRoutes(app, context) {
     }
   });
 
-  app.post('/api/admin/messages', requireAdmin, requireScope('admin:manage'), function(req, res) {
+  app.post('/api/admin/messages', requireAdmin, requireScope('admin:manage'), async function(req, res) {
     const { type, text, link } = req.body || {};
 
     if (!text || typeof text !== 'string' || !text.trim()) {
@@ -340,15 +340,15 @@ function registerPostAuthRoutes(app, context) {
       link: link ? { label: link.label.trim(), href: link.href.trim() } : null
     };
 
-    const stored = readFromStorage('messages.json') || [];
+    const stored = (await readFromStorage('messages.json')) || [];
     stored.push(message);
-    writeToStorage('messages.json', stored);
+    await writeToStorage('messages.json', stored);
 
     res.status(201).json(message);
   });
 
-  app.delete('/api/admin/messages/:id', requireAdmin, requireScope('admin:manage'), function(req, res) {
-    const stored = readFromStorage('messages.json') || [];
+  app.delete('/api/admin/messages/:id', requireAdmin, requireScope('admin:manage'), async function(req, res) {
+    const stored = (await readFromStorage('messages.json')) || [];
     const index = stored.findIndex(m => m.id === req.params.id);
 
     if (index === -1) {
@@ -356,7 +356,7 @@ function registerPostAuthRoutes(app, context) {
     }
 
     stored.splice(index, 1);
-    writeToStorage('messages.json', stored);
+    await writeToStorage('messages.json', stored);
 
     res.status(204).end();
   });

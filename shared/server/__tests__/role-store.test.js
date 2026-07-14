@@ -8,8 +8,8 @@ vi.spyOn(console, 'log').mockImplementation(() => {});
 function createMockStorage(initial = {}) {
   const store = { ...initial };
   return {
-    read(key) { return store[key] ? JSON.parse(JSON.stringify(store[key])) : null; },
-    write(key, data) { store[key] = JSON.parse(JSON.stringify(data)); },
+    async read(key) { return store[key] ? JSON.parse(JSON.stringify(store[key])) : null; },
+    async write(key, data) { store[key] = JSON.parse(JSON.stringify(data)); },
     raw: store
   };
 }
@@ -28,8 +28,6 @@ function makeStore(opts = {}) {
   );
   return { roleStore, storage };
 }
-
-// ── normalizeEmail ──
 
 describe('normalizeEmail', () => {
   it('returns null/undefined for falsy email', () => {
@@ -52,43 +50,35 @@ describe('normalizeEmail', () => {
   });
 });
 
-// ── assignRole normalization ──
-
 describe('assignRole normalization', () => {
-  it('normalizes email when authDomain is set', () => {
+  it('normalizes email when authDomain is set', async () => {
     const { roleStore, storage } = makeStore({ authDomain: 'cluster.local' });
-    roleStore.assignRole('user@redhat.com', 'admin', 'test');
-    const data = storage.read('roles.json');
+    await roleStore.assignRole('user@redhat.com', 'admin', 'test');
+    const data = await storage.read('roles.json');
     expect(data.assignments['user@cluster.local']).toBeDefined();
     expect(data.assignments['user@redhat.com']).toBeUndefined();
   });
 
-  it('preserves email when no authDomain', () => {
+  it('preserves email when no authDomain', async () => {
     const { roleStore, storage } = makeStore({ authDomain: null });
-    roleStore.assignRole('user@redhat.com', 'admin', 'test');
-    const data = storage.read('roles.json');
+    await roleStore.assignRole('user@redhat.com', 'admin', 'test');
+    const data = await storage.read('roles.json');
     expect(data.assignments['user@redhat.com']).toBeDefined();
   });
 });
 
-// ── revokeRole normalization ──
-
 describe('revokeRole normalization', () => {
-  it('normalizes email for revocation', () => {
+  it('normalizes email for revocation', async () => {
     const { roleStore } = makeStore({ authDomain: 'cluster.local' });
-    // Assign a second admin so we can revoke the first
-    roleStore.assignRole('user@redhat.com', 'admin', 'test');
-    roleStore.assignRole('other@redhat.com', 'admin', 'test');
-    // Revoke using the original (non-auth) domain
-    const result = roleStore.revokeRole('user@redhat.com', 'admin', 'test');
+    await roleStore.assignRole('user@redhat.com', 'admin', 'test');
+    await roleStore.assignRole('other@redhat.com', 'admin', 'test');
+    const result = await roleStore.revokeRole('user@redhat.com', 'admin', 'test');
     expect(result.email).toBe('user@cluster.local');
   });
 });
 
-// ── getRoles normalization ──
-
 describe('getRoles normalization', () => {
-  it('normalizes email before lookup', () => {
+  it('normalizes email before lookup', async () => {
     const { roleStore } = makeStore({
       authDomain: 'cluster.local',
       rolesData: {
@@ -98,15 +88,13 @@ describe('getRoles normalization', () => {
         }
       }
     });
-    const roles = roleStore.getRoles('user@redhat.com');
+    const roles = await roleStore.getRoles('user@redhat.com');
     expect(roles).toEqual(['admin']);
   });
 });
 
-// ── hasRole normalization ──
-
 describe('hasRole normalization', () => {
-  it('normalizes email via getRoles delegation', () => {
+  it('normalizes email via getRoles delegation', async () => {
     const { roleStore } = makeStore({
       authDomain: 'cluster.local',
       rolesData: {
@@ -116,25 +104,21 @@ describe('hasRole normalization', () => {
         }
       }
     });
-    expect(roleStore.hasRole('user@redhat.com', 'admin')).toBe(true);
+    expect(await roleStore.hasRole('user@redhat.com', 'admin')).toBe(true);
   });
 });
-
-// ── Last-admin guard with normalization ──
 
 describe('last-admin guard', () => {
-  it('works with normalized emails', () => {
+  it('works with normalized emails', async () => {
     const { roleStore } = makeStore({ authDomain: 'cluster.local' });
-    roleStore.assignRole('solo@redhat.com', 'admin', 'test');
-    expect(() => roleStore.revokeRole('solo@redhat.com', 'admin', 'test'))
-      .toThrow('Cannot remove the last admin');
+    await roleStore.assignRole('solo@redhat.com', 'admin', 'test');
+    await expect(roleStore.revokeRole('solo@redhat.com', 'admin', 'test'))
+      .rejects.toThrow('Cannot remove the last admin');
   });
 });
 
-// ── migrateEmailDomains ──
-
 describe('migrateEmailDomains', () => {
-  it('rewrites existing keys to auth domain', () => {
+  it('rewrites existing keys to auth domain', async () => {
     const { roleStore, storage } = makeStore({
       authDomain: 'cluster.local',
       rolesData: {
@@ -144,14 +128,14 @@ describe('migrateEmailDomains', () => {
         }
       }
     });
-    const count = roleStore.migrateEmailDomains();
+    const count = await roleStore.migrateEmailDomains();
     expect(count).toBe(1);
-    const data = storage.read('roles.json');
+    const data = await storage.read('roles.json');
     expect(data.assignments['user@cluster.local']).toBeDefined();
     expect(data.assignments['user@redhat.com']).toBeUndefined();
   });
 
-  it('is idempotent — running twice produces same result', () => {
+  it('is idempotent', async () => {
     const { roleStore, storage } = makeStore({
       authDomain: 'cluster.local',
       rolesData: {
@@ -161,14 +145,14 @@ describe('migrateEmailDomains', () => {
         }
       }
     });
-    roleStore.migrateEmailDomains();
-    const count2 = roleStore.migrateEmailDomains();
+    await roleStore.migrateEmailDomains();
+    const count2 = await roleStore.migrateEmailDomains();
     expect(count2).toBe(0);
-    const data = storage.read('roles.json');
+    const data = await storage.read('roles.json');
     expect(data.assignments['user@cluster.local']).toBeDefined();
   });
 
-  it('no-ops when authDomain is empty', () => {
+  it('no-ops when authDomain is empty', async () => {
     const { roleStore } = makeStore({
       authDomain: null,
       rolesData: {
@@ -178,11 +162,11 @@ describe('migrateEmailDomains', () => {
         }
       }
     });
-    const count = roleStore.migrateEmailDomains();
+    const count = await roleStore.migrateEmailDomains();
     expect(count).toBe(0);
   });
 
-  it('merges roles when both domain variants exist', () => {
+  it('merges roles when both domain variants exist', async () => {
     const { roleStore, storage } = makeStore({
       authDomain: 'cluster.local',
       rolesData: {
@@ -193,16 +177,16 @@ describe('migrateEmailDomains', () => {
         }
       }
     });
-    const count = roleStore.migrateEmailDomains();
+    const count = await roleStore.migrateEmailDomains();
     expect(count).toBe(1);
-    const data = storage.read('roles.json');
+    const data = await storage.read('roles.json');
     expect(data.assignments['user@cluster.local'].roles).toEqual(
       expect.arrayContaining(['admin', 'team-admin'])
     );
     expect(data.assignments['user@redhat.com']).toBeUndefined();
   });
 
-  it('creates backup before rewriting', () => {
+  it('creates backup before rewriting', async () => {
     const { roleStore, storage } = makeStore({
       authDomain: 'cluster.local',
       rolesData: {
@@ -212,46 +196,39 @@ describe('migrateEmailDomains', () => {
         }
       }
     });
-    roleStore.migrateEmailDomains();
+    await roleStore.migrateEmailDomains();
     const backupKeys = Object.keys(storage.raw).filter(k => k.startsWith('roles-backup-'));
     expect(backupKeys.length).toBe(1);
-    const backup = storage.read(backupKeys[0]);
+    const backup = await storage.read(backupKeys[0]);
     expect(backup.assignments['user@redhat.com']).toBeDefined();
   });
 });
 
-// ── migrateFromAllowlist ──
-
 describe('migrateFromAllowlist', () => {
-  it('normalizes emails via assignRole', () => {
+  it('normalizes emails via assignRole', async () => {
     const { roleStore, storage } = makeStore({
       authDomain: 'cluster.local',
       allowlistData: { emails: ['admin@redhat.com'] }
     });
-    roleStore.migrateFromAllowlist();
-    const data = storage.read('roles.json');
+    await roleStore.migrateFromAllowlist();
+    const data = await storage.read('roles.json');
     expect(data.assignments['admin@cluster.local']).toBeDefined();
     expect(data.assignments['admin@cluster.local'].roles).toContain('admin');
     expect(data.assignments['admin@redhat.com']).toBeUndefined();
   });
 });
 
-// ── seedRoles interaction ──
-
 describe('seedRoles interaction', () => {
-  it('assignRole normalizes ADMIN_EMAILS entries', () => {
+  it('assignRole normalizes ADMIN_EMAILS entries', async () => {
     const { roleStore } = makeStore({ authDomain: 'cluster.local' });
-    // Simulates what seedRoles does: calls assignRole for each ADMIN_EMAILS entry
-    roleStore.assignRole('user@redhat.com', 'admin', 'system-seed');
-    const roles = roleStore.getRoles('user@cluster.local');
+    await roleStore.assignRole('user@redhat.com', 'admin', 'system-seed');
+    const roles = await roleStore.getRoles('user@cluster.local');
     expect(roles).toContain('admin');
   });
 });
 
-// ── Cache invalidation ──
-
 describe('invalidateCache', () => {
-  it('causes fresh authDomain lookup after invalidation', () => {
+  it('causes fresh authDomain lookup after invalidation', async () => {
     let currentDomain = 'old.local';
     const storage = createMockStorage({});
     const roleStore = createRoleStore(
@@ -260,16 +237,15 @@ describe('invalidateCache', () => {
       { getAuthDomain: () => currentDomain }
     );
 
-    roleStore.assignRole('user@redhat.com', 'admin', 'test');
-    let data = storage.read('roles.json');
+    await roleStore.assignRole('user@redhat.com', 'admin', 'test');
+    let data = await storage.read('roles.json');
     expect(data.assignments['user@old.local']).toBeDefined();
 
-    // Change domain and invalidate cache
     currentDomain = 'new.local';
     roleStore.invalidateCache();
 
-    roleStore.assignRole('user2@redhat.com', 'admin', 'test');
-    data = storage.read('roles.json');
+    await roleStore.assignRole('user2@redhat.com', 'admin', 'test');
+    data = await storage.read('roles.json');
     expect(data.assignments['user2@new.local']).toBeDefined();
   });
 });

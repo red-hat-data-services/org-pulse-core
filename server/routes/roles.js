@@ -26,9 +26,9 @@ function registerRoleRoutes(app, context) {
    *       500:
    *         $ref: '#/components/responses/ServerError'
    */
-  app.get('/api/allowlist', requireAdmin, requireScope('admin:manage'), function(req, res) {
+  app.get('/api/allowlist', requireAdmin, requireScope('admin:manage'), async function(req, res) {
     try {
-      res.json({ emails: roleStore.getAdminEmails() });
+      res.json({ emails: await roleStore.getAdminEmails() });
     } catch (error) {
       console.error('Read allowlist error:', error);
       res.status(500).json({ error: error.message });
@@ -76,7 +76,7 @@ function registerRoleRoutes(app, context) {
    *       500:
    *         $ref: '#/components/responses/ServerError'
    */
-  app.post('/api/allowlist', requireAdmin, requireScope('admin:manage'), blockDuringImpersonation, function(req, res) {
+  app.post('/api/allowlist', requireAdmin, requireScope('admin:manage'), blockDuringImpersonation, async function(req, res) {
     try {
       const { email } = req.body;
       if (!email || typeof email !== 'string') {
@@ -88,13 +88,13 @@ function registerRoleRoutes(app, context) {
         return res.status(400).json({ error: 'A valid email address is required' });
       }
 
-      if (roleStore.hasRole(normalized, 'admin')) {
+      if (await roleStore.hasRole(normalized, 'admin')) {
         return res.status(409).json({ error: 'Email is already on the allowlist' });
       }
 
-      const result = roleStore.assignRole(normalized, 'admin', req.auditActor || req.userEmail);
+      const result = await roleStore.assignRole(normalized, 'admin', req.auditActor || req.userEmail);
       if (result.demo) return res.json(result);
-      res.json({ emails: roleStore.getAdminEmails() });
+      res.json({ emails: await roleStore.getAdminEmails() });
     } catch (error) {
       console.error('Add to allowlist error:', error);
       res.status(500).json({ error: error.message });
@@ -134,17 +134,17 @@ function registerRoleRoutes(app, context) {
    *       500:
    *         $ref: '#/components/responses/ServerError'
    */
-  app.delete('/api/allowlist/:email', requireAdmin, requireScope('admin:manage'), blockDuringImpersonation, function(req, res) {
+  app.delete('/api/allowlist/:email', requireAdmin, requireScope('admin:manage'), blockDuringImpersonation, async function(req, res) {
     try {
       const email = decodeURIComponent(req.params.email).toLowerCase();
 
-      if (!roleStore.hasRole(email, 'admin')) {
+      if (!(await roleStore.hasRole(email, 'admin'))) {
         return res.status(404).json({ error: 'Email not found on allowlist' });
       }
 
-      const result = roleStore.revokeRole(email, 'admin', req.auditActor || req.userEmail);
+      const result = await roleStore.revokeRole(email, 'admin', req.auditActor || req.userEmail);
       if (result.demo) return res.json(result);
-      res.json({ emails: roleStore.getAdminEmails() });
+      res.json({ emails: await roleStore.getAdminEmails() });
     } catch (error) {
       if (error.message === 'Cannot remove the last admin') {
         return res.status(400).json({ error: 'Cannot remove the last user from the allowlist' });
@@ -154,20 +154,20 @@ function registerRoleRoutes(app, context) {
     }
   });
 
-  app.get('/api/roles/me', function(req, res) {
-    res.json({ roles: roleStore.getRoles(req.userEmail) });
+  app.get('/api/roles/me', async function(req, res) {
+    res.json({ roles: await roleStore.getRoles(req.userEmail) });
   });
 
-  app.get('/api/roles', requireAdmin, requireScope('admin:manage'), function(req, res) {
+  app.get('/api/roles', requireAdmin, requireScope('admin:manage'), async function(req, res) {
     try {
-      res.json({ assignments: roleStore.listAssignments() });
+      res.json({ assignments: await roleStore.listAssignments() });
     } catch (error) {
       console.error('List roles error:', error);
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.post('/api/roles/assign', requireAdmin, requireScope('admin:manage'), blockDuringImpersonation, function(req, res) {
+  app.post('/api/roles/assign', requireAdmin, requireScope('admin:manage'), blockDuringImpersonation, async function(req, res) {
     try {
       const { email, role } = req.body;
       if (!email || typeof email !== 'string') {
@@ -176,7 +176,7 @@ function registerRoleRoutes(app, context) {
       if (!role || typeof role !== 'string') {
         return res.status(400).json({ error: 'role is required' });
       }
-      const result = roleStore.assignRole(email, role, req.auditActor || req.userEmail);
+      const result = await roleStore.assignRole(email, role, req.auditActor || req.userEmail);
       if (result.demo) return res.json(result);
       res.json(result);
     } catch (error) {
@@ -185,7 +185,7 @@ function registerRoleRoutes(app, context) {
     }
   });
 
-  app.post('/api/roles/revoke', requireAdmin, requireScope('admin:manage'), blockDuringImpersonation, function(req, res) {
+  app.post('/api/roles/revoke', requireAdmin, requireScope('admin:manage'), blockDuringImpersonation, async function(req, res) {
     try {
       const { email, role } = req.body;
       if (!email || typeof email !== 'string') {
@@ -194,7 +194,7 @@ function registerRoleRoutes(app, context) {
       if (!role || typeof role !== 'string') {
         return res.status(400).json({ error: 'role is required' });
       }
-      const result = roleStore.revokeRole(email, role, req.auditActor || req.userEmail);
+      const result = await roleStore.revokeRole(email, role, req.auditActor || req.userEmail);
       if (result.demo) return res.json(result);
       res.json(result);
     } catch (error) {

@@ -4,9 +4,11 @@
  */
 
 const crypto = require('crypto');
+const { Mutex } = require('async-mutex');
 
 const AUDIT_LOG_KEY = 'audit-log.json';
 const DEFAULT_MAX_ENTRIES = 10000;
+const auditMutex = new Mutex();
 
 function generateId() {
   return 'evt_' + crypto.randomBytes(4).toString('hex');
@@ -17,33 +19,38 @@ function generateId() {
  * @param {{ readFromStorage: Function, writeToStorage: Function }} storage
  * @param {{ action: string, actor: string, entityType: string, entityId: string, entityLabel?: string, field?: string, oldValue?: *, newValue?: *, detail?: string }} entry
  */
-function appendAuditEntry(storage, entry) {
-  const log = storage.readFromStorage(AUDIT_LOG_KEY) || { entries: [], maxEntries: DEFAULT_MAX_ENTRIES };
-  const maxEntries = log.maxEntries || DEFAULT_MAX_ENTRIES;
+async function appendAuditEntry(storage, entry) {
+  const release = await auditMutex.acquire();
+  try {
+    const log = (await storage.readFromStorage(AUDIT_LOG_KEY)) || { entries: [], maxEntries: DEFAULT_MAX_ENTRIES };
+    const maxEntries = log.maxEntries || DEFAULT_MAX_ENTRIES;
 
-  const fullEntry = {
-    id: generateId(),
-    timestamp: new Date().toISOString(),
-    actor: entry.actor,
-    action: entry.action,
-    entityType: entry.entityType,
-    entityId: entry.entityId,
-    entityLabel: entry.entityLabel || null,
-    field: entry.field || null,
-    oldValue: entry.oldValue !== undefined ? entry.oldValue : null,
-    newValue: entry.newValue !== undefined ? entry.newValue : null,
-    detail: entry.detail || null
-  };
+    const fullEntry = {
+      id: generateId(),
+      timestamp: new Date().toISOString(),
+      actor: entry.actor,
+      action: entry.action,
+      entityType: entry.entityType,
+      entityId: entry.entityId,
+      entityLabel: entry.entityLabel || null,
+      field: entry.field || null,
+      oldValue: entry.oldValue !== undefined ? entry.oldValue : null,
+      newValue: entry.newValue !== undefined ? entry.newValue : null,
+      detail: entry.detail || null
+    };
 
-  log.entries.unshift(fullEntry);
+    log.entries.unshift(fullEntry);
 
-  // Enforce cap
-  if (log.entries.length > maxEntries) {
-    log.entries = log.entries.slice(0, maxEntries);
+    // Enforce cap
+    if (log.entries.length > maxEntries) {
+      log.entries = log.entries.slice(0, maxEntries);
+    }
+
+    await storage.writeToStorage(AUDIT_LOG_KEY, log);
+    return fullEntry;
+  } finally {
+    release();
   }
-
-  storage.writeToStorage(AUDIT_LOG_KEY, log);
-  return fullEntry;
 }
 
 /**
@@ -52,8 +59,8 @@ function appendAuditEntry(storage, entry) {
  * @param {{ from?: string, to?: string, action?: string, actor?: string, entityId?: string, limit?: number, offset?: number }} filters
  * @returns {{ entries: object[], total: number }}
  */
-function queryAuditLog(storage, filters = {}) {
-  const log = storage.readFromStorage(AUDIT_LOG_KEY) || { entries: [] };
+async function queryAuditLog(storage, filters = {}) {
+  const log = (await storage.readFromStorage(AUDIT_LOG_KEY)) || { entries: [] };
   let entries = log.entries;
 
   if (filters.from) {

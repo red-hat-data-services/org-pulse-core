@@ -274,9 +274,9 @@ async function resolveBoardNames(teams, secrets) {
  * Derive teams from people's _teamGrouping (or miroTeam) values.
  * Used as a fallback when no team-boards spreadsheet tab is configured or available.
  */
-function deriveTeamsFromPeople(storage) {
-  const allPeople = getAllPeople(storage);
-  const orgDisplayNames = getOrgDisplayNames(storage);
+async function deriveTeamsFromPeople(storage) {
+  const allPeople = await getAllPeople(storage);
+  const orgDisplayNames = await getOrgDisplayNames(storage);
   const teamSet = new Map();
 
   for (const person of allPeople) {
@@ -308,7 +308,7 @@ async function runSync(storage, sheetId, config, secrets) {
   console.log('[org-roster sync] Starting metadata sync...');
 
   // 0. Determine which orgs are configured
-  const orgDisplayNames = getOrgDisplayNames(storage);
+  const orgDisplayNames = await getOrgDisplayNames(storage);
   const configuredOrgNames = new Set(Object.values(orgDisplayNames));
   if (configuredOrgNames.size === 0) {
     console.warn('[org-roster sync] No org roots configured — sync will include all orgs from sheet');
@@ -348,14 +348,14 @@ async function runSync(storage, sheetId, config, secrets) {
 
   // Fallback: derive teams from people data
   if (rawTeams.length === 0) {
-    rawTeams = deriveTeamsFromPeople(storage);
+    rawTeams = await deriveTeamsFromPeople(storage);
     console.log(`[org-roster sync] Derived ${rawTeams.length} teams from people data`);
   }
 
   // 3. Fetch and parse component mapping, filtered to kept teams
   // Skip component sheet sync when in-app component data exists (field options migrated)
   const fieldStore = require('../../../shared/server/field-store');
-  const fieldDefs = fieldStore.readFieldDefinitions(storage);
+  const fieldDefs = await fieldStore.readFieldDefinitions(storage);
   const hasInAppComponents = (fieldDefs.teamFields || []).some(
     f => !f.deleted && f.optionsRef === 'component'
   );
@@ -393,20 +393,20 @@ async function runSync(storage, sheetId, config, secrets) {
   }
 
   // 5. Write metadata files
-  storage.writeToStorage('org-roster/teams-metadata.json', {
+  await storage.writeToStorage('org-roster/teams-metadata.json', {
     fetchedAt: new Date().toISOString(),
     boardNames,
     teams: rawTeams
   });
 
   if (!hasInAppComponents) {
-    storage.writeToStorage('org-roster/components.json', {
+    await storage.writeToStorage('org-roster/components.json', {
       fetchedAt: new Date().toISOString(),
       components: componentMap
     });
   }
 
-  storage.writeToStorage('org-roster/sync-status.json', {
+  await storage.writeToStorage('org-roster/sync-status.json', {
     lastSyncAt: new Date().toISOString(),
     status: 'success',
     error: null,

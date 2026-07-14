@@ -21,28 +21,28 @@ const DEFAULT_CONFIG = {
   }]
 };
 
-function loadModulesConfig(storage) {
-  const config = storage.readFromStorage(CONFIG_KEY);
+async function loadModulesConfig(storage) {
+  const config = await storage.readFromStorage(CONFIG_KEY);
   if (config) return config;
   return null;
 }
 
-function saveModulesConfig(storage, config) {
-  storage.writeToStorage(CONFIG_KEY, config);
+async function saveModulesConfig(storage, config) {
+  await storage.writeToStorage(CONFIG_KEY, config);
 }
 
-function seedIfMissing(storage) {
-  const existing = loadModulesConfig(storage);
+async function seedIfMissing(storage) {
+  const existing = await loadModulesConfig(storage);
   if (!existing) {
-    saveModulesConfig(storage, DEFAULT_CONFIG);
+    await saveModulesConfig(storage, DEFAULT_CONFIG);
     console.log('Modules config: seeded with People & Teams built-in module');
     return DEFAULT_CONFIG;
   }
   return existing;
 }
 
-function getModule(storage, slug) {
-  const config = loadModulesConfig(storage);
+async function getModule(storage, slug) {
+  const config = await loadModulesConfig(storage);
   if (!config || !config.modules) return null;
   return config.modules.find(m => m.slug === slug) || null;
 }
@@ -95,8 +95,8 @@ function validateModule(mod, existingModules, excludeSlug) {
   return errors;
 }
 
-function addModule(storage, mod) {
-  const config = loadModulesConfig(storage) || { modules: [] };
+async function addModule(storage, mod) {
+  const config = (await loadModulesConfig(storage)) || { modules: [] };
   const errors = validateModule(mod, config.modules);
   if (errors.length > 0) {
     return { error: errors.join('; ') };
@@ -122,12 +122,12 @@ function addModule(storage, mod) {
   }
 
   config.modules.push(newModule);
-  saveModulesConfig(storage, config);
+  await saveModulesConfig(storage, config);
   return { module: newModule };
 }
 
-function updateModule(storage, slug, updates) {
-  const config = loadModulesConfig(storage);
+async function updateModule(storage, slug, updates) {
+  const config = await loadModulesConfig(storage);
   if (!config) return { error: 'No modules config found' };
 
   const idx = config.modules.findIndex(m => m.slug === slug);
@@ -153,19 +153,19 @@ function updateModule(storage, slug, updates) {
     }
   }
 
-  saveModulesConfig(storage, config);
+  await saveModulesConfig(storage, config);
   return { module: existing };
 }
 
-function removeModule(storage, slug) {
-  const config = loadModulesConfig(storage);
+async function removeModule(storage, slug) {
+  const config = await loadModulesConfig(storage);
   if (!config) return { error: 'No modules config found' };
 
   const idx = config.modules.findIndex(m => m.slug === slug);
   if (idx === -1) return { error: `Module "${slug}" not found` };
 
   const removed = config.modules.splice(idx, 1)[0];
-  saveModulesConfig(storage, config);
+  await saveModulesConfig(storage, config);
 
   // Clean up module content directory
   if (removed.type === 'git-static' && storage.DATA_DIR) {
@@ -213,15 +213,15 @@ function sanitizeForAdmin(mod) {
   return result;
 }
 
-function updateSyncStatus(storage, slug, status, error) {
-  const config = loadModulesConfig(storage);
+async function updateSyncStatus(storage, slug, status, error) {
+  const config = await loadModulesConfig(storage);
   if (!config) return;
   const mod = config.modules.find(m => m.slug === slug);
   if (!mod) return;
   mod.lastSyncAt = new Date().toISOString();
   mod.lastSyncStatus = status;
   mod.lastSyncError = error || null;
-  saveModulesConfig(storage, config);
+  await saveModulesConfig(storage, config);
 }
 
 module.exports = {

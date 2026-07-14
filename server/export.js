@@ -31,7 +31,7 @@ async function handleExport(req, res, storageModule, exportRegistry) {
 
     // Build PII mapping from roster
     const { readRosterFull } = require('../shared/server/roster');
-    const roster = readRosterFull(storageModule);
+    const roster = await readRosterFull(storageModule);
     const mapping = buildMapping(roster);
 
     // Create temp directory structure
@@ -54,7 +54,7 @@ async function handleExport(req, res, storageModule, exportRegistry) {
 
     // Platform-level files (orchestrator handles directly)
     // allowlist.json - anonymize emails
-    const allowlist = readFromStorage('allowlist.json');
+    const allowlist = await readFromStorage('allowlist.json');
     if (allowlist) {
       const anonymizedAllowlist = { ...allowlist };
       if (Array.isArray(anonymizedAllowlist.emails)) {
@@ -66,7 +66,7 @@ async function handleExport(req, res, storageModule, exportRegistry) {
     }
 
     // modules-state.json - include as-is
-    const modulesState = readFromStorage('modules-state.json');
+    const modulesState = await readFromStorage('modules-state.json');
     if (modulesState) {
       addFile('modules-state.json', modulesState);
     }
@@ -74,7 +74,7 @@ async function handleExport(req, res, storageModule, exportRegistry) {
     // last-refreshed.json - include as-is (may also be handled by TT hook, check for dup)
     const lastRefreshedPath = path.join(dataDir, 'last-refreshed.json');
     if (!fs.existsSync(lastRefreshedPath)) {
-      const lastRefreshed = readFromStorage('last-refreshed.json');
+      const lastRefreshed = await readFromStorage('last-refreshed.json');
       if (lastRefreshed) {
         addFile('last-refreshed.json', lastRefreshed);
       }

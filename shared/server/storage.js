@@ -1,9 +1,12 @@
 /**
  * Local file storage - drop-in replacement for S3 in local development.
  * Reads/writes JSON files to a local data/ directory.
+ *
+ * All public functions are async using fs.promises for true non-blocking I/O.
  */
 
 const fs = require('fs');
+const fsp = fs.promises;
 const path = require('path');
 
 let DATA_DIR = path.join(__dirname, '..', '..', 'data');
@@ -30,26 +33,24 @@ function isPathSafe(resolvedPath) {
 /**
  * Ensure the data directory and any subdirectories exist
  */
-function ensureDir(filePath) {
+async function ensureDir(filePath) {
   const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  await fsp.mkdir(dir, { recursive: true });
 }
 
 /**
  * Read JSON from local file
  * @param {string} key - S3-style key (e.g., 'boards.json' or 'sprints/123.json')
- * @returns {object|null} Parsed JSON or null if not found
+ * @returns {Promise<object|null>} Parsed JSON or null if not found
  */
-function readFromStorage(key) {
+async function readFromStorage(key) {
   const filePath = path.resolve(DATA_DIR, key);
   if (!isPathSafe(filePath)) {
     console.error(`[storage] Blocked path traversal attempt: ${key}`);
     return null;
   }
   try {
-    const content = fs.readFileSync(filePath, 'utf-8');
+    const content = await fsp.readFile(filePath, 'utf-8');
     return JSON.parse(content);
   } catch (error) {
     if (error.code === 'ENOENT') {
@@ -63,49 +64,33 @@ function readFromStorage(key) {
  * Write JSON to local file
  * @param {string} key - S3-style key
  * @param {object} data - Data to write
+ * @returns {Promise<void>}
  */
-function writeToStorage(key, data) {
+async function writeToStorage(key, data) {
   const filePath = path.resolve(DATA_DIR, key);
   if (!isPathSafe(filePath)) {
     console.error(`[storage] Blocked path traversal attempt: ${key}`);
     return;
   }
-  ensureDir(filePath);
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  await ensureDir(filePath);
+  await fsp.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
   console.log(`Wrote ${key} to local storage`);
-}
-
-/**
- * Atomic write: write to a temp file then rename.
- * Prevents partial reads if the process crashes mid-write.
- * @param {string} key - S3-style key
- * @param {object} data - Data to write
- */
-function writeToStorageAtomic(key, data) {
-  const filePath = path.resolve(DATA_DIR, key);
-  if (!isPathSafe(filePath)) {
-    console.error(`[storage] Blocked path traversal attempt: ${key}`);
-    return;
-  }
-  ensureDir(filePath);
-  const tmpPath = filePath + '.tmp.' + process.pid;
-  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
-  fs.renameSync(tmpPath, filePath);
 }
 
 /**
  * List JSON files in a subdirectory of storage
  * @param {string} dir - Subdirectory name (e.g., 'people')
- * @returns {string[]} Array of filenames (without path)
+ * @returns {Promise<string[]>} Array of filenames (without path)
  */
-function listStorageFiles(dir) {
+async function listStorageFiles(dir) {
   const dirPath = path.resolve(DATA_DIR, dir);
   if (!isPathSafe(dirPath)) {
     console.error(`[storage] Blocked path traversal attempt: ${dir}`);
     return [];
   }
   try {
-    return fs.readdirSync(dirPath).filter(f => f.endsWith('.json'));
+    const files = await fsp.readdir(dirPath);
+    return files.filter(f => f.endsWith('.json'));
   } catch (error) {
     if (error.code === 'ENOENT') {
       return [];
@@ -117,9 +102,9 @@ function listStorageFiles(dir) {
 /**
  * Recursively delete a subdirectory of storage
  * @param {string} dir - Subdirectory name (e.g., 'snapshots')
- * @returns {{ deleted: number }} Count of JSON files that were in the directory
+ * @returns {Promise<{ deleted: number }>} Count of JSON files that were in the directory
  */
-function deleteStorageDirectory(dir) {
+async function deleteStorageDirectory(dir) {
   const dirPath = path.resolve(DATA_DIR, dir);
   if (!isPathSafe(dirPath)) {
     console.error(`[storage] Blocked path traversal attempt: ${dir}`);
@@ -127,7 +112,7 @@ function deleteStorageDirectory(dir) {
   }
   let deleted = 0;
   try {
-    // Count files before deletion
+    // Count files before deletion (sync walk is fine — directory is about to be removed)
     const countFiles = (p) => {
       const entries = fs.readdirSync(p, { withFileTypes: true });
       for (const entry of entries) {
@@ -136,7 +121,7 @@ function deleteStorageDirectory(dir) {
       }
     };
     countFiles(dirPath);
-    fs.rmSync(dirPath, { recursive: true, force: true });
+    await fsp.rm(dirPath, { recursive: true, force: true });
     console.log(`Deleted storage directory ${dir} (${deleted} files)`);
   } catch (error) {
     if (error.code === 'ENOENT') {
@@ -150,15 +135,16 @@ function deleteStorageDirectory(dir) {
 /**
  * Delete a single file from storage
  * @param {string} key - S3-style key (e.g., 'release-planning/candidates-cache-3.5.json')
+ * @returns {Promise<void>}
  */
-function deleteFromStorage(key) {
+async function deleteFromStorage(key) {
   const filePath = path.resolve(DATA_DIR, key);
   if (!isPathSafe(filePath)) {
     console.error(`[storage] Blocked path traversal attempt: ${key}`);
     return;
   }
   try {
-    fs.unlinkSync(filePath);
+    await fsp.unlink(filePath);
     console.log(`Deleted ${key} from local storage`);
   } catch (error) {
     if (error.code === 'ENOENT') {
@@ -172,16 +158,17 @@ function deleteFromStorage(key) {
 /**
  * Get the modification time of a storage file without reading it.
  * @param {string} key - S3-style key
- * @returns {number|null} mtime in milliseconds, or null if file doesn't exist or path is unsafe
+ * @returns {Promise<number|null>} mtime in milliseconds, or null if file doesn't exist or path is unsafe
  */
-function getFileMtime(key) {
+async function getFileMtime(key) {
   const filePath = path.resolve(DATA_DIR, key);
   if (!isPathSafe(filePath)) {
     console.error(`[storage] Blocked path traversal attempt: ${key}`);
     return null;
   }
   try {
-    return fs.statSync(filePath).mtimeMs;
+    const stat = await fsp.stat(filePath);
+    return stat.mtimeMs;
   } catch (err) {
     if (err.code === 'ENOENT') return null;
     throw err;
@@ -192,7 +179,6 @@ module.exports = {
   initStorage,
   readFromStorage,
   writeToStorage,
-  writeToStorageAtomic,
   listStorageFiles,
   deleteStorageDirectory,
   deleteFromStorage,

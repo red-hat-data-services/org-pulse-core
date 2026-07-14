@@ -114,7 +114,7 @@ async function linkToJira(storage, jiraRequest, optionSetName, linkConfig) {
   const { values, richValues } = await fetchEntityData(jiraRequest, entityType, projectKey);
 
   // Write via syncFromExternal
-  const result = fieldOptionsStore.syncFromExternal(storage, optionSetName, {
+  const result = await fieldOptionsStore.syncFromExternal(storage, optionSetName, {
     source: 'jira',
     sourceProject: projectKey,
     values,
@@ -123,13 +123,13 @@ async function linkToJira(storage, jiraRequest, optionSetName, linkConfig) {
   });
 
   // Store the source config for future syncs
-  const data = fieldOptionsStore.readFieldOptions(storage, optionSetName);
+  const data = await fieldOptionsStore.readFieldOptions(storage, optionSetName);
   if (data) {
     data.sourceConfig = {
       entityType,
       projectKey
     };
-    fieldOptionsStore.writeFieldOptions(storage, optionSetName, data);
+    await fieldOptionsStore.writeFieldOptions(storage, optionSetName, data);
   }
 
   return {
@@ -151,8 +151,8 @@ async function linkToJira(storage, jiraRequest, optionSetName, linkConfig) {
  * @param {string} optionSetName
  * @returns {object}
  */
-function unlinkFromJira(storage, optionSetName) {
-  const data = fieldOptionsStore.readFieldOptions(storage, optionSetName);
+async function unlinkFromJira(storage, optionSetName) {
+  const data = await fieldOptionsStore.readFieldOptions(storage, optionSetName);
   if (!data) {
     throw new Error('Option set not found: ' + optionSetName);
   }
@@ -169,7 +169,7 @@ function unlinkFromJira(storage, optionSetName) {
   data.updatedAt = new Date().toISOString();
   data.updatedBy = 'admin';
 
-  fieldOptionsStore.writeFieldOptions(storage, optionSetName, data);
+  await fieldOptionsStore.writeFieldOptions(storage, optionSetName, data);
 
   return { unlinked: true, optionSet: optionSetName, valuesPreserved: (data.values || []).length };
 }
@@ -183,7 +183,7 @@ function unlinkFromJira(storage, optionSetName) {
  * @returns {Promise<object>} Sync result
  */
 async function syncOptionSet(storage, jiraRequest, optionSetName) {
-  const data = fieldOptionsStore.readFieldOptions(storage, optionSetName);
+  const data = await fieldOptionsStore.readFieldOptions(storage, optionSetName);
   if (!data || !data.source || !data.sourceConfig) {
     throw new Error('Option set "' + optionSetName + '" is not linked to an external source');
   }
@@ -191,7 +191,7 @@ async function syncOptionSet(storage, jiraRequest, optionSetName) {
   const { entityType, projectKey } = data.sourceConfig;
   const { values, richValues } = await fetchEntityData(jiraRequest, entityType, projectKey);
 
-  const result = fieldOptionsStore.syncFromExternal(storage, optionSetName, {
+  const result = await fieldOptionsStore.syncFromExternal(storage, optionSetName, {
     source: data.source,
     sourceProject: projectKey,
     values,
@@ -216,7 +216,7 @@ async function syncOptionSet(storage, jiraRequest, optionSetName) {
  * @returns {Promise<object>} Summary of all sync operations
  */
 async function syncAllLinked(storage, jiraRequest) {
-  const allSets = fieldOptionsStore.listFieldOptions(storage);
+  const allSets = await fieldOptionsStore.listFieldOptions(storage);
   const linked = allSets.filter(s => s.source);
 
   if (linked.length === 0) {

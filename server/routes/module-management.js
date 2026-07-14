@@ -34,9 +34,9 @@ function registerModuleManagementRoutes(app, context) {
    *       500:
    *         $ref: '#/components/responses/ServerError'
    */
-  app.get('/api/modules', function(req, res) {
+  app.get('/api/modules', async function(req, res) {
     try {
-      const config = modulesConfig.loadModulesConfig(storage) || { modules: [] };
+      const config = (await modulesConfig.loadModulesConfig(storage)) || { modules: [] };
       res.json({ modules: config.modules.map(modulesConfig.sanitizeForPublic) });
     } catch (error) {
       console.error('List modules error:', error);
@@ -68,9 +68,9 @@ function registerModuleManagementRoutes(app, context) {
    *       500:
    *         $ref: '#/components/responses/ServerError'
    */
-  app.get('/api/modules/:slug', function(req, res) {
+  app.get('/api/modules/:slug', async function(req, res) {
     try {
-      const mod = modulesConfig.getModule(storage, req.params.slug);
+      const mod = await modulesConfig.getModule(storage, req.params.slug);
       if (!mod) {
         return res.status(404).json({ error: `Module "${req.params.slug}" not found` });
       }
@@ -104,9 +104,9 @@ function registerModuleManagementRoutes(app, context) {
    *       500:
    *         $ref: '#/components/responses/ServerError'
    */
-  app.get('/api/admin/modules', requireAdmin, requireScope('admin:manage'), function(req, res) {
+  app.get('/api/admin/modules', requireAdmin, requireScope('admin:manage'), async function(req, res) {
     try {
-      const config = modulesConfig.loadModulesConfig(storage) || { modules: [] };
+      const config = (await modulesConfig.loadModulesConfig(storage)) || { modules: [] };
       res.json({ modules: config.modules.map(modulesConfig.sanitizeForAdmin) });
     } catch (error) {
       console.error('Admin list modules error:', error);
@@ -144,9 +144,9 @@ function registerModuleManagementRoutes(app, context) {
    *       500:
    *         $ref: '#/components/responses/ServerError'
    */
-  app.post('/api/admin/modules', requireAdmin, requireScope('admin:manage'), function(req, res) {
+  app.post('/api/admin/modules', requireAdmin, requireScope('admin:manage'), async function(req, res) {
     try {
-      const result = modulesConfig.addModule(storage, req.body);
+      const result = await modulesConfig.addModule(storage, req.body);
       if (result.error) {
         return res.status(400).json({ error: result.error });
       }
@@ -196,9 +196,9 @@ function registerModuleManagementRoutes(app, context) {
    *       500:
    *         $ref: '#/components/responses/ServerError'
    */
-  app.put('/api/admin/modules/:slug', requireAdmin, requireScope('admin:manage'), function(req, res) {
+  app.put('/api/admin/modules/:slug', requireAdmin, requireScope('admin:manage'), async function(req, res) {
     try {
-      const result = modulesConfig.updateModule(storage, req.params.slug, req.body);
+      const result = await modulesConfig.updateModule(storage, req.params.slug, req.body);
       if (result.error) {
         const status = result.error.includes('not found') ? 404 : 400;
         return res.status(status).json({ error: result.error });
@@ -240,9 +240,9 @@ function registerModuleManagementRoutes(app, context) {
    *       500:
    *         $ref: '#/components/responses/ServerError'
    */
-  app.delete('/api/admin/modules/:slug', requireAdmin, requireScope('admin:manage'), function(req, res) {
+  app.delete('/api/admin/modules/:slug', requireAdmin, requireScope('admin:manage'), async function(req, res) {
     try {
-      const result = modulesConfig.removeModule(storage, req.params.slug);
+      const result = await modulesConfig.removeModule(storage, req.params.slug);
       if (result.error) {
         const status = result.error.includes('not found') ? 404 : 400;
         return res.status(status).json({ error: result.error });
@@ -295,7 +295,7 @@ function registerModuleManagementRoutes(app, context) {
    */
   app.post('/api/admin/modules/:slug/sync', requireAdmin, requireScope('admin:manage'), async function(req, res) {
     try {
-      const mod = modulesConfig.getModule(storage, req.params.slug);
+      const mod = await modulesConfig.getModule(storage, req.params.slug);
       if (!mod) {
         return res.status(404).json({ error: `Module "${req.params.slug}" not found` });
       }
@@ -372,9 +372,9 @@ function registerModuleManagementRoutes(app, context) {
    *       500:
    *         $ref: '#/components/responses/ServerError'
    */
-  app.get('/api/admin/modules/sync/status', requireAdmin, requireScope('admin:manage'), function(req, res) {
+  app.get('/api/admin/modules/sync/status', requireAdmin, requireScope('admin:manage'), async function(req, res) {
     try {
-      res.json(gitSync.getSyncStatus(storage));
+      res.json(await gitSync.getSyncStatus(storage));
     } catch (error) {
       console.error('Module sync status error:', error);
       res.status(500).json({ error: error.message });
@@ -417,10 +417,10 @@ function registerModuleManagementRoutes(app, context) {
    *       500:
    *         $ref: '#/components/responses/ServerError'
    */
-  app.get('/api/admin/modules/state', requireAdmin, requireScope('admin:manage'), function(req, res) {
+  app.get('/api/admin/modules/state', requireAdmin, requireScope('admin:manage'), async function(req, res) {
     try {
       const discovered = builtInModules;
-      const currentState = loadModuleState(storage);
+      const currentState = await loadModuleState(storage);
       const effective = getEffectiveState(discovered, currentState);
       const requiredBy = computeRequiredBy(discovered);
 
@@ -482,7 +482,7 @@ function registerModuleManagementRoutes(app, context) {
    *       500:
    *         $ref: '#/components/responses/ServerError'
    */
-  app.post('/api/admin/modules/:slug/enable', requireAdmin, requireScope('admin:manage'), function(req, res) {
+  app.post('/api/admin/modules/:slug/enable', requireAdmin, requireScope('admin:manage'), async function(req, res) {
     try {
       if (DEMO_MODE) {
         return res.json({ status: 'skipped', message: 'Module state changes disabled in demo mode' });
@@ -495,7 +495,7 @@ function registerModuleManagementRoutes(app, context) {
         return res.status(404).json({ error: `Module "${slug}" not found` });
       }
 
-      const currentState = loadModuleState(storage);
+      const currentState = await loadModuleState(storage);
       const effective = getEffectiveState(discovered, currentState);
 
       if (effective[slug]) {
@@ -510,7 +510,7 @@ function registerModuleManagementRoutes(app, context) {
       for (const s of result.toEnable) {
         currentState[s] = true;
       }
-      saveModuleState(storage, currentState);
+      await saveModuleState(storage, currentState);
 
       const restartRequired = result.toEnable.some(function(s) { return !wasMountedAtStartup(s); });
 
@@ -560,7 +560,7 @@ function registerModuleManagementRoutes(app, context) {
    *       500:
    *         $ref: '#/components/responses/ServerError'
    */
-  app.post('/api/admin/modules/:slug/disable', requireAdmin, requireScope('admin:manage'), function(req, res) {
+  app.post('/api/admin/modules/:slug/disable', requireAdmin, requireScope('admin:manage'), async function(req, res) {
     try {
       if (DEMO_MODE) {
         return res.json({ status: 'skipped', message: 'Module state changes disabled in demo mode' });
@@ -573,7 +573,7 @@ function registerModuleManagementRoutes(app, context) {
         return res.status(404).json({ error: `Module "${slug}" not found` });
       }
 
-      const currentState = loadModuleState(storage);
+      const currentState = await loadModuleState(storage);
       const effective = getEffectiveState(discovered, currentState);
 
       if (!effective[slug]) {
@@ -589,7 +589,7 @@ function registerModuleManagementRoutes(app, context) {
       }
 
       currentState[slug] = false;
-      saveModuleState(storage, currentState);
+      await saveModuleState(storage, currentState);
 
       res.json({ disabled: slug });
     } catch (error) {
@@ -619,9 +619,9 @@ function registerModuleManagementRoutes(app, context) {
    *       500:
    *         $ref: '#/components/responses/ServerError'
    */
-  app.get('/api/built-in-modules/state', function(req, res) {
+  app.get('/api/built-in-modules/state', async function(req, res) {
     try {
-      const currentState = loadModuleState(storage);
+      const currentState = await loadModuleState(storage);
       const effective = getEffectiveState(builtInModules, currentState);
       const enabledList = Object.entries(effective)
         .filter(function(entry) { return entry[1]; })

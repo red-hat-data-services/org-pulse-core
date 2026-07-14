@@ -14,11 +14,11 @@ const { loadConfig, getOrgDisplayNames } = require('./roster-sync/config');
  * @param {{ readFromStorage: Function }} storage
  * @returns {object|null}
  */
-function readRosterFull(storage) {
-  const registry = storage.readFromStorage('team-data/registry.json');
+async function readRosterFull(storage) {
+  const registry = await storage.readFromStorage('team-data/registry.json');
   if (!registry || !registry.people) return null;
 
-  const config = loadConfig(storage);
+  const config = await loadConfig(storage);
   const orgRootUids = new Set((config?.orgRoots || []).map(r => r.uid));
 
   // Group active people by orgRoot
@@ -59,8 +59,8 @@ function readRosterFull(storage) {
  * @param {{ readFromStorage: Function }} storage
  * @returns {object[]}
  */
-function getAllPeople(storage) {
-  const full = readRosterFull(storage);
+async function getAllPeople(storage) {
+  const full = await readRosterFull(storage);
   if (!full || !full.orgs) return [];
   const people = [];
   for (const [orgKey, orgData] of Object.entries(full.orgs)) {
@@ -78,8 +78,8 @@ function getAllPeople(storage) {
  * @param {string} orgKey
  * @returns {object[]}
  */
-function getPeopleByOrg(storage, orgKey) {
-  const full = readRosterFull(storage);
+async function getPeopleByOrg(storage, orgKey) {
+  const full = await readRosterFull(storage);
   if (!full || !full.orgs || !full.orgs[orgKey]) return [];
   const orgData = full.orgs[orgKey];
   return [orgData.leader, ...orgData.members]
@@ -92,8 +92,8 @@ function getPeopleByOrg(storage, orgKey) {
  * @param {{ readFromStorage: Function }} storage
  * @returns {{ key: string, displayName: string }[]}
  */
-function getOrgKeys(storage) {
-  const full = readRosterFull(storage);
+async function getOrgKeys(storage) {
+  const full = await readRosterFull(storage);
   if (!full || !full.orgs) return [];
   return Object.entries(full.orgs).map(([key, orgData]) => ({
     key,

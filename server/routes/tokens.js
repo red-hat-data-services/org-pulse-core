@@ -101,9 +101,9 @@ function registerTokenRoutes(app, context) {
    *                   items:
    *                     $ref: '#/components/schemas/ApiToken'
    */
-  app.get('/api/tokens', blockDuringImpersonation, requireScope('tokens:manage'), function(req, res) {
+  app.get('/api/tokens', blockDuringImpersonation, requireScope('tokens:manage'), async function(req, res) {
     try {
-      const tokens = apiTokens.listUserTokens(req.userEmail);
+      const tokens = await apiTokens.listUserTokens(req.userEmail);
       res.json({ tokens });
     } catch (error) {
       console.error('List tokens error:', error);
@@ -323,9 +323,9 @@ function registerTokenRoutes(app, context) {
    *       403:
    *         $ref: '#/components/responses/Forbidden'
    */
-  app.get('/api/admin/tokens', requireAdmin, requireScope('admin:manage'), function(req, res) {
+  app.get('/api/admin/tokens', requireAdmin, requireScope('admin:manage'), async function(req, res) {
     try {
-      const tokens = apiTokens.listAllTokens();
+      const tokens = await apiTokens.listAllTokens();
       res.json({ tokens });
     } catch (error) {
       console.error('Admin list tokens error:', error);

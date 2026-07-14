@@ -4,7 +4,14 @@
  */
 
 const crypto = require('crypto');
+const { Mutex } = require('async-mutex');
 const { appendAuditEntry } = require('./audit-log');
+
+const storageMutexes = new Map();
+function getStorageMutex(key) {
+  if (!storageMutexes.has(key)) storageMutexes.set(key, new Mutex());
+  return storageMutexes.get(key);
+}
 
 const FIELD_DEFS_KEY = 'team-data/field-definitions.json';
 const REGISTRY_KEY = 'team-data/registry.json';
@@ -22,12 +29,12 @@ const MAX_ALLOWED_VALUES = 100;
 const MAX_ALLOWED_VALUE_LENGTH = 200;
 const VALID_FIELD_TYPES = ['free-text', 'constrained', 'person-reference-linked'];
 
-function readFieldDefinitions(storage) {
-  return storage.readFromStorage(FIELD_DEFS_KEY) || { personFields: [], teamFields: [] };
+async function readFieldDefinitions(storage) {
+  return (await storage.readFromStorage(FIELD_DEFS_KEY)) || { personFields: [], teamFields: [] };
 }
 
-function writeFieldDefinitions(storage, data) {
-  storage.writeToStorage(FIELD_DEFS_KEY, data);
+async function writeFieldDefinitions(storage, data) {
+  await storage.writeToStorage(FIELD_DEFS_KEY, data);
 }
 
 /**
@@ -70,8 +77,8 @@ function coerceFieldValue(value, fieldDef) {
  * @param {Object<string,*>} [existingValues] - Full current field values for required-field checks
  * @returns {{ validated: Object, warnings: string[], errors: string[] }}
  */
-function validateFieldValues(storage, scope, fieldValues, existingValues, { optionsResolver } = {}) {
-  const defs = readFieldDefinitions(storage);
+async function validateFieldValues(storage, scope, fieldValues, existingValues, { optionsResolver } = {}) {
+  const defs = await readFieldDefinitions(storage);
   const key = scope === 'person' ? 'personFields' : 'teamFields';
   const fields = defs[key] || [];
   const byId = {};
@@ -138,50 +145,53 @@ function validateFieldValues(storage, scope, fieldValues, existingValues, { opti
  * @param {string} actorEmail
  * @returns {object} The created field definition
  */
-function createFieldDefinition(storage, scope, definition, actorEmail) {
-  const data = readFieldDefinitions(storage);
-  const key = scope === 'person' ? 'personFields' : 'teamFields';
-  const fields = data[key];
+async function createFieldDefinition(storage, scope, definition, actorEmail) {
+  const mutex = getStorageMutex(FIELD_DEFS_KEY);
+  return mutex.runExclusive(async () => {
+    const data = await readFieldDefinitions(storage);
+    const key = scope === 'person' ? 'personFields' : 'teamFields';
+    const fields = data[key];
 
-  const fieldType = definition.type || 'free-text';
+    const fieldType = definition.type || 'free-text';
 
-  if (!VALID_FIELD_TYPES.includes(fieldType)) {
-    throw new Error(`Invalid type. Must be one of: ${VALID_FIELD_TYPES.join(', ')}`);
-  }
+    if (!VALID_FIELD_TYPES.includes(fieldType)) {
+      throw new Error(`Invalid type. Must be one of: ${VALID_FIELD_TYPES.join(', ')}`);
+    }
 
-  // Validate allowedValues
-  const avError = validateAllowedValues(definition.allowedValues);
-  if (avError) throw new Error(avError);
+    // Validate allowedValues
+    const avError = validateAllowedValues(definition.allowedValues);
+    if (avError) throw new Error(avError);
 
-  const field = {
-    id: generateFieldId(),
-    label: definition.label,
-    type: fieldType,
-    multiValue: definition.multiValue || false,
-    required: definition.required || false,
-    visible: definition.visible !== false,
-    primaryDisplay: definition.primaryDisplay || false,
-    allowedValues: definition.allowedValues || null,
-    optionsRef: definition.optionsRef || null,
-    deleted: false,
-    order: fields.length,
-    createdAt: new Date().toISOString(),
-    createdBy: actorEmail
-  };
+    const field = {
+      id: generateFieldId(),
+      label: definition.label,
+      type: fieldType,
+      multiValue: definition.multiValue || false,
+      required: definition.required || false,
+      visible: definition.visible !== false,
+      primaryDisplay: definition.primaryDisplay || false,
+      allowedValues: definition.allowedValues || null,
+      optionsRef: definition.optionsRef || null,
+      deleted: false,
+      order: fields.length,
+      createdAt: new Date().toISOString(),
+      createdBy: actorEmail
+    };
 
-  fields.push(field);
-  writeFieldDefinitions(storage, data);
+    fields.push(field);
+    await writeFieldDefinitions(storage, data);
 
-  appendAuditEntry(storage, {
-    action: 'field.create',
-    actor: actorEmail,
-    entityType: 'field',
-    entityId: field.id,
-    entityLabel: field.label,
-    detail: `Created ${scope} field "${field.label}" (type: ${field.type})`
+    await appendAuditEntry(storage, {
+      action: 'field.create',
+      actor: actorEmail,
+      entityType: 'field',
+      entityId: field.id,
+      entityLabel: field.label,
+      detail: `Created ${scope} field "${field.label}" (type: ${field.type})`
+    });
+
+    return field;
   });
-
-  return field;
 }
 
 /**
@@ -193,101 +203,110 @@ function createFieldDefinition(storage, scope, definition, actorEmail) {
  * @param {string} actorEmail
  * @returns {object|null} The updated field, or null if not found
  */
-function updateFieldDefinition(storage, scope, fieldId, updates, actorEmail) {
-  const data = readFieldDefinitions(storage);
-  const key = scope === 'person' ? 'personFields' : 'teamFields';
-  const field = data[key].find(f => f.id === fieldId);
-  if (!field) return null;
+async function updateFieldDefinition(storage, scope, fieldId, updates, actorEmail) {
+  const mutex = getStorageMutex(FIELD_DEFS_KEY);
+  return mutex.runExclusive(async () => {
+    const data = await readFieldDefinitions(storage);
+    const key = scope === 'person' ? 'personFields' : 'teamFields';
+    const field = data[key].find(f => f.id === fieldId);
+    if (!field) return null;
 
-  // Validate type if being updated
-  if (updates.type !== undefined && !VALID_FIELD_TYPES.includes(updates.type)) {
-    throw new Error(`Invalid type. Must be one of: ${VALID_FIELD_TYPES.join(', ')}`);
-  }
-
-  // Validate allowedValues if being updated
-  if (updates.allowedValues !== undefined) {
-    const avError = validateAllowedValues(updates.allowedValues);
-    if (avError) throw new Error(avError);
-  }
-
-  const changes = {};
-  for (const [k, v] of Object.entries(updates)) {
-    if (['label', 'type', 'required', 'visible', 'primaryDisplay', 'allowedValues', 'multiValue', 'optionsRef'].includes(k)) {
-      changes[k] = { old: field[k], new: v };
-      field[k] = v;
+    // Validate type if being updated
+    if (updates.type !== undefined && !VALID_FIELD_TYPES.includes(updates.type)) {
+      throw new Error(`Invalid type. Must be one of: ${VALID_FIELD_TYPES.join(', ')}`);
     }
-  }
 
-  writeFieldDefinitions(storage, data);
+    // Validate allowedValues if being updated
+    if (updates.allowedValues !== undefined) {
+      const avError = validateAllowedValues(updates.allowedValues);
+      if (avError) throw new Error(avError);
+    }
 
-  appendAuditEntry(storage, {
-    action: 'field.update',
-    actor: actorEmail,
-    entityType: 'field',
-    entityId: fieldId,
-    entityLabel: field.label,
-    oldValue: Object.fromEntries(Object.entries(changes).map(([k, v]) => [k, v.old])),
-    newValue: Object.fromEntries(Object.entries(changes).map(([k, v]) => [k, v.new])),
-    detail: `Updated ${scope} field "${field.label}"`
+    const changes = {};
+    for (const [k, v] of Object.entries(updates)) {
+      if (['label', 'type', 'required', 'visible', 'primaryDisplay', 'allowedValues', 'multiValue', 'optionsRef'].includes(k)) {
+        changes[k] = { old: field[k], new: v };
+        field[k] = v;
+      }
+    }
+
+    await writeFieldDefinitions(storage, data);
+
+    await appendAuditEntry(storage, {
+      action: 'field.update',
+      actor: actorEmail,
+      entityType: 'field',
+      entityId: fieldId,
+      entityLabel: field.label,
+      oldValue: Object.fromEntries(Object.entries(changes).map(([k, v]) => [k, v.old])),
+      newValue: Object.fromEntries(Object.entries(changes).map(([k, v]) => [k, v.new])),
+      detail: `Updated ${scope} field "${field.label}"`
+    });
+
+    return field;
   });
-
-  return field;
 }
 
 /**
  * Soft-delete a field definition (marks as deleted, does not remove).
  */
-function softDeleteField(storage, scope, fieldId, actorEmail) {
-  const data = readFieldDefinitions(storage);
-  const key = scope === 'person' ? 'personFields' : 'teamFields';
-  const field = data[key].find(f => f.id === fieldId);
-  if (!field) return null;
+async function softDeleteField(storage, scope, fieldId, actorEmail) {
+  const mutex = getStorageMutex(FIELD_DEFS_KEY);
+  return mutex.runExclusive(async () => {
+    const data = await readFieldDefinitions(storage);
+    const key = scope === 'person' ? 'personFields' : 'teamFields';
+    const field = data[key].find(f => f.id === fieldId);
+    if (!field) return null;
 
-  field.deleted = true;
-  writeFieldDefinitions(storage, data);
+    field.deleted = true;
+    await writeFieldDefinitions(storage, data);
 
-  appendAuditEntry(storage, {
-    action: 'field.delete',
-    actor: actorEmail,
-    entityType: 'field',
-    entityId: fieldId,
-    entityLabel: field.label,
-    detail: `Soft-deleted ${scope} field "${field.label}"`
+    await appendAuditEntry(storage, {
+      action: 'field.delete',
+      actor: actorEmail,
+      entityType: 'field',
+      entityId: fieldId,
+      entityLabel: field.label,
+      detail: `Soft-deleted ${scope} field "${field.label}"`
+    });
+
+    return field;
   });
-
-  return field;
 }
 
 /**
  * Reorder fields by providing an ordered array of field IDs.
  */
-function reorderFields(storage, scope, orderedIds, actorEmail) {
-  const data = readFieldDefinitions(storage);
-  const key = scope === 'person' ? 'personFields' : 'teamFields';
-  const fields = data[key];
+async function reorderFields(storage, scope, orderedIds, actorEmail) {
+  const mutex = getStorageMutex(FIELD_DEFS_KEY);
+  return mutex.runExclusive(async () => {
+    const data = await readFieldDefinitions(storage);
+    const key = scope === 'person' ? 'personFields' : 'teamFields';
+    const fields = data[key];
 
-  // Build lookup
-  const byId = {};
-  for (const f of fields) byId[f.id] = f;
+    // Build lookup
+    const byId = {};
+    for (const f of fields) byId[f.id] = f;
 
-  // Assign order based on position in orderedIds
-  for (let i = 0; i < orderedIds.length; i++) {
-    if (!isSafeKey(orderedIds[i])) continue;
-    if (byId[orderedIds[i]]) {
-      byId[orderedIds[i]].order = i;
+    // Assign order based on position in orderedIds
+    for (let i = 0; i < orderedIds.length; i++) {
+      if (!isSafeKey(orderedIds[i])) continue;
+      if (byId[orderedIds[i]]) {
+        byId[orderedIds[i]].order = i;
+      }
     }
-  }
 
-  // Sort by order
-  data[key] = fields.sort((a, b) => a.order - b.order);
-  writeFieldDefinitions(storage, data);
+    // Sort by order
+    data[key] = fields.sort((a, b) => a.order - b.order);
+    await writeFieldDefinitions(storage, data);
 
-  appendAuditEntry(storage, {
-    action: 'field.reorder',
-    actor: actorEmail,
-    entityType: 'field',
-    entityId: scope,
-    detail: `Reordered ${scope} fields`
+    await appendAuditEntry(storage, {
+      action: 'field.reorder',
+      actor: actorEmail,
+      entityType: 'field',
+      entityId: scope,
+      detail: `Reordered ${scope} fields`
+    });
   });
 }
 
@@ -298,34 +317,37 @@ function reorderFields(storage, scope, orderedIds, actorEmail) {
  * @param {Object<string, *>} fieldValues - { fieldId: value, ... }
  * @param {string} actorEmail
  */
-function updatePersonFields(storage, uid, fieldValues, actorEmail) {
-  const registry = storage.readFromStorage(REGISTRY_KEY);
-  if (!registry || !registry.people || !registry.people[uid]) return null;
+async function updatePersonFields(storage, uid, fieldValues, actorEmail) {
+  const mutex = getStorageMutex(REGISTRY_KEY);
+  return mutex.runExclusive(async () => {
+    const registry = await storage.readFromStorage(REGISTRY_KEY);
+    if (!registry || !registry.people || !registry.people[uid]) return null;
 
-  const person = registry.people[uid];
-  if (!person._appFields) person._appFields = {};
+    const person = registry.people[uid];
+    if (!person._appFields) person._appFields = {};
 
-  for (const [fieldId, value] of Object.entries(fieldValues)) {
-    if (!isSafeKey(fieldId)) {
-      throw new Error(`Invalid field key: ${fieldId}`);
+    for (const [fieldId, value] of Object.entries(fieldValues)) {
+      if (!isSafeKey(fieldId)) {
+        throw new Error(`Invalid field key: ${fieldId}`);
+      }
+      const oldValue = person._appFields[fieldId] || null;
+      person._appFields[fieldId] = value;
+
+      await appendAuditEntry(storage, {
+        action: 'person.field.update',
+        actor: actorEmail,
+        entityType: 'person',
+        entityId: uid,
+        entityLabel: person.name,
+        field: fieldId,
+        oldValue,
+        newValue: value
+      });
     }
-    const oldValue = person._appFields[fieldId] || null;
-    person._appFields[fieldId] = value;
 
-    appendAuditEntry(storage, {
-      action: 'person.field.update',
-      actor: actorEmail,
-      entityType: 'person',
-      entityId: uid,
-      entityLabel: person.name,
-      field: fieldId,
-      oldValue,
-      newValue: value
-    });
-  }
-
-  storage.writeToStorage(REGISTRY_KEY, registry);
-  return person._appFields;
+    await storage.writeToStorage(REGISTRY_KEY, registry);
+    return person._appFields;
+  });
 }
 
 module.exports = {

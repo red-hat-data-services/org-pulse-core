@@ -18,9 +18,9 @@ const fieldOptionsSync = require('../../server/field-options-sync')
 function makeStorage(initial = {}) {
   const data = { ...initial }
   return {
-    readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
-    writeToStorage: vi.fn((key, val) => { data[key] = JSON.parse(JSON.stringify(val)) }),
-    listStorageFiles(dir) {
+    async readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
+    writeToStorage: vi.fn(async (key, val) => { data[key] = JSON.parse(JSON.stringify(val)) }),
+    async listStorageFiles(dir) {
       return Object.keys(data)
         .filter(k => k.startsWith(dir + '/') && k.endsWith('.json'))
         .map(k => k.split('/').pop())
@@ -62,15 +62,15 @@ function computeSuggestions(orphanedValues, currentValues) {
 }
 
 // Replicates the orphan scanning logic used by both sync preview and migration preview routes
-function scanOrphanedUsage(storage, safeName, valuesToCheck) {
-  const fieldDefs = storage.readFromStorage('team-data/field-definitions.json') || { personFields: [], teamFields: [] }
+async function scanOrphanedUsage(storage, safeName, valuesToCheck) {
+  const fieldDefs = (await storage.readFromStorage('team-data/field-definitions.json')) || { personFields: [], teamFields: [] }
   const personFieldIds = (fieldDefs.personFields || []).filter(f => !f.deleted && f.optionsRef === safeName).map(f => f.id)
   const teamFieldIds = (fieldDefs.teamFields || []).filter(f => !f.deleted && f.optionsRef === safeName).map(f => f.id)
   const checkSet = new Set(valuesToCheck)
   const usage = {}
 
   if (personFieldIds.length > 0) {
-    const registry = storage.readFromStorage('team-data/registry.json')
+    const registry = await storage.readFromStorage('team-data/registry.json')
     if (registry && registry.people) {
       for (const [uid, person] of Object.entries(registry.people)) {
         if (!person._appFields) continue
@@ -89,7 +89,7 @@ function scanOrphanedUsage(storage, safeName, valuesToCheck) {
   }
 
   if (teamFieldIds.length > 0) {
-    const teamsData = storage.readFromStorage('team-data/teams.json')
+    const teamsData = await storage.readFromStorage('team-data/teams.json')
     if (teamsData && teamsData.teams) {
       for (const [teamId, team] of Object.entries(teamsData.teams)) {
         if (!team.metadata) continue
@@ -111,8 +111,8 @@ function scanOrphanedUsage(storage, safeName, valuesToCheck) {
 }
 
 // Replicates the migration apply cascading logic from the route handler
-function applyMigration(storage, safeName, mappings) {
-  const data = fieldOptionsStore.readFieldOptions(storage, safeName)
+async function applyMigration(storage, safeName, mappings) {
+  const data = await fieldOptionsStore.readFieldOptions(storage, safeName)
   if (!data) throw new Error('Option set not found')
 
   const currentValues = new Set(data.values || [])
@@ -122,14 +122,14 @@ function applyMigration(storage, safeName, mappings) {
     }
   }
 
-  const fieldDefs = storage.readFromStorage('team-data/field-definitions.json') || { personFields: [], teamFields: [] }
+  const fieldDefs = (await storage.readFromStorage('team-data/field-definitions.json')) || { personFields: [], teamFields: [] }
   const personFieldIds = (fieldDefs.personFields || []).filter(f => !f.deleted && f.optionsRef === safeName).map(f => f.id)
   const teamFieldIds = (fieldDefs.teamFields || []).filter(f => !f.deleted && f.optionsRef === safeName).map(f => f.id)
 
   let updated = 0
 
   if (personFieldIds.length > 0) {
-    const registry = storage.readFromStorage('team-data/registry.json')
+    const registry = await storage.readFromStorage('team-data/registry.json')
     if (registry && registry.people) {
       let modified = false
       for (const person of Object.values(registry.people)) {
@@ -163,12 +163,12 @@ function applyMigration(storage, safeName, mappings) {
           }
         }
       }
-      if (modified) storage.writeToStorage('team-data/registry.json', registry)
+      if (modified) await storage.writeToStorage('team-data/registry.json', registry)
     }
   }
 
   if (teamFieldIds.length > 0) {
-    const teamsData = storage.readFromStorage('team-data/teams.json')
+    const teamsData = await storage.readFromStorage('team-data/teams.json')
     if (teamsData && teamsData.teams) {
       let modified = false
       for (const team of Object.values(teamsData.teams)) {
@@ -202,7 +202,7 @@ function applyMigration(storage, safeName, mappings) {
           }
         }
       }
-      if (modified) storage.writeToStorage('team-data/teams.json', teamsData)
+      if (modified) await storage.writeToStorage('team-data/teams.json', teamsData)
     }
   }
 
@@ -303,61 +303,61 @@ describe('sync preview — diff computation', () => {
 })
 
 describe('sync preview — removedUsage scanning', () => {
-  it('finds people assigned to removed values', () => {
+  it('finds people assigned to removed values', async () => {
     const storage = makeStorage(baseStorageData())
-    const usage = scanOrphanedUsage(storage, 'component', ['Operator'])
+    const usage = await scanOrphanedUsage(storage, 'component', ['Operator'])
 
     expect(usage.Operator).toBeDefined()
     expect(usage.Operator.people).toEqual(['Carol Lee'])
   })
 
-  it('finds teams using removed values', () => {
+  it('finds teams using removed values', async () => {
     const storage = makeStorage(baseStorageData())
-    const usage = scanOrphanedUsage(storage, 'component', ['Operator'])
+    const usage = await scanOrphanedUsage(storage, 'component', ['Operator'])
 
     expect(usage.Operator.teams).toEqual(['ML Team'])
   })
 
-  it('finds people with array fields containing removed values', () => {
+  it('finds people with array fields containing removed values', async () => {
     const storage = makeStorage(baseStorageData())
-    const usage = scanOrphanedUsage(storage, 'component', ['Dashboard'])
+    const usage = await scanOrphanedUsage(storage, 'component', ['Dashboard'])
 
     expect(usage.Dashboard.people).toContain('Alice Smith')
     expect(usage.Dashboard.people).toContain('Bob Jones')
   })
 
-  it('handles multiple removed values', () => {
+  it('handles multiple removed values', async () => {
     const storage = makeStorage(baseStorageData())
-    const usage = scanOrphanedUsage(storage, 'component', ['Dashboard', 'Operator'])
+    const usage = await scanOrphanedUsage(storage, 'component', ['Dashboard', 'Operator'])
 
     expect(Object.keys(usage)).toHaveLength(2)
     expect(usage.Dashboard.people).toHaveLength(2)
     expect(usage.Operator.people).toHaveLength(1)
   })
 
-  it('returns empty for values not in any records', () => {
+  it('returns empty for values not in any records', async () => {
     const storage = makeStorage(baseStorageData())
-    const usage = scanOrphanedUsage(storage, 'component', ['NonexistentValue'])
+    const usage = await scanOrphanedUsage(storage, 'component', ['NonexistentValue'])
 
     expect(usage).toEqual({})
   })
 
-  it('skips deleted field definitions', () => {
+  it('skips deleted field definitions', async () => {
     const data = baseStorageData()
     data['team-data/field-definitions.json'].personFields[0].deleted = true
     const storage = makeStorage(data)
-    const usage = scanOrphanedUsage(storage, 'component', ['Dashboard'])
+    const usage = await scanOrphanedUsage(storage, 'component', ['Dashboard'])
 
     // Person field is deleted, so only team field matches
     expect(usage.Dashboard.people).toEqual([])
     expect(usage.Dashboard.teams).toEqual(['Platform'])
   })
 
-  it('skips fields not referencing the option set', () => {
+  it('skips fields not referencing the option set', async () => {
     const data = baseStorageData()
     data['team-data/field-definitions.json'].personFields[0].optionsRef = 'other-set'
     const storage = makeStorage(data)
-    const usage = scanOrphanedUsage(storage, 'component', ['Dashboard'])
+    const usage = await scanOrphanedUsage(storage, 'component', ['Dashboard'])
 
     // Person field references 'other-set', not 'component'
     expect(usage.Dashboard).toBeDefined()
@@ -431,43 +431,43 @@ describe('fuzzy suggestion matching', () => {
 })
 
 describe('migration preview — orphan detection', () => {
-  it('finds orphaned values not in current option set', () => {
+  it('finds orphaned values not in current option set', async () => {
     const data = baseStorageData()
     // Add a value to a person that's not in the option set
     data['team-data/registry.json'].people.alice._appFields.field_comp = 'OldComponent'
     const storage = makeStorage(data)
 
     // Scan for values in records that aren't in the option set
-    const usage = scanOrphanedUsage(storage, 'component', ['OldComponent'])
+    const usage = await scanOrphanedUsage(storage, 'component', ['OldComponent'])
     expect(usage.OldComponent).toBeDefined()
     expect(usage.OldComponent.people).toContain('Alice Smith')
   })
 
-  it('identifies orphans in both person and team records', () => {
+  it('identifies orphans in both person and team records', async () => {
     const data = baseStorageData()
     data['team-data/registry.json'].people.alice._appFields.field_comp = 'Legacy'
     data['team-data/teams.json'].teams.team_1.metadata.field_tcomp = 'Legacy'
     const storage = makeStorage(data)
 
-    const usage = scanOrphanedUsage(storage, 'component', ['Legacy'])
+    const usage = await scanOrphanedUsage(storage, 'component', ['Legacy'])
     expect(usage.Legacy.people).toContain('Alice Smith')
     expect(usage.Legacy.teams).toContain('Platform')
   })
 })
 
 describe('migration apply — cascading changes', () => {
-  it('remaps string values in person records', () => {
+  it('remaps string values in person records', async () => {
     const storage = makeStorage(baseStorageData())
-    const result = applyMigration(storage, 'component', { Operator: 'Dashboard' })
+    const result = await applyMigration(storage, 'component', { Operator: 'Dashboard' })
 
     expect(result.updated).toBeGreaterThan(0)
     const registry = storage._data['team-data/registry.json']
     expect(registry.people.carol._appFields.field_comp).toBe('Dashboard')
   })
 
-  it('remaps values in array fields', () => {
+  it('remaps values in array fields', async () => {
     const storage = makeStorage(baseStorageData())
-    applyMigration(storage, 'component', { Notebooks: 'Operator' })
+    await applyMigration(storage, 'component', { Notebooks: 'Operator' })
 
     const registry = storage._data['team-data/registry.json']
     // Bob had ['Dashboard', 'Notebooks'] => ['Dashboard', 'Operator']
@@ -476,17 +476,17 @@ describe('migration apply — cascading changes', () => {
     expect(registry.people.bob._appFields.field_comp).not.toContain('Notebooks')
   })
 
-  it('remaps string values in team records', () => {
+  it('remaps string values in team records', async () => {
     const storage = makeStorage(baseStorageData())
-    applyMigration(storage, 'component', { Operator: 'Dashboard' })
+    await applyMigration(storage, 'component', { Operator: 'Dashboard' })
 
     const teams = storage._data['team-data/teams.json']
     expect(teams.teams.team_2.metadata.field_tcomp).toBe('Dashboard')
   })
 
-  it('remaps values in team array fields', () => {
+  it('remaps values in team array fields', async () => {
     const storage = makeStorage(baseStorageData())
-    applyMigration(storage, 'component', { Notebooks: 'Operator' })
+    await applyMigration(storage, 'component', { Notebooks: 'Operator' })
 
     const teams = storage._data['team-data/teams.json']
     // team_1 had ['Dashboard', 'Notebooks'] => ['Dashboard', 'Operator']
@@ -494,72 +494,72 @@ describe('migration apply — cascading changes', () => {
     expect(teams.teams.team_1.metadata.field_tcomp).toContain('Operator')
   })
 
-  it('removes values when mapped to null (string field)', () => {
+  it('removes values when mapped to null (string field)', async () => {
     const storage = makeStorage(baseStorageData())
-    applyMigration(storage, 'component', { Operator: null })
+    await applyMigration(storage, 'component', { Operator: null })
 
     const registry = storage._data['team-data/registry.json']
     // Carol had 'Operator' => field should be deleted
     expect(registry.people.carol._appFields.field_comp).toBeUndefined()
   })
 
-  it('removes values when mapped to null (array field)', () => {
+  it('removes values when mapped to null (array field)', async () => {
     const storage = makeStorage(baseStorageData())
-    applyMigration(storage, 'component', { Notebooks: null })
+    await applyMigration(storage, 'component', { Notebooks: null })
 
     const registry = storage._data['team-data/registry.json']
     // Bob had ['Dashboard', 'Notebooks'] => ['Dashboard']
     expect(registry.people.bob._appFields.field_comp).toEqual(['Dashboard'])
   })
 
-  it('deduplicates after mapping two values to the same target', () => {
+  it('deduplicates after mapping two values to the same target', async () => {
     const data = baseStorageData()
     data['team-data/registry.json'].people.bob._appFields.field_comp = ['OldA', 'OldB', 'Dashboard']
     data['team-data/field-options/component.json'].values = ['Dashboard', 'Notebooks', 'Operator']
     const storage = makeStorage(data)
 
     // Both OldA and OldB map to Dashboard, Bob already has Dashboard
-    applyMigration(storage, 'component', { OldA: 'Dashboard', OldB: 'Dashboard' })
+    await applyMigration(storage, 'component', { OldA: 'Dashboard', OldB: 'Dashboard' })
 
     const registry = storage._data['team-data/registry.json']
     expect(registry.people.bob._appFields.field_comp).toEqual(['Dashboard'])
   })
 
-  it('removes null-mapped values from team arrays', () => {
+  it('removes null-mapped values from team arrays', async () => {
     const storage = makeStorage(baseStorageData())
-    applyMigration(storage, 'component', { Dashboard: null })
+    await applyMigration(storage, 'component', { Dashboard: null })
 
     const teams = storage._data['team-data/teams.json']
     // team_1 had ['Dashboard', 'Notebooks'] => ['Notebooks']
     expect(teams.teams.team_1.metadata.field_tcomp).toEqual(['Notebooks'])
   })
 
-  it('removes team string field when mapped to null', () => {
+  it('removes team string field when mapped to null', async () => {
     const storage = makeStorage(baseStorageData())
-    applyMigration(storage, 'component', { Operator: null })
+    await applyMigration(storage, 'component', { Operator: null })
 
     const teams = storage._data['team-data/teams.json']
     // team_2 had 'Operator' (string) => field deleted
     expect(teams.teams.team_2.metadata.field_tcomp).toBeUndefined()
   })
 
-  it('rejects mapping to a value not in the option set', () => {
+  it('rejects mapping to a value not in the option set', async () => {
     const storage = makeStorage(baseStorageData())
-    expect(() => {
+    await expect(
       applyMigration(storage, 'component', { Dashboard: 'NonexistentValue' })
-    }).toThrow('not in the current option set')
+    ).rejects.toThrow('not in the current option set')
   })
 
-  it('throws for non-existent option set', () => {
+  it('throws for non-existent option set', async () => {
     const storage = makeStorage(baseStorageData())
-    expect(() => {
+    await expect(
       applyMigration(storage, 'nonexistent', { X: 'Y' })
-    }).toThrow('not found')
+    ).rejects.toThrow('not found')
   })
 
-  it('leaves unmapped values unchanged', () => {
+  it('leaves unmapped values unchanged', async () => {
     const storage = makeStorage(baseStorageData())
-    applyMigration(storage, 'component', { Operator: 'Dashboard' })
+    await applyMigration(storage, 'component', { Operator: 'Dashboard' })
 
     const registry = storage._data['team-data/registry.json']
     // Alice had 'Dashboard' — not in mappings, should stay
@@ -568,24 +568,24 @@ describe('migration apply — cascading changes', () => {
     expect(registry.people.bob._appFields.field_comp).toEqual(['Dashboard', 'Notebooks'])
   })
 
-  it('handles people with no _appFields', () => {
+  it('handles people with no _appFields', async () => {
     const storage = makeStorage(baseStorageData())
     // Dave has empty _appFields — should not throw
-    const result = applyMigration(storage, 'component', { Operator: 'Dashboard' })
+    const result = await applyMigration(storage, 'component', { Operator: 'Dashboard' })
     expect(result.updated).toBeGreaterThan(0)
   })
 
-  it('handles teams with no metadata', () => {
+  it('handles teams with no metadata', async () => {
     const data = baseStorageData()
     data['team-data/teams.json'].teams.team_3 = { id: 'team_3', name: 'Empty' }
     const storage = makeStorage(data)
-    const result = applyMigration(storage, 'component', { Operator: 'Dashboard' })
+    const result = await applyMigration(storage, 'component', { Operator: 'Dashboard' })
     expect(result.updated).toBeGreaterThan(0)
   })
 
-  it('returns correct count of mappings applied', () => {
+  it('returns correct count of mappings applied', async () => {
     const storage = makeStorage(baseStorageData())
-    const result = applyMigration(storage, 'component', {
+    const result = await applyMigration(storage, 'component', {
       Operator: 'Dashboard',
       Notebooks: null
     })
@@ -659,7 +659,7 @@ describe('end-to-end: link, detect orphans, migrate', () => {
     expect(optionData.orphanedValues).toContain('Legacy Tool')
 
     // Step 3: Scan usage of orphaned values
-    const usage = scanOrphanedUsage(storage, 'component', ['Old Service', 'Legacy Tool'])
+    const usage = await scanOrphanedUsage(storage, 'component', ['Old Service', 'Legacy Tool'])
     expect(usage['Old Service'].people).toContain('Alice Smith')
     expect(usage['Legacy Tool'].people).toContain('Carol Lee')
 
@@ -668,7 +668,7 @@ describe('end-to-end: link, detect orphans, migrate', () => {
     expect(suggestions['Old Service']).toBe('New Service') // substring match: 'service'
 
     // Step 5: Apply migration
-    const migrationResult = applyMigration(storage, 'component', {
+    const migrationResult = await applyMigration(storage, 'component', {
       'Old Service': 'New Service',
       'Legacy Tool': null  // Remove
     })

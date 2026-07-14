@@ -6,27 +6,34 @@
  */
 
 const crypto = require('crypto');
+const { Mutex } = require('async-mutex');
 const { appendAuditEntry } = require('../../../shared/server/audit-log');
 
 const STORAGE_KEY = 'team-data/field-exceptions.json';
+
+const storageMutexes = new Map();
+function getStorageMutex(key) {
+  if (!storageMutexes.has(key)) storageMutexes.set(key, new Mutex());
+  return storageMutexes.get(key);
+}
 
 function generateId() {
   return 'fex_' + crypto.randomBytes(4).toString('hex');
 }
 
-function readExceptions(storage) {
-  return storage.readFromStorage(STORAGE_KEY) || { version: 1, exceptions: [] };
+async function readExceptions(storage) {
+  return (await storage.readFromStorage(STORAGE_KEY)) || { version: 1, exceptions: [] };
 }
 
-function writeExceptions(storage, data) {
-  storage.writeToStorage(STORAGE_KEY, data);
+async function writeExceptions(storage, data) {
+  await storage.writeToStorage(STORAGE_KEY, data);
 }
 
 /**
  * List exceptions with optional filters.
  */
-function listExceptions(storage, filters = {}) {
-  const data = readExceptions(storage);
+async function listExceptions(storage, filters = {}) {
+  const data = await readExceptions(storage);
   let results = data.exceptions;
 
   if (filters.entityType) {
@@ -45,16 +52,16 @@ function listExceptions(storage, filters = {}) {
 /**
  * Get a single exception by ID.
  */
-function getException(storage, id) {
-  const data = readExceptions(storage);
+async function getException(storage, id) {
+  const data = await readExceptions(storage);
   return data.exceptions.find(e => e.id === id) || null;
 }
 
 /**
  * Find an exception by its natural key tuple.
  */
-function findException(storage, entityType, entityId, fieldId) {
-  const data = readExceptions(storage);
+async function findException(storage, entityType, entityId, fieldId) {
+  const data = await readExceptions(storage);
   return data.exceptions.find(
     e => e.entityType === entityType && e.entityId === entityId && e.fieldId === fieldId
   ) || null;
@@ -64,83 +71,89 @@ function findException(storage, entityType, entityId, fieldId) {
  * Create or upsert an exception.
  * Returns { exception, created } where created is true for new, false for upsert.
  */
-function createException(storage, { entityType, entityId, fieldId, reason }, actorEmail) {
-  const data = readExceptions(storage);
-  const existing = data.exceptions.find(
-    e => e.entityType === entityType && e.entityId === entityId && e.fieldId === fieldId
-  );
+async function createException(storage, { entityType, entityId, fieldId, reason }, actorEmail) {
+  const mutex = getStorageMutex(STORAGE_KEY);
+  return mutex.runExclusive(async () => {
+    const data = await readExceptions(storage);
+    const existing = data.exceptions.find(
+      e => e.entityType === entityType && e.entityId === entityId && e.fieldId === fieldId
+    );
 
-  if (existing) {
-    // Upsert: update reason
-    existing.reason = reason;
-    existing.createdAt = new Date().toISOString();
-    existing.createdBy = actorEmail;
-    writeExceptions(storage, data);
+    if (existing) {
+      // Upsert: update reason
+      existing.reason = reason;
+      existing.createdAt = new Date().toISOString();
+      existing.createdBy = actorEmail;
+      await writeExceptions(storage, data);
 
-    appendAuditEntry(storage, {
-      action: 'field-exception.update',
+      await appendAuditEntry(storage, {
+        action: 'field-exception.update',
+        actor: actorEmail,
+        entityType: 'field-exception',
+        entityId: existing.id,
+        detail: `Updated exception reason for ${entityType} "${entityId}" on field "${fieldId}"`
+      });
+
+      return { exception: existing, created: false };
+    }
+
+    const exception = {
+      id: generateId(),
+      entityType,
+      entityId,
+      fieldId,
+      reason,
+      createdAt: new Date().toISOString(),
+      createdBy: actorEmail
+    };
+
+    data.exceptions.push(exception);
+    await writeExceptions(storage, data);
+
+    await appendAuditEntry(storage, {
+      action: 'field-exception.create',
       actor: actorEmail,
       entityType: 'field-exception',
-      entityId: existing.id,
-      detail: `Updated exception reason for ${entityType} "${entityId}" on field "${fieldId}"`
+      entityId: exception.id,
+      detail: `Created exception for ${entityType} "${entityId}" on field "${fieldId}": ${reason}`
     });
 
-    return { exception: existing, created: false };
-  }
-
-  const exception = {
-    id: generateId(),
-    entityType,
-    entityId,
-    fieldId,
-    reason,
-    createdAt: new Date().toISOString(),
-    createdBy: actorEmail
-  };
-
-  data.exceptions.push(exception);
-  writeExceptions(storage, data);
-
-  appendAuditEntry(storage, {
-    action: 'field-exception.create',
-    actor: actorEmail,
-    entityType: 'field-exception',
-    entityId: exception.id,
-    detail: `Created exception for ${entityType} "${entityId}" on field "${fieldId}": ${reason}`
+    return { exception, created: true };
   });
-
-  return { exception, created: true };
 }
 
 /**
  * Remove an exception by ID.
  * Returns the removed exception, or null if not found.
  */
-function removeException(storage, id, actorEmail) {
-  const data = readExceptions(storage);
-  const idx = data.exceptions.findIndex(e => e.id === id);
-  if (idx === -1) return null;
+async function removeException(storage, id, actorEmail) {
+  const mutex = getStorageMutex(STORAGE_KEY);
+  return mutex.runExclusive(async () => {
+    const data = await readExceptions(storage);
+    const idx = data.exceptions.findIndex(e => e.id === id);
+    if (idx === -1) return null;
 
-  const [removed] = data.exceptions.splice(idx, 1);
-  writeExceptions(storage, data);
+    const [removed] = data.exceptions.splice(idx, 1);
+    await writeExceptions(storage, data);
 
-  appendAuditEntry(storage, {
-    action: 'field-exception.remove',
-    actor: actorEmail,
-    entityType: 'field-exception',
-    entityId: id,
-    detail: `Removed exception for ${removed.entityType} "${removed.entityId}" on field "${removed.fieldId}"`
+    await appendAuditEntry(storage, {
+      action: 'field-exception.remove',
+      actor: actorEmail,
+      entityType: 'field-exception',
+      entityId: id,
+      detail: `Removed exception for ${removed.entityType} "${removed.entityId}" on field "${removed.fieldId}"`
+    });
+
+    return removed;
   });
-
-  return removed;
 }
 
 /**
  * Build an exception map for O(1) lookups during completeness checks.
  * Key format: "entityType:entityId:fieldId"
  */
-function getExceptionMap(storage) {
-  const data = readExceptions(storage);
+async function getExceptionMap(storage) {
+  const data = await readExceptions(storage);
   const map = new Map();
   for (const ex of data.exceptions) {
     map.set(`${ex.entityType}:${ex.entityId}:${ex.fieldId}`, ex);

@@ -85,13 +85,13 @@ describe('git-sync', () => {
   })
 
   describe('getSyncStatus', () => {
-    it('returns empty modules when no config', () => {
+    it('returns empty modules when no config', async () => {
       const storage = { readFromStorage: vi.fn(() => null), writeToStorage: vi.fn(), DATA_DIR: '/tmp' }
-      const status = gitSync.getSyncStatus(storage)
+      const status = await gitSync.getSyncStatus(storage)
       expect(status.modules).toEqual([])
     })
 
-    it('returns status for git-static modules only', () => {
+    it('returns status for git-static modules only', async () => {
       const storage = {
         readFromStorage: vi.fn(() => ({
           modules: [
@@ -102,7 +102,7 @@ describe('git-sync', () => {
         writeToStorage: vi.fn(),
         DATA_DIR: '/tmp'
       }
-      const status = gitSync.getSyncStatus(storage)
+      const status = await gitSync.getSyncStatus(storage)
       expect(status.modules).toHaveLength(1)
       expect(status.modules[0].slug).toBe('rfe')
       expect(status.modules[0].lastSyncStatus).toBe('success')

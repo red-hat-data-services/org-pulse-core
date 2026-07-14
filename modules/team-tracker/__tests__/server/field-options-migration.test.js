@@ -7,9 +7,9 @@ const fieldStore = require('../../../../shared/server/field-store')
 function makeStorage(initial = {}) {
   const data = { ...initial }
   return {
-    readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
-    writeToStorage: vi.fn((key, val) => { data[key] = JSON.parse(JSON.stringify(val)) }),
-    listStorageFiles(dir) {
+    async readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
+    writeToStorage: vi.fn(async (key, val) => { data[key] = JSON.parse(JSON.stringify(val)) }),
+    async listStorageFiles(dir) {
       return Object.keys(data)
         .filter(k => k.startsWith(dir + '/') && k.endsWith('.json'))
         .map(k => k.split('/').pop())
@@ -68,9 +68,9 @@ function baseStorageData() {
 
 describe('field-options-migration', () => {
   describe('previewMigration', () => {
-    it('extracts unique values from person field', () => {
+    it('extracts unique values from person field', async () => {
       const storage = makeStorage(baseStorageData())
-      const result = previewMigration(storage, 'field_comp')
+      const result = await previewMigration(storage, 'field_comp')
 
       expect(result.error).toBeUndefined()
       expect(result.scope).toBe('person')
@@ -80,7 +80,7 @@ describe('field-options-migration', () => {
       expect(result.recordCount).toBe(3)
     })
 
-    it('extracts unique values from team field', () => {
+    it('extracts unique values from team field', async () => {
       const data = baseStorageData()
       data['team-data/field-definitions.json'].teamFields.push({
         id: 'field_region', label: 'Region', type: 'free-text', multiValue: false,
@@ -91,52 +91,52 @@ describe('field-options-migration', () => {
       data['team-data/teams.json'].teams.team_2.metadata.field_region = 'EMEA'
       const storage = makeStorage(data)
 
-      const result = previewMigration(storage, 'field_region')
+      const result = await previewMigration(storage, 'field_region')
       expect(result.scope).toBe('team')
       expect(result.uniqueValues).toEqual(['APAC', 'EMEA'])
       expect(result.recordCount).toBe(2)
     })
 
-    it('returns error for nonexistent field', () => {
+    it('returns error for nonexistent field', async () => {
       const storage = makeStorage(baseStorageData())
-      const result = previewMigration(storage, 'field_nonexistent')
+      const result = await previewMigration(storage, 'field_nonexistent')
       expect(result.error).toBe('Field not found')
     })
 
-    it('returns error for field already linked to options', () => {
+    it('returns error for field already linked to options', async () => {
       const data = baseStorageData()
       data['team-data/field-definitions.json'].personFields[0].optionsRef = 'components'
       const storage = makeStorage(data)
 
-      const result = previewMigration(storage, 'field_comp')
+      const result = await previewMigration(storage, 'field_comp')
       expect(result.error).toBe('Field already linked to a field option set')
     })
 
-    it('handles array values in person fields', () => {
+    it('handles array values in person fields', async () => {
       const data = baseStorageData()
       data['team-data/registry.json'].people.person1._appFields.field_comp = ['Platform Core', 'Infra']
       const storage = makeStorage(data)
 
-      const result = previewMigration(storage, 'field_comp')
+      const result = await previewMigration(storage, 'field_comp')
       expect(result.uniqueValues).toContain('Platform Core')
       expect(result.uniqueValues).toContain('Infra')
       expect(result.uniqueValues).toContain('ML Models')
     })
 
-    it('skips deleted fields', () => {
+    it('skips deleted fields', async () => {
       const data = baseStorageData()
       data['team-data/field-definitions.json'].personFields[0].deleted = true
       const storage = makeStorage(data)
 
-      const result = previewMigration(storage, 'field_comp')
+      const result = await previewMigration(storage, 'field_comp')
       expect(result.error).toBe('Field not found')
     })
   })
 
   describe('executeMigration', () => {
-    it('creates option set with extracted values', () => {
+    it('creates option set with extracted values', async () => {
       const storage = makeStorage(baseStorageData())
-      const result = executeMigration(storage, {
+      const result = await executeMigration(storage, {
         sourceFieldId: 'field_comp',
         optionSetName: 'components',
         optionSetLabel: 'Components'
@@ -151,24 +151,24 @@ describe('field-options-migration', () => {
       expect(options.values).toContain('ML Models')
     })
 
-    it('updates source field with optionsRef', () => {
+    it('updates source field with optionsRef', async () => {
       const storage = makeStorage(baseStorageData())
-      executeMigration(storage, {
+      await executeMigration(storage, {
         sourceFieldId: 'field_comp',
         optionSetName: 'components',
         optionSetLabel: 'Components'
       }, 'admin@test.com')
 
-      const defs = fieldStore.readFieldDefinitions(storage)
+      const defs = await fieldStore.readFieldDefinitions(storage)
       const field = defs.personFields.find(f => f.id === 'field_comp')
       expect(field.type).toBe('constrained')
       expect(field.multiValue).toBe(true)
       expect(field.optionsRef).toBe('components')
     })
 
-    it('converts string values to arrays in person records', () => {
+    it('converts string values to arrays in person records', async () => {
       const storage = makeStorage(baseStorageData())
-      executeMigration(storage, {
+      await executeMigration(storage, {
         sourceFieldId: 'field_comp',
         optionSetName: 'components',
         optionSetLabel: 'Components'
@@ -179,9 +179,9 @@ describe('field-options-migration', () => {
       expect(registry.people.person2._appFields.field_comp).toEqual(['ML Models'])
     })
 
-    it('creates counterpart team field when requested', () => {
+    it('creates counterpart team field when requested', async () => {
       const storage = makeStorage(baseStorageData())
-      const result = executeMigration(storage, {
+      const result = await executeMigration(storage, {
         sourceFieldId: 'field_comp',
         optionSetName: 'components',
         optionSetLabel: 'Components',
@@ -190,7 +190,7 @@ describe('field-options-migration', () => {
       }, 'admin@test.com')
 
       expect(result.counterpartFieldCreated).toBe(true)
-      const defs = fieldStore.readFieldDefinitions(storage)
+      const defs = await fieldStore.readFieldDefinitions(storage)
       const teamField = defs.teamFields.find(f => f.optionsRef === 'components')
       expect(teamField).toBeDefined()
       expect(teamField.label).toBe('Team Components')
@@ -198,9 +198,9 @@ describe('field-options-migration', () => {
       expect(teamField.multiValue).toBe(true)
     })
 
-    it('seeds counterpart team field from person members', () => {
+    it('seeds counterpart team field from person members', async () => {
       const storage = makeStorage(baseStorageData())
-      const result = executeMigration(storage, {
+      const result = await executeMigration(storage, {
         sourceFieldId: 'field_comp',
         optionSetName: 'components',
         optionSetLabel: 'Components',
@@ -210,7 +210,7 @@ describe('field-options-migration', () => {
 
       expect(result.teamsSeeded).toBe(2)
       const teams = storage._data['team-data/teams.json']
-      const defs = fieldStore.readFieldDefinitions(storage)
+      const defs = await fieldStore.readFieldDefinitions(storage)
       const teamField = defs.teamFields.find(f => f.optionsRef === 'components')
 
       // team_1 has person1 (Platform Core) and person2 (ML Models)
@@ -219,14 +219,14 @@ describe('field-options-migration', () => {
       expect(teams.teams.team_2.metadata[teamField.id]).toEqual(['ML Models'])
     })
 
-    it('returns error if option set already exists', () => {
+    it('returns error if option set already exists', async () => {
       const data = baseStorageData()
       data['team-data/field-options/components.json'] = {
         name: 'components', label: 'Components', values: ['A']
       }
       const storage = makeStorage(data)
 
-      const result = executeMigration(storage, {
+      const result = await executeMigration(storage, {
         sourceFieldId: 'field_comp',
         optionSetName: 'components',
         optionSetLabel: 'Components'
@@ -235,9 +235,9 @@ describe('field-options-migration', () => {
       expect(result.error).toMatch(/already exists/)
     })
 
-    it('returns error if source field not found', () => {
+    it('returns error if source field not found', async () => {
       const storage = makeStorage(baseStorageData())
-      const result = executeMigration(storage, {
+      const result = await executeMigration(storage, {
         sourceFieldId: 'field_nonexistent',
         optionSetName: 'test',
         optionSetLabel: 'Test'
@@ -246,9 +246,9 @@ describe('field-options-migration', () => {
       expect(result.error).toBe('Field not found')
     })
 
-    it('writes audit log entry', () => {
+    it('writes audit log entry', async () => {
       const storage = makeStorage(baseStorageData())
-      executeMigration(storage, {
+      await executeMigration(storage, {
         sourceFieldId: 'field_comp',
         optionSetName: 'components',
         optionSetLabel: 'Components'
@@ -261,7 +261,7 @@ describe('field-options-migration', () => {
       expect(entry.entityId).toBe('components')
     })
 
-    it('handles team-scope source field migration', () => {
+    it('handles team-scope source field migration', async () => {
       const data = baseStorageData()
       data['team-data/field-definitions.json'].teamFields.push({
         id: 'field_region', label: 'Region', type: 'free-text', multiValue: false,
@@ -272,7 +272,7 @@ describe('field-options-migration', () => {
       data['team-data/teams.json'].teams.team_2.metadata.field_region = 'EMEA'
       const storage = makeStorage(data)
 
-      const result = executeMigration(storage, {
+      const result = await executeMigration(storage, {
         sourceFieldId: 'field_region',
         optionSetName: 'regions',
         optionSetLabel: 'Regions'
@@ -281,7 +281,7 @@ describe('field-options-migration', () => {
       expect(result.valuesExtracted).toBe(2)
       expect(result.sourceFieldUpdated).toBe(true)
 
-      const defs = fieldStore.readFieldDefinitions(storage)
+      const defs = await fieldStore.readFieldDefinitions(storage)
       const field = defs.teamFields.find(f => f.id === 'field_region')
       expect(field.optionsRef).toBe('regions')
 

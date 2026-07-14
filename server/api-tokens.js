@@ -76,13 +76,13 @@ let _storage = null;
 
 const STORAGE_KEY = 'api-tokens.json';
 
-function _loadTokens() {
-  const data = _storage.readFromStorage(STORAGE_KEY);
+async function _loadTokens() {
+  const data = await _storage.readFromStorage(STORAGE_KEY);
   return (data && Array.isArray(data.tokens)) ? data.tokens : [];
 }
 
-function _saveTokens(tokens) {
-  _storage.writeToStorage(STORAGE_KEY, { tokens });
+async function _saveTokens(tokens) {
+  await _storage.writeToStorage(STORAGE_KEY, { tokens });
 }
 
 function _buildIndex(tokens) {
@@ -93,9 +93,9 @@ function _buildIndex(tokens) {
   return map;
 }
 
-function _ensureIndex() {
+async function _ensureIndex() {
   if (!_hashIndex) {
-    _hashIndex = _buildIndex(_loadTokens());
+    _hashIndex = _buildIndex(await _loadTokens());
   }
   return _hashIndex;
 }
@@ -121,9 +121,9 @@ function _withWriteLock(fn) {
  * Migrate old scope names to new unified releases scopes on existing tokens.
  * Runs once on startup. Idempotent.
  */
-function _migrateScopes() {
+async function _migrateScopes() {
   if (!_storage) return;
-  const tokens = _loadTokens();
+  const tokens = await _loadTokens();
   let migrated = 0;
   for (const token of tokens) {
     if (!token.scopes || !Array.isArray(token.scopes)) continue;
@@ -145,7 +145,7 @@ function _migrateScopes() {
     }
   }
   if (migrated > 0) {
-    _saveTokens(tokens);
+    await _saveTokens(tokens);
     _invalidateIndex();
     console.log(`[api-tokens] Migrated scopes on ${migrated} token(s): old release module scopes -> releases:*`);
   }
@@ -156,7 +156,7 @@ function _migrateScopes() {
  * @param {object} storageModule
  * @param {{ scopeRegistry?: object }} [options]
  */
-function init(storageModule, options = {}) {
+async function init(storageModule, options = {}) {
   _storage = storageModule;
   _scopeRegistry = options.scopeRegistry || null;
   if (options.scopeMigrationMap) {
@@ -164,7 +164,7 @@ function init(storageModule, options = {}) {
   }
   _hashIndex = null;
   _lastUsedWriteTimes = new Map();
-  _migrateScopes();
+  await _migrateScopes();
 }
 
 /**
@@ -180,9 +180,9 @@ function generateToken() {
  * Returns { token, id, name, scopes, expiresAt } on success, or throws on validation error.
  */
 function createToken(ownerEmail, name, expiresIn, scopes) {
-  return _withWriteLock(() => {
+  return _withWriteLock(async () => {
     const validatedScopes = validateScopes(scopes);
-    const tokens = _loadTokens();
+    const tokens = await _loadTokens();
 
     // Per-user limit
     const userTokens = tokens.filter(t => t.ownerEmail === ownerEmail);
@@ -221,7 +221,7 @@ function createToken(ownerEmail, name, expiresIn, scopes) {
     };
 
     tokens.push(record);
-    _saveTokens(tokens);
+    await _saveTokens(tokens);
     _invalidateIndex();
 
     return {
@@ -238,11 +238,11 @@ function createToken(ownerEmail, name, expiresIn, scopes) {
  * Validate a raw token string. Returns the token record if valid, null otherwise.
  * Does NOT update lastUsedAt (caller should do that separately).
  */
-function validateToken(rawToken) {
+async function validateToken(rawToken) {
   if (!rawToken || !rawToken.startsWith(TOKEN_PREFIX)) return null;
 
   const hash = _hashToken(rawToken);
-  const index = _ensureIndex();
+  const index = await _ensureIndex();
   const record = index.get(hash);
 
   if (!record) return null;
@@ -259,8 +259,8 @@ function validateToken(rawToken) {
  * Quick hash-only check: does a valid, non-expired token exist for this raw token?
  * Used by proxySecretGuard for inline validation.
  */
-function isValidToken(rawToken) {
-  return validateToken(rawToken) !== null;
+async function isValidToken(rawToken) {
+  return (await validateToken(rawToken)) !== null;
 }
 
 /**
@@ -275,12 +275,12 @@ function touchLastUsed(tokenId) {
   _lastUsedWriteTimes.set(tokenId, now);
 
   // Fire-and-forget write
-  _withWriteLock(() => {
-    const tokens = _loadTokens();
+  _withWriteLock(async () => {
+    const tokens = await _loadTokens();
     const token = tokens.find(t => t.id === tokenId);
     if (token) {
       token.lastUsedAt = new Date().toISOString();
-      _saveTokens(tokens);
+      await _saveTokens(tokens);
       _invalidateIndex();
     }
   }).catch(err => console.error('touchLastUsed write error:', err));
@@ -289,8 +289,8 @@ function touchLastUsed(tokenId) {
 /**
  * List tokens for a specific user (metadata only, no hashes).
  */
-function listUserTokens(ownerEmail) {
-  const tokens = _loadTokens();
+async function listUserTokens(ownerEmail) {
+  const tokens = await _loadTokens();
   return tokens
     .filter(t => t.ownerEmail === ownerEmail)
     .map(sanitizeToken);
@@ -299,8 +299,8 @@ function listUserTokens(ownerEmail) {
 /**
  * List all tokens (admin view, metadata only).
  */
-function listAllTokens() {
-  const tokens = _loadTokens();
+async function listAllTokens() {
+  const tokens = await _loadTokens();
   return tokens.map(sanitizeToken);
 }
 
@@ -327,9 +327,9 @@ function sanitizeToken(t) {
  * Returns updated sanitized token or null if not found.
  */
 function updateTokenScopes(tokenId, ownerEmail, scopes) {
-  return _withWriteLock(() => {
+  return _withWriteLock(async () => {
     const validatedScopes = validateScopes(scopes);
-    const tokens = _loadTokens();
+    const tokens = await _loadTokens();
     const token = tokens.find(t => {
       if (t.id !== tokenId) return false;
       if (ownerEmail && t.ownerEmail !== ownerEmail) return false;
@@ -339,7 +339,7 @@ function updateTokenScopes(tokenId, ownerEmail, scopes) {
     if (!token) return null;
 
     token.scopes = validatedScopes;
-    _saveTokens(tokens);
+    await _saveTokens(tokens);
     _invalidateIndex();
     return sanitizeToken(token);
   });
@@ -350,8 +350,8 @@ function updateTokenScopes(tokenId, ownerEmail, scopes) {
  * If ownerEmail is provided, only revoke if the token belongs to that user.
  */
 function revokeToken(tokenId, ownerEmail) {
-  return _withWriteLock(() => {
-    const tokens = _loadTokens();
+  return _withWriteLock(async () => {
+    const tokens = await _loadTokens();
     const idx = tokens.findIndex(t => {
       if (t.id !== tokenId) return false;
       if (ownerEmail && t.ownerEmail !== ownerEmail) return false;
@@ -361,7 +361,7 @@ function revokeToken(tokenId, ownerEmail) {
     if (idx === -1) return false;
 
     tokens.splice(idx, 1);
-    _saveTokens(tokens);
+    await _saveTokens(tokens);
     _invalidateIndex();
     _lastUsedWriteTimes.delete(tokenId);
     return true;

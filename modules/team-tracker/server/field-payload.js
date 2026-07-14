@@ -39,14 +39,14 @@ function enrichPerson(person, personFieldDefs, options = {}) {
  * @param {Function} optionsResolver - (refName) => values array
  * @returns {{ personFieldDefs: Array, teamFieldDefs: Array }}
  */
-function resolveFieldDefinitions(storage, optionsResolver) {
-  const fieldDefs = fieldStore.readFieldDefinitions(storage);
+async function resolveFieldDefinitions(storage, optionsResolver) {
+  const fieldDefs = await fieldStore.readFieldDefinitions(storage);
   const personFieldDefs = fieldDefs ? fieldDefs.personFields.filter(f => !f.deleted) : [];
   const teamFieldDefs = fieldDefs ? fieldDefs.teamFields.filter(f => !f.deleted) : [];
 
   for (const field of [...personFieldDefs, ...teamFieldDefs]) {
     if (field.optionsRef && !field.allowedValues) {
-      const values = optionsResolver(field.optionsRef);
+      const values = await optionsResolver(field.optionsRef);
       if (values) {
         field.allowedValues = values;
         field._resolvedFromOptions = true;

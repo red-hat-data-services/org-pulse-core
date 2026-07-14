@@ -20,7 +20,7 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
 
   // ─── Permission-based filtering ───
 
-  function filterExceptionsForUser(exceptions, req) {
+  async function filterExceptionsForUser(exceptions, req) {
     if (req.isAdmin || req.isTeamAdmin) return exceptions;
     if (!req.isAdmin && !req.isTeamAdmin && !req.isManager) return [];
 
@@ -28,11 +28,11 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
     const permissions = require('../../../../shared/server/permissions');
     const { getManagerPurview } = require('../manager-purview');
 
-    const registry = readFromStorage('team-data/registry.json');
+    const registry = await readFromStorage('team-data/registry.json');
     if (!registry) return [];
 
     const teamStore = require('../../../../shared/server/team-store');
-    const teamsData = teamStore.readTeams(storage);
+    const teamsData = await teamStore.readTeams(storage);
 
     const managedUids = permissions.getManagedUids(req.userUid, permissions.buildManagerMap(registry));
     const purview = getManagerPurview(req.userUid, registry, teamsData, { includeIndirect: false });
@@ -71,14 +71,14 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
    *       200:
    *         description: Filtered exceptions list
    */
-  router.get('/field-exceptions', requireScope('roster:read'), function(req, res) {
+  router.get('/field-exceptions', requireScope('roster:read'), async function(req, res) {
     const filters = {};
     if (req.query.entityType) filters.entityType = req.query.entityType;
     if (req.query.entityId) filters.entityId = req.query.entityId;
     if (req.query.fieldId) filters.fieldId = req.query.fieldId;
 
-    let exceptions = fieldExceptionsStore.listExceptions(storage, filters);
-    exceptions = filterExceptionsForUser(exceptions, req);
+    let exceptions = await fieldExceptionsStore.listExceptions(storage, filters);
+    exceptions = await filterExceptionsForUser(exceptions, req);
 
     res.json({ exceptions });
   });
@@ -119,7 +119,7 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
    *       403:
    *         description: Not team-admin or admin
    */
-  router.post('/field-exceptions', requireTeamAdmin, requireScope('team-tracker:write'), function(req, res) {
+  router.post('/field-exceptions', requireTeamAdmin, requireScope('team-tracker:write'), async function(req, res) {
     const guarded = demoWriteGuard(res);
     if (guarded) return;
 
@@ -155,13 +155,13 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
 
     // Validate entity exists
     if (entityType === 'person') {
-      const registry = readFromStorage('team-data/registry.json');
+      const registry = await readFromStorage('team-data/registry.json');
       if (!registry || !registry.people || !registry.people[entityId]) {
         return res.status(400).json({ error: `Person "${entityId}" not found in registry` });
       }
     } else {
       const teamStore = require('../../../../shared/server/team-store');
-      const teamsData = teamStore.readTeams(storage);
+      const teamsData = await teamStore.readTeams(storage);
       if (!teamsData || !teamsData.teams || !teamsData.teams[entityId]) {
         return res.status(400).json({ error: `Team "${entityId}" not found` });
       }
@@ -170,7 +170,7 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
     // Validate fieldId exists and is not deleted (skip for __boards__ sentinel)
     if (fieldId !== '__boards__') {
       const fieldStore = require('../../../../shared/server/field-store');
-      const fieldDefs = fieldStore.readFieldDefinitions(storage);
+      const fieldDefs = await fieldStore.readFieldDefinitions(storage);
       const scope = entityType === 'person' ? 'personFields' : 'teamFields';
       const field = (fieldDefs[scope] || []).find(f => f.id === fieldId);
       if (!field) {
@@ -182,7 +182,7 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
     }
 
     const actorEmail = req.userEmail || 'unknown';
-    const { exception, created } = fieldExceptionsStore.createException(
+    const { exception, created } = await fieldExceptionsStore.createException(
       storage,
       { entityType, entityId, fieldId, reason: reason.trim() },
       actorEmail
@@ -213,12 +213,12 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
    *       403:
    *         description: Not team-admin or admin
    */
-  router.delete('/field-exceptions/:id', requireTeamAdmin, requireScope('team-tracker:write'), function(req, res) {
+  router.delete('/field-exceptions/:id', requireTeamAdmin, requireScope('team-tracker:write'), async function(req, res) {
     const guarded = demoWriteGuard(res);
     if (guarded) return;
 
     const actorEmail = req.userEmail || 'unknown';
-    const removed = fieldExceptionsStore.removeException(storage, req.params.id, actorEmail);
+    const removed = await fieldExceptionsStore.removeException(storage, req.params.id, actorEmail);
 
     if (!removed) {
       return res.status(404).json({ error: 'Exception not found' });

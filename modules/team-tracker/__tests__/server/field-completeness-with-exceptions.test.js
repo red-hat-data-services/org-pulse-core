@@ -4,21 +4,21 @@ import { describe, it, expect, vi } from 'vitest'
 function makeStorage(initial = {}) {
   const data = { ...initial }
   return {
-    readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
-    writeToStorage: vi.fn((key, val) => { data[key] = JSON.parse(JSON.stringify(val)) }),
-    listStorageFiles(dir) {
+    async readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
+    writeToStorage: vi.fn(async (key, val) => { data[key] = JSON.parse(JSON.stringify(val)) }),
+    listStorageFiles: vi.fn(async (dir) => {
       return Object.keys(data)
         .filter(k => k.startsWith(dir + '/') && k.endsWith('.json'))
         .map(k => k.split('/').pop())
-    },
-    deleteStorageDirectory: vi.fn(),
+    }),
+    deleteStorageDirectory: vi.fn().mockResolvedValue(),
     _data: data
   }
 }
 
 // ─── Message Provider Tests ───
 
-function setupAndGetProvider(storageData) {
+async function setupAndGetProvider(storageData) {
   let capturedProvider = null
 
   const mockRouter = {
@@ -49,7 +49,7 @@ function setupAndGetProvider(storageData) {
   }
 
   const registerRoutes = require('../../server/index.js')
-  registerRoutes(mockRouter, context)
+  await registerRoutes(mockRouter, context)
 
   return { provider: capturedProvider, storage }
 }
@@ -108,7 +108,7 @@ describe('field-completeness with exceptions — message provider', () => {
     data['team-data/teams.json'].teams.team_b.metadata = { field_t1: 'Sprint 2' }
     data['team-data/teams.json'].teams.team_b.boards = [{ url: 'https://board.example.com/b' }]
 
-    const { provider } = setupAndGetProvider(data)
+    const { provider } = await setupAndGetProvider(data)
     const result = await provider.fn({ uid: 'mgr1', isManager: true, isAdmin: false, isTeamAdmin: false })
     expect(result).toHaveLength(1)
     expect(result[0].text).toContain('1 person')
@@ -127,7 +127,7 @@ describe('field-completeness with exceptions — message provider', () => {
       ]
     }
 
-    const { provider } = setupAndGetProvider(data)
+    const { provider } = await setupAndGetProvider(data)
     const result = await provider.fn({ uid: 'mgr1', isManager: true, isAdmin: false, isTeamAdmin: false })
     // bob's missing field is excepted, so no warnings
     expect(result).toEqual([])
@@ -147,7 +147,7 @@ describe('field-completeness with exceptions — message provider', () => {
       ]
     }
 
-    const { provider } = setupAndGetProvider(data)
+    const { provider } = await setupAndGetProvider(data)
     const result = await provider.fn({ uid: 'mgr1', isManager: true, isAdmin: false, isTeamAdmin: false })
     // team_b still has missing field_t1, so warning remains
     expect(result).toHaveLength(1)
@@ -170,7 +170,7 @@ describe('field-completeness with exceptions — message provider', () => {
       ]
     }
 
-    const { provider } = setupAndGetProvider(data)
+    const { provider } = await setupAndGetProvider(data)
     const result = await provider.fn({ uid: 'mgr1', isManager: true, isAdmin: false, isTeamAdmin: false })
     // All empty fields are excepted — no warnings
     expect(result).toEqual([])
@@ -179,7 +179,7 @@ describe('field-completeness with exceptions — message provider', () => {
 
 // ─── Field Completeness Endpoint Tests ───
 
-function setupRoutes(storageData) {
+async function setupRoutes(storageData) {
   const handlers = {}
   const mockRouter = {
     get(path, ...args) { handlers[`GET ${path}`] = args[args.length - 1] },
@@ -206,7 +206,7 @@ function setupRoutes(storageData) {
   }
 
   const registerRoutes = require('../../server/index.js')
-  registerRoutes(mockRouter, context)
+  await registerRoutes(mockRouter, context)
 
   return { handlers, storage }
 }
@@ -222,7 +222,7 @@ function mockRes() {
 }
 
 describe('field-completeness endpoint — includes fieldExceptions', () => {
-  it('includes fieldExceptions array in response', () => {
+  it('includes fieldExceptions array in response', async () => {
     const data = baseStorageData()
     data['team-data/field-exceptions.json'] = {
       version: 1,
@@ -230,28 +230,28 @@ describe('field-completeness endpoint — includes fieldExceptions', () => {
         { id: 'fex_1', entityType: 'person', entityId: 'bob', fieldId: 'field_f1', reason: 'Contractor', createdAt: '2026-01-01', createdBy: 'admin@test.com' }
       ]
     }
-    const { handlers } = setupRoutes(data)
+    const { handlers } = await setupRoutes(data)
     const req = { isAdmin: true, isTeamAdmin: false, isManager: false, query: {} }
     const res = mockRes()
-    handlers['GET /admin/field-completeness'](req, res)
+    await handlers['GET /admin/field-completeness'](req, res)
     expect(res._body.fieldExceptions).toBeDefined()
     expect(res._body.fieldExceptions).toHaveLength(1)
     expect(res._body.fieldExceptions[0].id).toBe('fex_1')
   })
 
-  it('returns empty fieldExceptions when no file exists', () => {
+  it('returns empty fieldExceptions when no file exists', async () => {
     const data = baseStorageData()
-    const { handlers } = setupRoutes(data)
+    const { handlers } = await setupRoutes(data)
     const req = { isAdmin: true, isTeamAdmin: false, isManager: false, query: {} }
     const res = mockRes()
-    handlers['GET /admin/field-completeness'](req, res)
+    await handlers['GET /admin/field-completeness'](req, res)
     expect(res._body.fieldExceptions).toBeDefined()
     expect(res._body.fieldExceptions).toEqual([])
   })
 })
 
 describe('manager dashboard — includes fieldExceptions', () => {
-  it('includes fieldExceptions filtered to manager purview', () => {
+  it('includes fieldExceptions filtered to manager purview', async () => {
     const data = baseStorageData()
     data['team-data/field-exceptions.json'] = {
       version: 1,
@@ -260,7 +260,7 @@ describe('manager dashboard — includes fieldExceptions', () => {
         { id: 'fex_2', entityType: 'person', entityId: 'unrelated', fieldId: 'field_f1', reason: 'Other', createdAt: '2026-01-01', createdBy: 'admin@test.com' }
       ]
     }
-    const { handlers } = setupRoutes(data)
+    const { handlers } = await setupRoutes(data)
     const req = {
       userUid: 'mgr1',
       userEmail: 'mgr1@example.com',
@@ -270,7 +270,7 @@ describe('manager dashboard — includes fieldExceptions', () => {
       query: {}
     }
     const res = mockRes()
-    handlers['GET /manager/dashboard'](req, res)
+    await handlers['GET /manager/dashboard'](req, res)
     // Only bob's exception should be included (alice and bob are mgr1's reports)
     expect(res._body.fieldExceptions).toBeDefined()
     const personExceptions = res._body.fieldExceptions.filter(e => e.entityType === 'person')

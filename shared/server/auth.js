@@ -16,24 +16,48 @@ function blockDuringImpersonation(req, res, next) {
 }
 
 function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
-  const { tokenValidator, roleStore } = options;
+  const { tokenValidator, roleStore, getFileMtime } = options;
 
-  function isAdmin(email) {
-    if (roleStore) {
-      return roleStore.hasRole(email, 'admin');
+  // Registry cache for resolveUserUid (30s TTL + mtime invalidation)
+  let _registryCache = null;
+  let _registryCacheMtime = 0;
+  const REGISTRY_CACHE_TTL_MS = 30_000;
+  let _registryCacheExpiry = 0;
+
+  async function getCachedRegistry() {
+    const now = Date.now();
+    if (_registryCache && now < _registryCacheExpiry) {
+      return _registryCache;
     }
-    const adminList = readFromStorage('allowlist.json')
+    if (getFileMtime) {
+      const mtime = await getFileMtime('team-data/registry.json');
+      if (_registryCache && mtime === _registryCacheMtime) {
+        _registryCacheExpiry = now + REGISTRY_CACHE_TTL_MS;
+        return _registryCache;
+      }
+      _registryCacheMtime = mtime;
+    }
+    _registryCache = await readFromStorage('team-data/registry.json');
+    _registryCacheExpiry = now + REGISTRY_CACHE_TTL_MS;
+    return _registryCache;
+  }
+
+  async function isAdmin(email) {
+    if (roleStore) {
+      return await roleStore.hasRole(email, 'admin');
+    }
+    const adminList = await readFromStorage('allowlist.json')
     return adminList && adminList.emails && adminList.emails.includes(email)
   }
 
-  function seedRoles() {
+  async function seedRoles() {
     if (roleStore) {
       // Try migration from allowlist first
-      roleStore.migrateFromAllowlist();
+      await roleStore.migrateFromAllowlist();
 
-      const assignments = roleStore.listAssignments();
+      const assignments = await roleStore.listAssignments();
       if (Object.keys(assignments).length > 0) {
-        const adminCount = roleStore.getAdminEmails().length;
+        const adminCount = (await roleStore.getAdminEmails()).length;
         console.log(`Roles: ${adminCount} admin(s) loaded`);
         return;
       }
@@ -50,14 +74,14 @@ function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
         .filter(Boolean);
 
       for (const email of emails) {
-        roleStore.assignRole(email, 'admin', 'system-seed');
+        await roleStore.assignRole(email, 'admin', 'system-seed');
       }
       console.log(`Roles: seeded with ${emails.length} admin(s) from ADMIN_EMAILS`);
       return;
     }
 
     // Legacy path (no role store)
-    const existing = readFromStorage('allowlist.json')
+    const existing = await readFromStorage('allowlist.json')
     const currentEmails = (existing && existing.emails) ? existing.emails : []
 
     const adminEmails = process.env.ADMIN_EMAILS
@@ -78,15 +102,15 @@ function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
     const merged = [...new Set([...currentEmails, ...envEmails])]
 
     if (merged.length !== currentEmails.length) {
-      writeToStorage('allowlist.json', { emails: merged })
+      await writeToStorage('allowlist.json', { emails: merged })
       console.log(`Admin list: merged to ${merged.length} admin(s) (${merged.length - currentEmails.length} added from ADMIN_EMAILS)`)
     } else {
       console.log(`Admin list: ${merged.length} admin(s) loaded`)
     }
   }
 
-  function resolveUserUid(req) {
-    const registry = readFromStorage('team-data/registry.json');
+  async function resolveUserUid(req) {
+    const registry = await getCachedRegistry();
     req.userUid = null;
     if (registry && registry.people) {
       for (const [uid, person] of Object.entries(registry.people)) {
@@ -104,13 +128,13 @@ function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
         }
       }
     }
-    req.userRoles = roleStore ? roleStore.getRoles(req.userEmail) : [];
+    req.userRoles = roleStore ? await roleStore.getRoles(req.userEmail) : [];
     req.isTeamAdmin = req.userRoles.includes('team-admin');
     req.isPlanningManager = req.userRoles.includes('planning-manager');
     req.isManager = isManager(req.userUid, registry);
   }
 
-  function applyImpersonation(req, res) {
+  async function applyImpersonation(req, res) {
     const impersonateUid = req.headers['x-impersonate-uid'];
     if (!impersonateUid) {
       req.auditActor = req.userEmail;
@@ -125,7 +149,7 @@ function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
       return res.status(400).json({ error: 'Cannot impersonate yourself' });
     }
 
-    const registry = readFromStorage('team-data/registry.json');
+    const registry = await getCachedRegistry();
     if (!registry?.people?.[impersonateUid] || registry.people[impersonateUid].status !== 'active') {
       return res.status(404).json({ error: 'Target user not found in roster' });
     }
@@ -137,8 +161,8 @@ function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
 
     req.userEmail = target.email?.toLowerCase() || impersonateUid;
     req.userUid = impersonateUid;
-    req.isAdmin = isAdmin(req.userEmail);
-    req.userRoles = roleStore ? roleStore.getRoles(req.userEmail) : [];
+    req.isAdmin = await isAdmin(req.userEmail);
+    req.userRoles = roleStore ? await roleStore.getRoles(req.userEmail) : [];
     req.isTeamAdmin = req.userRoles.includes('team-admin');
     req.isPlanningManager = req.userRoles.includes('planning-manager');
     req.isManager = isManager(req.userUid, registry);
@@ -164,13 +188,13 @@ function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
           return res.status(401).json({ error: 'Invalid or expired API token' });
         }
         req.userEmail = tokenRecord.ownerEmail;
-        req.isAdmin = isAdmin(tokenRecord.ownerEmail);
+        req.isAdmin = await isAdmin(tokenRecord.ownerEmail);
         req.authMethod = 'token';
         req.tokenScopes = tokenRecord.scopes; // array, ['*'], null, or undefined
         // Update lastUsedAt (fire-and-forget, throttled)
         tokenValidator.touchLastUsed(tokenRecord.id);
-        resolveUserUid(req);
-        const blocked = applyImpersonation(req, res);
+        await resolveUserUid(req);
+        const blocked = await applyImpersonation(req, res);
         if (blocked) return;
         return next();
       }
@@ -187,23 +211,23 @@ function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
     }
 
     if (roleStore) {
-      const assignments = roleStore.listAssignments();
+      const assignments = await roleStore.listAssignments();
       if (!assignments || Object.keys(assignments).length === 0) {
-        roleStore.assignRole(req.userEmail, 'admin', 'auto-first-user');
+        await roleStore.assignRole(req.userEmail, 'admin', 'auto-first-user');
         console.log(`Roles: auto-added first user ${req.userEmail} as admin`);
       }
     } else {
-      const adminList = readFromStorage('allowlist.json')
+      const adminList = await readFromStorage('allowlist.json')
       if (!adminList || !adminList.emails || adminList.emails.length === 0) {
         const seeded = { emails: [req.userEmail] }
-        writeToStorage('allowlist.json', seeded)
+        await writeToStorage('allowlist.json', seeded)
         console.log(`Admin list: auto-added first user ${req.userEmail}`)
       }
     }
 
-    req.isAdmin = isAdmin(req.userEmail)
-    resolveUserUid(req);
-    const blocked = applyImpersonation(req, res);
+    req.isAdmin = await isAdmin(req.userEmail)
+    await resolveUserUid(req);
+    const blocked = await applyImpersonation(req, res);
     if (blocked) return;
     next()
   }
@@ -230,9 +254,9 @@ function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
   }
 
   function requireRole(role) {
-    return function(req, res, next) {
+    return async function(req, res, next) {
       if (req.isAdmin) return next();
-      if (!roleStore || !roleStore.hasRole(req.userEmail, role)) {
+      if (!roleStore || !(await roleStore.hasRole(req.userEmail, role))) {
         return res.status(403).json({
           error: `Role "${role}" required.`
         });

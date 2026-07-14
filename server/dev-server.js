@@ -52,7 +52,7 @@ async function startServer(options = {}) {
     storageModule.initStorage({ dataDir });
   }
 
-  const { readFromStorage, writeToStorage } = storageModule;
+  const { readFromStorage, writeToStorage, getFileMtime } = storageModule;
   const { createAuthMiddleware, proxySecretGuard, blockDuringImpersonation } = require('../shared/server/auth');
   const { createRoleStore } = require('../shared/server/role-store');
   const { createRoleRegistry } = require('../shared/server/role-registry');
@@ -232,7 +232,7 @@ async function startServer(options = {}) {
     'release-planning:read': 'releases:read',
     'release-planning:write': 'releases:write',
   };
-  apiTokens.init(storageModule, { scopeRegistry, scopeMigrationMap });
+  await apiTokens.init(storageModule, { scopeRegistry, scopeMigrationMap });
 
   const PORT = port;
 
@@ -297,18 +297,19 @@ async function startServer(options = {}) {
   // ─── Auth ───
 
   const roleStore = createRoleStore(readFromStorage, writeToStorage, {
-    getAuthDomain: () => {
+    getAuthDomain: async () => {
       if (process.env.AUTH_EMAIL_DOMAIN) {
         return process.env.AUTH_EMAIL_DOMAIN.trim().toLowerCase();
       }
-      const config = readFromStorage('site-config.json');
+      const config = await readFromStorage('site-config.json');
       return config?.authEmailDomain || null;
     },
     roleRegistry
   });
   const { authMiddleware, requireAuth, requireAdmin, requireTeamAdmin, requireRole, requireScope, seedRoles } = createAuthMiddleware(readFromStorage, writeToStorage, {
     tokenValidator: apiTokens,
-    roleStore
+    roleStore,
+    getFileMtime
   });
 
   // ─── Swagger UI (before auth) ───
@@ -329,7 +330,7 @@ async function startServer(options = {}) {
   const messageRegistry = require('../shared/server/message-registry');
   const { createRefreshRegistry } = require('../shared/server/refresh-registry');
   const { createExportRegistry } = require('../shared/server/export-registry');
-  const refreshRegistry = createRefreshRegistry(storageModule);
+  const refreshRegistry = await createRefreshRegistry(storageModule);
   const exportRegistry = createExportRegistry();
 
   // Rate limiter for expensive export endpoints
@@ -423,7 +424,7 @@ async function startServer(options = {}) {
   const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, roleRegistry, scopeRegistry, secretRegistry, allocationStrategy };
   const registries = { diagnostics: diagnosticsRegistry, messages: messageRegistry, refresh: refreshRegistry, exports: exportRegistry };
 
-  const persistedState = loadModuleState(storageModule);
+  const persistedState = await loadModuleState(storageModule);
   const startupState = Object.assign({}, persistedState);
   let startupStateChanged = false;
   for (const mod of builtInModules) {
@@ -433,10 +434,10 @@ async function startServer(options = {}) {
     }
   }
   if (startupStateChanged) {
-    saveModuleState(storageModule, startupState);
+    await saveModuleState(storageModule, startupState);
   }
   const effectiveState = getEffectiveState(builtInModules, startupState);
-  reconcileStartupState(builtInModules, effectiveState, storageModule);
+  await reconcileStartupState(builtInModules, effectiveState, storageModule);
   const enabledSlugs = new Set(Object.entries(effectiveState).filter(([, v]) => v).map(([k]) => k));
 
   // Update route context with resolved enabledSlugs
@@ -537,9 +538,9 @@ async function startServer(options = {}) {
     }
   }
 
-  seedRoles();
-  roleStore.migrateEmailDomains();
-  modulesConfig.seedIfMissing(storageModule);
+  await seedRoles();
+  await roleStore.migrateEmailDomains();
+  await modulesConfig.seedIfMissing(storageModule);
 
   if (!DEMO_MODE) {
     gitSync.scheduleDaily(storageModule);

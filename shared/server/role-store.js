@@ -28,6 +28,9 @@ function normalizeEmail(email, authDomain) {
 }
 
 function createRoleStore(readFromStorage, writeToStorage, options = {}) {
+  const { Mutex } = require('async-mutex');
+  const rolesMutex = new Mutex();
+
   const getAuthDomain = typeof options.getAuthDomain === 'function'
     ? options.getAuthDomain
     : () => null;
@@ -38,10 +41,10 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
   let _cachedAt = 0;
   const CACHE_TTL_MS = 30_000;
 
-  function getCachedAuthDomain() {
+  async function getCachedAuthDomain() {
     const now = Date.now();
     if (_cachedDomain === undefined || now - _cachedAt > CACHE_TTL_MS) {
-      _cachedDomain = getAuthDomain() || null;
+      _cachedDomain = (await getAuthDomain()) || null;
       _cachedAt = now;
     }
     return _cachedDomain;
@@ -52,29 +55,29 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
     _cachedAt = 0;
   }
 
-  function readRoles() {
-    return readFromStorage(ROLES_FILE) || { version: 1, assignments: {} };
+  async function readRoles() {
+    return (await readFromStorage(ROLES_FILE)) || { version: 1, assignments: {} };
   }
 
-  function writeRoles(data) {
-    writeToStorage(ROLES_FILE, data);
+  async function writeRoles(data) {
+    await writeToStorage(ROLES_FILE, data);
   }
 
-  function getRoles(email) {
+  async function getRoles(email) {
     if (!email) return [];
-    const authDomain = getCachedAuthDomain();
+    const authDomain = await getCachedAuthDomain();
     const key = normalizeEmail(email, authDomain);
     if (!isSafeKey(key)) return [];
-    const data = readRoles();
+    const data = await readRoles();
     const entry = data.assignments[key];
     return entry ? entry.roles : [];
   }
 
-  function hasRole(email, role) {
-    return getRoles(email).includes(role);
+  async function hasRole(email, role) {
+    return (await getRoles(email)).includes(role);
   }
 
-  function assignRole(email, role, actor) {
+  async function assignRole(email, role, actor) {
     if (!email || !role) throw new Error('email and role are required');
     if (roleRegistry && !roleRegistry.isValid(role)) {
       throw new Error(`Invalid role: ${role}. Must be one of: ${roleRegistry.getAll().map(r => r.id).join(', ')}`);
@@ -84,174 +87,212 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
       return { demo: true, message: 'Demo mode -- changes are not saved' };
     }
 
-    const authDomain = getCachedAuthDomain();
-    const normalized = normalizeEmail(email, authDomain);
-    if (!isSafeKey(normalized)) throw new Error('Invalid email');
-    const data = readRoles();
+    const release = await rolesMutex.acquire();
+    try {
+      const authDomain = await getCachedAuthDomain();
+      const normalized = normalizeEmail(email, authDomain);
+      if (!isSafeKey(normalized)) throw new Error('Invalid email');
+      const data = await readRoles();
 
-    if (!Object.hasOwn(data.assignments, normalized)) {
-      data.assignments[normalized] = {
-        roles: [],
-        assignedBy: actor,
-        assignedAt: new Date().toISOString()
-      };
+      if (!Object.hasOwn(data.assignments, normalized)) {
+        data.assignments[normalized] = {
+          roles: [],
+          assignedBy: actor,
+          assignedAt: new Date().toISOString()
+        };
+      }
+
+      const entry = data.assignments[normalized];
+      if (!entry.roles.includes(role)) {
+        entry.roles.push(role);
+        entry.assignedBy = actor;
+        entry.assignedAt = new Date().toISOString();
+        await writeRoles(data);
+
+        await auditLog.appendAuditEntry({ readFromStorage, writeToStorage }, {
+          action: 'role.assign',
+          actor,
+          entityType: 'user',
+          entityId: normalized,
+          newValue: role,
+          detail: `Assigned role "${role}" to ${normalized}`
+        });
+      }
+
+      return { email: normalized, roles: entry.roles };
+    } finally {
+      release();
+    }
+  }
+
+  async function revokeRole(email, role, actor) {
+    if (!email || !role) throw new Error('email and role are required');
+    if (roleRegistry && !roleRegistry.isValid(role)) {
+      throw new Error(`Invalid role: ${role}. Must be one of: ${roleRegistry.getAll().map(r => r.id).join(', ')}`);
     }
 
-    const entry = data.assignments[normalized];
-    if (!entry.roles.includes(role)) {
-      entry.roles.push(role);
-      entry.assignedBy = actor;
-      entry.assignedAt = new Date().toISOString();
-      writeRoles(data);
+    if (DEMO_MODE) {
+      return { demo: true, message: 'Demo mode -- changes are not saved' };
+    }
 
-      auditLog.appendAuditEntry({ readFromStorage, writeToStorage }, {
-        action: 'role.assign',
+    const release = await rolesMutex.acquire();
+    try {
+      const authDomain = await getCachedAuthDomain();
+      const normalized = normalizeEmail(email, authDomain);
+      if (!isSafeKey(normalized)) throw new Error('Invalid email');
+      const data = await readRoles();
+      const entry = Object.hasOwn(data.assignments, normalized) ? data.assignments[normalized] : null;
+
+      if (!entry || !entry.roles.includes(role)) {
+        throw new Error(`User ${normalized} does not have role "${role}"`);
+      }
+
+      // Guard: cannot remove the last admin
+      if (role === 'admin') {
+        const adminEmails = await getAdminEmails();
+        if (adminEmails.length <= 1 && adminEmails.includes(normalized)) {
+          throw new Error('Cannot remove the last admin');
+        }
+      }
+
+      entry.roles = entry.roles.filter(r => r !== role);
+
+      // Clean up entry if no roles remain
+      if (entry.roles.length === 0) {
+        delete data.assignments[normalized];
+      }
+
+      await writeRoles(data);
+
+      await auditLog.appendAuditEntry({ readFromStorage, writeToStorage }, {
+        action: 'role.revoke',
         actor,
         entityType: 'user',
         entityId: normalized,
-        newValue: role,
-        detail: `Assigned role "${role}" to ${normalized}`
+        oldValue: role,
+        detail: `Revoked role "${role}" from ${normalized}`
       });
-    }
 
-    return { email: normalized, roles: entry.roles };
+      return { email: normalized, roles: entry.roles || [] };
+    } finally {
+      release();
+    }
   }
 
-  function revokeRole(email, role, actor) {
-    if (!email || !role) throw new Error('email and role are required');
-    if (roleRegistry && !roleRegistry.isValid(role)) {
-      throw new Error(`Invalid role: ${role}. Must be one of: ${roleRegistry.getAll().map(r => r.id).join(', ')}`);
-    }
-
-    if (DEMO_MODE) {
-      return { demo: true, message: 'Demo mode -- changes are not saved' };
-    }
-
-    const authDomain = getCachedAuthDomain();
-    const normalized = normalizeEmail(email, authDomain);
-    if (!isSafeKey(normalized)) throw new Error('Invalid email');
-    const data = readRoles();
-    const entry = Object.hasOwn(data.assignments, normalized) ? data.assignments[normalized] : null;
-
-    if (!entry || !entry.roles.includes(role)) {
-      throw new Error(`User ${normalized} does not have role "${role}"`);
-    }
-
-    // Guard: cannot remove the last admin
-    if (role === 'admin') {
-      const adminEmails = getAdminEmails();
-      if (adminEmails.length <= 1 && adminEmails.includes(normalized)) {
-        throw new Error('Cannot remove the last admin');
-      }
-    }
-
-    entry.roles = entry.roles.filter(r => r !== role);
-
-    // Clean up entry if no roles remain
-    if (entry.roles.length === 0) {
-      delete data.assignments[normalized];
-    }
-
-    writeRoles(data);
-
-    auditLog.appendAuditEntry({ readFromStorage, writeToStorage }, {
-      action: 'role.revoke',
-      actor,
-      entityType: 'user',
-      entityId: normalized,
-      oldValue: role,
-      detail: `Revoked role "${role}" from ${normalized}`
-    });
-
-    return { email: normalized, roles: entry.roles || [] };
-  }
-
-  function listAssignments() {
-    const data = readRoles();
+  async function listAssignments() {
+    const data = await readRoles();
     return data.assignments;
   }
 
-  function getAdminEmails() {
-    const data = readRoles();
+  async function getAdminEmails() {
+    const data = await readRoles();
     return Object.entries(data.assignments)
       .filter(([, entry]) => entry.roles.includes('admin'))
       .map(([email]) => email);
   }
 
-  function migrateFromAllowlist() {
-    const rolesData = readRoles();
-    if (Object.keys(rolesData.assignments).length > 0) {
-      return false; // Already has data, skip migration
-    }
-
-    const allowlist = readFromStorage(ALLOWLIST_FILE);
-    if (!allowlist || !allowlist.emails || allowlist.emails.length === 0) {
-      return false; // Nothing to migrate
-    }
-
-    for (const email of allowlist.emails) {
-      assignRole(email, 'admin', 'migration');
-    }
-
-    // Mark allowlist as migrated
-    const now = new Date().toISOString();
-    writeToStorage(ALLOWLIST_FILE, {
-      _migrated: 'roles.json',
-      _migratedAt: now,
-      emails: allowlist.emails
-    });
-
-    console.log(`Roles: migrated ${allowlist.emails.length} admin(s) from allowlist.json to roles.json`);
-    return true;
-  }
-
-  function migrateEmailDomains() {
-    const authDomain = getAuthDomain();
-    if (!authDomain) return 0;
-
-    const data = readRoles();
-    const oldKeys = Object.keys(data.assignments);
-    const needsMigration = oldKeys.some(email => normalizeEmail(email, authDomain) !== email);
-
-    if (!needsMigration) return 0;
-
-    // Backup before migration
-    const backupKey = `roles-backup-${Date.now()}.json`;
-    writeToStorage(backupKey, JSON.parse(JSON.stringify(data)));
-    console.log(`Roles: backup saved to ${backupKey}`);
-
-    let migrated = 0;
-
-    for (const oldEmail of oldKeys) {
-      const newEmail = normalizeEmail(oldEmail, authDomain);
-      if (newEmail === oldEmail) continue;
-
-      const oldEntry = data.assignments[oldEmail];
-      const existingEntry = data.assignments[newEmail];
-
-      if (existingEntry) {
-        // Merge roles from both entries
-        const mergedRoles = [...new Set([...existingEntry.roles, ...oldEntry.roles])];
-        existingEntry.roles = mergedRoles;
-        // Keep the newer assignedAt
-        if (oldEntry.assignedAt > existingEntry.assignedAt) {
-          existingEntry.assignedBy = oldEntry.assignedBy;
-          existingEntry.assignedAt = oldEntry.assignedAt;
-        }
-      } else {
-        data.assignments[newEmail] = oldEntry;
+  async function migrateFromAllowlist() {
+    const release = await rolesMutex.acquire();
+    try {
+      const rolesData = await readRoles();
+      if (Object.keys(rolesData.assignments).length > 0) {
+        return false; // Already has data, skip migration
       }
 
-      delete data.assignments[oldEmail];
-      migrated++;
-    }
+      const allowlist = await readFromStorage(ALLOWLIST_FILE);
+      if (!allowlist || !allowlist.emails || allowlist.emails.length === 0) {
+        return false; // Nothing to migrate
+      }
 
-    if (migrated > 0) {
-      writeRoles(data);
-      console.log(`Roles: migrated ${migrated} email(s) to @${authDomain} (backup: ${backupKey})`);
-    }
+      // Inline the role assignment logic to avoid deadlock with assignRole's mutex
+      const authDomain = await getCachedAuthDomain();
+      for (const email of allowlist.emails) {
+        const normalized = normalizeEmail(email, authDomain);
+        if (!isSafeKey(normalized)) continue;
 
-    return migrated;
+        if (!Object.hasOwn(rolesData.assignments, normalized)) {
+          rolesData.assignments[normalized] = {
+            roles: [],
+            assignedBy: 'migration',
+            assignedAt: new Date().toISOString()
+          };
+        }
+        const entry = rolesData.assignments[normalized];
+        if (!entry.roles.includes('admin')) {
+          entry.roles.push('admin');
+          entry.assignedBy = 'migration';
+          entry.assignedAt = new Date().toISOString();
+        }
+      }
+      await writeRoles(rolesData);
+
+      // Mark allowlist as migrated
+      const now = new Date().toISOString();
+      await writeToStorage(ALLOWLIST_FILE, {
+        _migrated: 'roles.json',
+        _migratedAt: now,
+        emails: allowlist.emails
+      });
+
+      console.log(`Roles: migrated ${allowlist.emails.length} admin(s) from allowlist.json to roles.json`);
+      return true;
+    } finally {
+      release();
+    }
+  }
+
+  async function migrateEmailDomains() {
+    const authDomain = await getAuthDomain();
+    if (!authDomain) return 0;
+
+    const release = await rolesMutex.acquire();
+    try {
+      const data = await readRoles();
+      const oldKeys = Object.keys(data.assignments);
+      const needsMigration = oldKeys.some(email => normalizeEmail(email, authDomain) !== email);
+
+      if (!needsMigration) return 0;
+
+      // Backup before migration
+      const backupKey = `roles-backup-${Date.now()}.json`;
+      await writeToStorage(backupKey, JSON.parse(JSON.stringify(data)));
+      console.log(`Roles: backup saved to ${backupKey}`);
+
+      let migrated = 0;
+
+      for (const oldEmail of oldKeys) {
+        const newEmail = normalizeEmail(oldEmail, authDomain);
+        if (newEmail === oldEmail) continue;
+
+        const oldEntry = data.assignments[oldEmail];
+        const existingEntry = data.assignments[newEmail];
+
+        if (existingEntry) {
+          // Merge roles from both entries
+          const mergedRoles = [...new Set([...existingEntry.roles, ...oldEntry.roles])];
+          existingEntry.roles = mergedRoles;
+          // Keep the newer assignedAt
+          if (oldEntry.assignedAt > existingEntry.assignedAt) {
+            existingEntry.assignedBy = oldEntry.assignedBy;
+            existingEntry.assignedAt = oldEntry.assignedAt;
+          }
+        } else {
+          data.assignments[newEmail] = oldEntry;
+        }
+
+        delete data.assignments[oldEmail];
+        migrated++;
+      }
+
+      if (migrated > 0) {
+        await writeRoles(data);
+        console.log(`Roles: migrated ${migrated} email(s) to @${authDomain} (backup: ${backupKey})`);
+      }
+
+      return migrated;
+    } finally {
+      release();
+    }
   }
 
   return {

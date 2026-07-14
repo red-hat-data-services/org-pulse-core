@@ -66,11 +66,11 @@ function registryStorage(extra = {}) {
 
 function makeStorage(data = {}) {
   return {
-    readFromStorage(key) {
+    async readFromStorage(key) {
       return data[key] !== undefined ? JSON.parse(JSON.stringify(data[key])) : null
     },
-    writeToStorage() {},
-    listStorageFiles(dir) {
+    async writeToStorage() {},
+    async listStorageFiles(dir) {
       return Object.keys(data)
         .filter(k => k.startsWith(dir + '/') && k.endsWith('.json'))
         .map(k => k.slice(dir.length + 1))

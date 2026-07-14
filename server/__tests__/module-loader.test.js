@@ -13,10 +13,10 @@ const {
 function makeStorage(data = {}) {
   const store = { ...data }
   return {
-    readFromStorage(key) {
+    async readFromStorage(key) {
       return store[key] !== undefined ? JSON.parse(JSON.stringify(store[key])) : null
     },
-    writeToStorage(key, value) {
+    async writeToStorage(key, value) {
       store[key] = JSON.parse(JSON.stringify(value))
     },
     _store: store
@@ -35,26 +35,26 @@ function makeModules(specs) {
 }
 
 describe('loadModuleState', () => {
-  it('returns empty object when file does not exist', () => {
+  it('returns empty object when file does not exist', async () => {
     const storage = makeStorage()
-    expect(loadModuleState(storage)).toEqual({})
+    expect(await loadModuleState(storage)).toEqual({})
   })
 
-  it('returns persisted state', () => {
+  it('returns persisted state', async () => {
     const storage = makeStorage({ 'modules-state.json': { foo: true, bar: false } })
-    expect(loadModuleState(storage)).toEqual({ foo: true, bar: false })
+    expect(await loadModuleState(storage)).toEqual({ foo: true, bar: false })
   })
 
-  it('returns empty object for invalid data (array)', () => {
+  it('returns empty object for invalid data (array)', async () => {
     const storage = makeStorage({ 'modules-state.json': [1, 2, 3] })
-    expect(loadModuleState(storage)).toEqual({})
+    expect(await loadModuleState(storage)).toEqual({})
   })
 })
 
 describe('saveModuleState', () => {
-  it('persists state to storage', () => {
+  it('persists state to storage', async () => {
     const storage = makeStorage()
-    saveModuleState(storage, { foo: true })
+    await saveModuleState(storage, { foo: true })
     expect(storage._store['modules-state.json']).toEqual({ foo: true })
   })
 })
@@ -81,26 +81,26 @@ describe('getEffectiveState', () => {
 })
 
 describe('reconcileStartupState', () => {
-  it('auto-enables required modules', () => {
+  it('auto-enables required modules', async () => {
     const modules = makeModules([
       { slug: 'a', requires: ['b'] },
       { slug: 'b' }
     ])
     const effective = { a: true, b: false }
     const storage = makeStorage()
-    reconcileStartupState(modules, effective, storage)
+    await reconcileStartupState(modules, effective, storage)
     expect(effective.b).toBe(true)
     expect(storage._store['modules-state.json']).toEqual({ a: true, b: true })
   })
 
-  it('does nothing when all deps satisfied', () => {
+  it('does nothing when all deps satisfied', async () => {
     const modules = makeModules([
       { slug: 'a', requires: ['b'] },
       { slug: 'b' }
     ])
     const effective = { a: true, b: true }
     const storage = makeStorage()
-    reconcileStartupState(modules, effective, storage)
+    await reconcileStartupState(modules, effective, storage)
     expect(storage._store['modules-state.json']).toBeUndefined()
   })
 })

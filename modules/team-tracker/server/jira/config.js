@@ -5,16 +5,16 @@
 
 const CONFIG_KEY = 'jira-sync-config.json';
 
-function loadConfig(storage) {
-  return storage.readFromStorage(CONFIG_KEY);
+async function loadConfig(storage) {
+  return await storage.readFromStorage(CONFIG_KEY);
 }
 
-function saveConfig(storage, config) {
-  storage.writeToStorage(CONFIG_KEY, config);
+async function saveConfig(storage, config) {
+  await storage.writeToStorage(CONFIG_KEY, config);
 }
 
-function getProjectKeys(storage) {
-  const config = loadConfig(storage);
+async function getProjectKeys(storage) {
+  const config = await loadConfig(storage);
   return config?.projectKeys || [];
 }
 

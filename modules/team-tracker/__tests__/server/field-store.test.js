@@ -5,8 +5,8 @@ const fieldStore = require('../../../../shared/server/field-store')
 function makeStorage(initial = {}) {
   const data = { ...initial }
   return {
-    readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
-    writeToStorage(key, val) { data[key] = JSON.parse(JSON.stringify(val)) },
+    async readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
+    async writeToStorage(key, val) { data[key] = JSON.parse(JSON.stringify(val)) },
     _data: data
   }
 }
@@ -26,9 +26,9 @@ function makeStorageWithFieldDefs(fieldDefs) {
 
 describe('field-store', () => {
   describe('createFieldDefinition', () => {
-    it('creates a free-text field', () => {
+    it('creates a free-text field', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      const field = fieldStore.createFieldDefinition(storage, 'person', {
+      const field = await fieldStore.createFieldDefinition(storage, 'person', {
         label: 'Focus Area', type: 'free-text'
       }, 'admin@test.com')
 
@@ -40,9 +40,9 @@ describe('field-store', () => {
       expect(field.deleted).toBe(false)
     })
 
-    it('creates a constrained field with multiValue', () => {
+    it('creates a constrained field with multiValue', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      const field = fieldStore.createFieldDefinition(storage, 'person', {
+      const field = await fieldStore.createFieldDefinition(storage, 'person', {
         label: 'Skills', type: 'constrained', multiValue: true, allowedValues: ['Go', 'Rust']
       }, 'admin@test.com')
 
@@ -51,56 +51,52 @@ describe('field-store', () => {
       expect(field.allowedValues).toEqual(['Go', 'Rust'])
     })
 
-    it('allows multiValue on free-text fields', () => {
+    it('allows multiValue on free-text fields', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      const field = fieldStore.createFieldDefinition(storage, 'person', {
+      const field = await fieldStore.createFieldDefinition(storage, 'person', {
         label: 'Notes', type: 'free-text', multiValue: true
       }, 'admin@test.com')
 
       expect(field.multiValue).toBe(true)
     })
 
-    it('allows multiValue on person-reference-linked fields', () => {
+    it('allows multiValue on person-reference-linked fields', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      const field = fieldStore.createFieldDefinition(storage, 'person', {
+      const field = await fieldStore.createFieldDefinition(storage, 'person', {
         label: 'Leads', type: 'person-reference-linked', multiValue: true
       }, 'admin@test.com')
 
       expect(field.multiValue).toBe(true)
     })
 
-    it('rejects invalid allowedValues (not array)', () => {
+    it('rejects invalid allowedValues (not array)', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      expect(() => {
-        fieldStore.createFieldDefinition(storage, 'person', {
+      await expect(fieldStore.createFieldDefinition(storage, 'person', {
           label: 'Bad', type: 'constrained', allowedValues: 'not-an-array'
-        }, 'admin@test.com')
-      }).toThrow('allowedValues must be an array')
+        }, 'admin@test.com')).rejects.toThrow('allowedValues must be an array')
     })
 
-    it('rejects allowedValues with non-string entries', () => {
+    it('rejects allowedValues with non-string entries', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      expect(() => {
-        fieldStore.createFieldDefinition(storage, 'person', {
+      await expect(fieldStore.createFieldDefinition(storage, 'person', {
           label: 'Bad', type: 'constrained', allowedValues: [123]
-        }, 'admin@test.com')
-      }).toThrow('must be a string')
+        }, 'admin@test.com')).rejects.toThrow('must be a string')
     })
 
-    it('creates a team field', () => {
+    it('creates a team field', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      const field = fieldStore.createFieldDefinition(storage, 'team', {
+      const field = await fieldStore.createFieldDefinition(storage, 'team', {
         label: 'Status', type: 'constrained', allowedValues: ['Active', 'Forming']
       }, 'admin@test.com')
 
       expect(field.label).toBe('Status')
-      const defs = fieldStore.readFieldDefinitions(storage)
+      const defs = await fieldStore.readFieldDefinitions(storage)
       expect(defs.teamFields).toHaveLength(1)
     })
   })
 
   describe('updateFieldDefinition', () => {
-    it('updates label and multiValue', () => {
+    it('updates label and multiValue', async () => {
       const storage = makeStorageWithFieldDefs({
         personFields: [{
           id: 'field_abc', label: 'Old', type: 'constrained', multiValue: false,
@@ -110,7 +106,7 @@ describe('field-store', () => {
         teamFields: []
       })
 
-      const result = fieldStore.updateFieldDefinition(storage, 'person', 'field_abc', {
+      const result = await fieldStore.updateFieldDefinition(storage, 'person', 'field_abc', {
         label: 'New', multiValue: true
       }, 'admin@test.com')
 
@@ -118,13 +114,13 @@ describe('field-store', () => {
       expect(result.multiValue).toBe(true)
     })
 
-    it('returns null for unknown field', () => {
+    it('returns null for unknown field', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      const result = fieldStore.updateFieldDefinition(storage, 'person', 'field_nope', { label: 'X' }, 'admin@test.com')
+      const result = await fieldStore.updateFieldDefinition(storage, 'person', 'field_nope', { label: 'X' }, 'admin@test.com')
       expect(result).toBeNull()
     })
 
-    it('rejects invalid type on update', () => {
+    it('rejects invalid type on update', async () => {
       const storage = makeStorageWithFieldDefs({
         personFields: [{
           id: 'field_abc', label: 'Test', type: 'free-text', multiValue: false,
@@ -133,12 +129,10 @@ describe('field-store', () => {
         }],
         teamFields: []
       })
-      expect(() => {
-        fieldStore.updateFieldDefinition(storage, 'person', 'field_abc', { type: 'invalid-type' }, 'admin@test.com')
-      }).toThrow('Invalid type')
+      await expect(fieldStore.updateFieldDefinition(storage, 'person', 'field_abc', { type: 'invalid-type' }, 'admin@test.com')).rejects.toThrow('Invalid type')
     })
 
-    it('rejects invalid allowedValues on update', () => {
+    it('rejects invalid allowedValues on update', async () => {
       const storage = makeStorageWithFieldDefs({
         personFields: [{
           id: 'field_abc', label: 'Test', type: 'constrained', multiValue: false,
@@ -147,14 +141,12 @@ describe('field-store', () => {
         }],
         teamFields: []
       })
-      expect(() => {
-        fieldStore.updateFieldDefinition(storage, 'person', 'field_abc', { allowedValues: 'not-array' }, 'admin@test.com')
-      }).toThrow('allowedValues must be an array')
+      await expect(fieldStore.updateFieldDefinition(storage, 'person', 'field_abc', { allowedValues: 'not-array' }, 'admin@test.com')).rejects.toThrow('allowedValues must be an array')
     })
   })
 
   describe('softDeleteField', () => {
-    it('marks as deleted without removing', () => {
+    it('marks as deleted without removing', async () => {
       const storage = makeStorageWithFieldDefs({
         personFields: [{
           id: 'field_del', label: 'Del', type: 'free-text', multiValue: false,
@@ -164,17 +156,17 @@ describe('field-store', () => {
         teamFields: []
       })
 
-      const result = fieldStore.softDeleteField(storage, 'person', 'field_del', 'admin@test.com')
+      const result = await fieldStore.softDeleteField(storage, 'person', 'field_del', 'admin@test.com')
       expect(result.deleted).toBe(true)
 
-      const defs = fieldStore.readFieldDefinitions(storage)
+      const defs = await fieldStore.readFieldDefinitions(storage)
       expect(defs.personFields).toHaveLength(1)
       expect(defs.personFields[0].deleted).toBe(true)
     })
   })
 
   describe('reorderFields', () => {
-    it('reorders correctly', () => {
+    it('reorders correctly', async () => {
       const storage = makeStorageWithFieldDefs({
         personFields: [
           { id: 'f1', label: 'First', order: 0, deleted: false },
@@ -184,63 +176,63 @@ describe('field-store', () => {
         teamFields: []
       })
 
-      fieldStore.reorderFields(storage, 'person', ['f3', 'f1', 'f2'], 'admin@test.com')
-      const defs = fieldStore.readFieldDefinitions(storage)
+      await fieldStore.reorderFields(storage, 'person', ['f3', 'f1', 'f2'], 'admin@test.com')
+      const defs = await fieldStore.readFieldDefinitions(storage)
       expect(defs.personFields.map(f => f.id)).toEqual(['f3', 'f1', 'f2'])
     })
   })
 
   describe('updatePersonFields', () => {
-    it('sets values and returns _appFields', () => {
+    it('sets values and returns _appFields', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      const result = fieldStore.updatePersonFields(storage, 'achen', { field_x: 'hello' }, 'admin@test.com')
+      const result = await fieldStore.updatePersonFields(storage, 'achen', { field_x: 'hello' }, 'admin@test.com')
       expect(result).toEqual({ field_x: 'hello' })
     })
 
-    it('handles multi-value arrays', () => {
+    it('handles multi-value arrays', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      const result = fieldStore.updatePersonFields(storage, 'achen', { field_x: ['A', 'B'] }, 'admin@test.com')
+      const result = await fieldStore.updatePersonFields(storage, 'achen', { field_x: ['A', 'B'] }, 'admin@test.com')
       expect(result).toEqual({ field_x: ['A', 'B'] })
     })
 
-    it('returns null for unknown person', () => {
+    it('returns null for unknown person', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      const result = fieldStore.updatePersonFields(storage, 'nobody', { field_x: 'y' }, 'admin@test.com')
+      const result = await fieldStore.updatePersonFields(storage, 'nobody', { field_x: 'y' }, 'admin@test.com')
       expect(result).toBeNull()
     })
   })
 
   describe('coerceFieldValue', () => {
-    it('coerces string to array for multiValue', () => {
-      expect(fieldStore.coerceFieldValue('hello', { multiValue: true })).toEqual(['hello'])
+    it('coerces string to array for multiValue', async () => {
+      expect(await fieldStore.coerceFieldValue('hello', { multiValue: true })).toEqual(['hello'])
     })
 
-    it('coerces null to empty array for multiValue', () => {
-      expect(fieldStore.coerceFieldValue(null, { multiValue: true })).toEqual([])
+    it('coerces null to empty array for multiValue', async () => {
+      expect(await fieldStore.coerceFieldValue(null, { multiValue: true })).toEqual([])
     })
 
-    it('coerces empty string to empty array for multiValue', () => {
-      expect(fieldStore.coerceFieldValue('', { multiValue: true })).toEqual([])
+    it('coerces empty string to empty array for multiValue', async () => {
+      expect(await fieldStore.coerceFieldValue('', { multiValue: true })).toEqual([])
     })
 
-    it('passes through array for multiValue', () => {
-      expect(fieldStore.coerceFieldValue(['a', 'b'], { multiValue: true })).toEqual(['a', 'b'])
+    it('passes through array for multiValue', async () => {
+      expect(await fieldStore.coerceFieldValue(['a', 'b'], { multiValue: true })).toEqual(['a', 'b'])
     })
 
-    it('coerces array to first element for single-value', () => {
-      expect(fieldStore.coerceFieldValue(['a', 'b'], { multiValue: false })).toBe('a')
+    it('coerces array to first element for single-value', async () => {
+      expect(await fieldStore.coerceFieldValue(['a', 'b'], { multiValue: false })).toBe('a')
     })
 
-    it('coerces empty array to null for single-value', () => {
-      expect(fieldStore.coerceFieldValue([], { multiValue: false })).toBeNull()
+    it('coerces empty array to null for single-value', async () => {
+      expect(await fieldStore.coerceFieldValue([], { multiValue: false })).toBeNull()
     })
 
-    it('passes through string for single-value', () => {
-      expect(fieldStore.coerceFieldValue('hello', { multiValue: false })).toBe('hello')
+    it('passes through string for single-value', async () => {
+      expect(await fieldStore.coerceFieldValue('hello', { multiValue: false })).toBe('hello')
     })
 
-    it('passes through null for single-value', () => {
-      expect(fieldStore.coerceFieldValue(null, { multiValue: false })).toBeNull()
+    it('passes through null for single-value', async () => {
+      expect(await fieldStore.coerceFieldValue(null, { multiValue: false })).toBeNull()
     })
   })
 
@@ -266,18 +258,18 @@ describe('field-store', () => {
       teamFields: []
     }
 
-    it('validates constrained values (lenient mode)', () => {
+    it('validates constrained values (lenient mode)', async () => {
       const storage = makeStorageWithFieldDefs(baseDefs)
-      const { validated, errors } = fieldStore.validateFieldValues(storage, 'person', {
+      const { validated, errors } = await fieldStore.validateFieldValues(storage, 'person', {
         field_c1: 'Platform'
       })
       expect(errors).toHaveLength(0)
       expect(validated.field_c1).toBe('Platform')
     })
 
-    it('warns on stale constrained values', () => {
+    it('warns on stale constrained values', async () => {
       const storage = makeStorageWithFieldDefs(baseDefs)
-      const { validated, warnings, errors } = fieldStore.validateFieldValues(storage, 'person', {
+      const { validated, warnings, errors } = await fieldStore.validateFieldValues(storage, 'person', {
         field_c1: 'OldValue'
       })
       expect(errors).toHaveLength(0)
@@ -285,41 +277,41 @@ describe('field-store', () => {
       expect(validated.field_c1).toBe('OldValue')
     })
 
-    it('errors on unknown field', () => {
+    it('errors on unknown field', async () => {
       const storage = makeStorageWithFieldDefs(baseDefs)
-      const { errors } = fieldStore.validateFieldValues(storage, 'person', {
+      const { errors } = await fieldStore.validateFieldValues(storage, 'person', {
         field_unknown: 'x'
       })
       expect(errors.some(e => e.includes('Unknown field'))).toBe(true)
     })
 
-    it('coerces string to array for multiValue field', () => {
+    it('coerces string to array for multiValue field', async () => {
       const storage = makeStorageWithFieldDefs(baseDefs)
-      const { validated } = fieldStore.validateFieldValues(storage, 'person', {
+      const { validated } = await fieldStore.validateFieldValues(storage, 'person', {
         field_mv1: 'Go'
       })
       expect(validated.field_mv1).toEqual(['Go'])
     })
 
-    it('coerces array to first element for single-value field', () => {
+    it('coerces array to first element for single-value field', async () => {
       const storage = makeStorageWithFieldDefs(baseDefs)
-      const { validated } = fieldStore.validateFieldValues(storage, 'person', {
+      const { validated } = await fieldStore.validateFieldValues(storage, 'person', {
         field_c1: ['Platform', 'UI']
       })
       expect(validated.field_c1).toBe('Platform')
     })
 
-    it('reports required field warnings', () => {
+    it('reports required field warnings', async () => {
       const storage = makeStorageWithFieldDefs(baseDefs)
-      const { warnings } = fieldStore.validateFieldValues(storage, 'person', {
+      const { warnings } = await fieldStore.validateFieldValues(storage, 'person', {
         field_c1: 'Platform'
       }, {})
       expect(warnings.some(w => w.includes('Role is required'))).toBe(true)
     })
 
-    it('does not warn for required field when existing value present', () => {
+    it('does not warn for required field when existing value present', async () => {
       const storage = makeStorageWithFieldDefs(baseDefs)
-      const { warnings } = fieldStore.validateFieldValues(storage, 'person', {
+      const { warnings } = await fieldStore.validateFieldValues(storage, 'person', {
         field_c1: 'Platform'
       }, { field_req1: 'BE' })
       expect(warnings.some(w => w.includes('Role'))).toBe(false)
@@ -327,7 +319,7 @@ describe('field-store', () => {
   })
 
   describe('fixture validation', () => {
-    it('fixtures/team-data/field-definitions.json matches expected schema', () => {
+    it('fixtures/team-data/field-definitions.json matches expected schema', async () => {
       const fixture = require('../../../../fixtures/team-data/field-definitions.json')
       expect(fixture).toHaveProperty('personFields')
       expect(fixture).toHaveProperty('teamFields')
@@ -366,9 +358,9 @@ describe('field-store', () => {
   })
 
   describe('optionsRef support', () => {
-    it('persists optionsRef through createFieldDefinition', () => {
+    it('persists optionsRef through createFieldDefinition', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      const field = fieldStore.createFieldDefinition(storage, 'team', {
+      const field = await fieldStore.createFieldDefinition(storage, 'team', {
         label: 'Components', type: 'constrained', multiValue: true, optionsRef: 'component'
       }, 'admin@test.com')
 
@@ -376,7 +368,7 @@ describe('field-store', () => {
       expect(field.allowedValues).toBeNull()
     })
 
-    it('persists optionsRef through updateFieldDefinition', () => {
+    it('persists optionsRef through updateFieldDefinition', async () => {
       const storage = makeStorageWithFieldDefs({
         personFields: [{
           id: 'field_abc', label: 'Component', type: 'free-text', multiValue: false,
@@ -386,7 +378,7 @@ describe('field-store', () => {
         teamFields: []
       })
 
-      const result = fieldStore.updateFieldDefinition(storage, 'person', 'field_abc', {
+      const result = await fieldStore.updateFieldDefinition(storage, 'person', 'field_abc', {
         type: 'constrained', multiValue: true, optionsRef: 'component'
       }, 'admin@test.com')
 
@@ -394,9 +386,9 @@ describe('field-store', () => {
       expect(result.type).toBe('constrained')
     })
 
-    it('defaults optionsRef to null when not provided', () => {
+    it('defaults optionsRef to null when not provided', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      const field = fieldStore.createFieldDefinition(storage, 'person', {
+      const field = await fieldStore.createFieldDefinition(storage, 'person', {
         label: 'Simple', type: 'free-text'
       }, 'admin@test.com')
 
@@ -405,7 +397,7 @@ describe('field-store', () => {
   })
 
   describe('validateFieldValues with optionsResolver', () => {
-    it('uses optionsResolver for constrained fields with optionsRef', () => {
+    it('uses optionsResolver for constrained fields with optionsRef', async () => {
       const defs = {
         personFields: [{
           id: 'field_comp', label: 'Component', type: 'constrained', multiValue: true,
@@ -420,7 +412,7 @@ describe('field-store', () => {
         return null
       }
 
-      const { validated, warnings, errors } = fieldStore.validateFieldValues(
+      const { validated, warnings, errors } = await fieldStore.validateFieldValues(
         storage, 'person', { field_comp: ['Platform Core'] }, {}, { optionsResolver: resolver }
       )
 
@@ -429,7 +421,7 @@ describe('field-store', () => {
       expect(validated.field_comp).toEqual(['Platform Core'])
     })
 
-    it('warns on value not in resolved options', () => {
+    it('warns on value not in resolved options', async () => {
       const defs = {
         personFields: [{
           id: 'field_comp', label: 'Component', type: 'constrained', multiValue: true,
@@ -441,14 +433,14 @@ describe('field-store', () => {
       const storage = makeStorageWithFieldDefs(defs)
       const resolver = (ref) => ref === 'component' ? ['Platform Core'] : null
 
-      const { warnings } = fieldStore.validateFieldValues(
+      const { warnings } = await fieldStore.validateFieldValues(
         storage, 'person', { field_comp: ['Unknown Component'] }, {}, { optionsResolver: resolver }
       )
 
       expect(warnings.some(w => w.includes('Unknown Component'))).toBe(true)
     })
 
-    it('skips options validation when no resolver provided', () => {
+    it('skips options validation when no resolver provided', async () => {
       const defs = {
         personFields: [{
           id: 'field_comp', label: 'Component', type: 'constrained', multiValue: true,
@@ -459,7 +451,7 @@ describe('field-store', () => {
       }
       const storage = makeStorageWithFieldDefs(defs)
 
-      const { warnings, errors } = fieldStore.validateFieldValues(
+      const { warnings, errors } = await fieldStore.validateFieldValues(
         storage, 'person', { field_comp: ['Anything'] }
       )
 
@@ -467,7 +459,7 @@ describe('field-store', () => {
       expect(warnings).toHaveLength(0)
     })
 
-    it('handles resolver returning null (unknown option set)', () => {
+    it('handles resolver returning null (unknown option set)', async () => {
       const defs = {
         personFields: [{
           id: 'field_comp', label: 'Component', type: 'constrained', multiValue: true,
@@ -479,7 +471,7 @@ describe('field-store', () => {
       const storage = makeStorageWithFieldDefs(defs)
       const resolver = () => null
 
-      const { warnings, errors } = fieldStore.validateFieldValues(
+      const { warnings, errors } = await fieldStore.validateFieldValues(
         storage, 'person', { field_comp: ['Anything'] }, {}, { optionsResolver: resolver }
       )
 

@@ -25,24 +25,24 @@ describe('demo-storage', () => {
   })
 
   describe('readFromStorage', () => {
-    it('reads JSON from fixtures directory', () => {
-      const data = readFromStorage('test-fixture.json')
+    it('reads JSON from fixtures directory', async () => {
+      const data = await readFromStorage('test-fixture.json')
       expect(data).toEqual({ test: 'data' })
     })
 
-    it('returns null for non-existent files', () => {
-      const data = readFromStorage('non-existent.json')
+    it('returns null for non-existent files', async () => {
+      const data = await readFromStorage('non-existent.json')
       expect(data).toBeNull()
     })
 
-    it('supports nested paths like people/name.json', () => {
+    it('supports nested paths like people/name.json', async () => {
       // Create nested fixture
       const nestedDir = path.join(FIXTURES_DIR, 'people')
       fs.mkdirSync(nestedDir, { recursive: true })
       const nestedPath = path.join(nestedDir, 'test-person.json')
       fs.writeFileSync(nestedPath, JSON.stringify({ name: 'Test Person' }))
 
-      const data = readFromStorage('people/test-person.json')
+      const data = await readFromStorage('people/test-person.json')
       expect(data).toEqual({ name: 'Test Person' })
 
       // Cleanup
@@ -51,7 +51,7 @@ describe('demo-storage', () => {
   })
 
   describe('writeToStorage', () => {
-    it('is a no-op that does not write files', () => {
+    it('is a no-op that does not write files', async () => {
       const nonExistentPath = path.join(FIXTURES_DIR, 'should-not-exist.json')
 
       // Ensure file doesn't exist before test
@@ -60,7 +60,7 @@ describe('demo-storage', () => {
       }
 
       // Call writeToStorage
-      writeToStorage('should-not-exist.json', { data: 'test' })
+      await writeToStorage('should-not-exist.json', { data: 'test' })
 
       // File should still not exist
       expect(fs.existsSync(nonExistentPath)).toBe(false)

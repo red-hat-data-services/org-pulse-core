@@ -18,12 +18,12 @@ const SYNC_LOG_KEY = 'team-data/sync-log.json';
 const TEAMS_KEY = 'team-data/teams.json';
 const FIELD_DEFS_KEY = 'team-data/field-definitions.json';
 
-function loadRegistry(storage) {
-  return storage.readFromStorage(REGISTRY_KEY) || { meta: null, people: {} };
+async function loadRegistry(storage) {
+  return await storage.readFromStorage(REGISTRY_KEY) || { meta: null, people: {} };
 }
 
-function loadSyncLog(storage) {
-  return storage.readFromStorage(SYNC_LOG_KEY) || null;
+async function loadSyncLog(storage) {
+  return await storage.readFromStorage(SYNC_LOG_KEY) || null;
 }
 
 function registerIpaRegistryRoutes(router, context) {
@@ -35,12 +35,12 @@ function registerIpaRegistryRoutes(router, context) {
   // Rate limiting state for LDAP search (per user, 5 req / 10s)
   var rateLimitMap = new Map();
 
-  function getPeopleMap() {
-    return loadRegistry(storage).people || {};
+  async function getPeopleMap() {
+    return (await loadRegistry(storage)).people || {};
   }
 
-  function getEnabledLdapExtraAttrs() {
-    var config = loadConfig(storage);
+  async function getEnabledLdapExtraAttrs() {
+    var config = await loadConfig(storage);
     var enabled = config?.ldapFields?.enabled;
     if (!Array.isArray(enabled) || enabled.length === 0) return [];
     return enabled
@@ -48,11 +48,11 @@ function registerIpaRegistryRoutes(router, context) {
       .filter(function(attr) { return attr && ipaClient.LDAP_ATTRS.indexOf(attr) === -1; });
   }
 
-  function writePeopleUpdate(uid, updater) {
-    var reg = loadRegistry(storage);
+  async function writePeopleUpdate(uid, updater) {
+    var reg = await loadRegistry(storage);
     if (!reg.people || !Object.prototype.hasOwnProperty.call(reg.people, uid)) return null;
     updater(reg.people[uid]);
-    storage.writeToStorage(REGISTRY_KEY, reg);
+    await storage.writeToStorage(REGISTRY_KEY, reg);
     return reg.people[uid];
   }
 
@@ -68,8 +68,8 @@ function registerIpaRegistryRoutes(router, context) {
    *       200:
    *         description: Config and IPA status
    */
-  router.get('/ipa/config', requireAdmin, requireScope('roster:write'), function(req, res) {
-    res.json({ config: loadConfig(storage), ipa: ipaClient.getIpaStatus() });
+  router.get('/ipa/config', requireAdmin, requireScope('roster:write'), async function(req, res) {
+    res.json({ config: await loadConfig(storage), ipa: ipaClient.getIpaStatus() });
   });
 
   /**
@@ -82,15 +82,15 @@ function registerIpaRegistryRoutes(router, context) {
    *       200:
    *         description: Saved config
    */
-  router.post('/ipa/config', requireAdmin, requireScope('roster:write'), function(req, res) {
-    var config = loadConfig(storage) || {};
+  router.post('/ipa/config', requireAdmin, requireScope('roster:write'), async function(req, res) {
+    var config = await loadConfig(storage) || {};
     var body = req.body;
     if (body.orgRoots !== undefined) config.orgRoots = body.orgRoots;
     if (body.gracePeriodDays !== undefined) config.gracePeriodDays = body.gracePeriodDays;
     if (body.autoSync !== undefined) config.autoSync = body.autoSync;
     if (body.excludedTitles !== undefined) config.excludedTitles = body.excludedTitles;
     var rosterSyncConfig = require('../../../../shared/server/roster-sync/config');
-    rosterSyncConfig.saveConfig(storage, config);
+    await rosterSyncConfig.saveConfig(storage, config);
     res.json({ status: 'saved', config: config });
   });
 
@@ -104,7 +104,7 @@ function registerIpaRegistryRoutes(router, context) {
    *       200:
    *         description: Connection test result
    */
-  router.post('/ipa/test', requireAdmin, requireScope('roster:write'), function(req, res) {
+  router.post('/ipa/test', requireAdmin, requireScope('roster:write'), async function(req, res) {
     ipaClient.testConnection().then(function(result) {
       res.json(result);
     }).catch(function(err) {
@@ -124,7 +124,7 @@ function registerIpaRegistryRoutes(router, context) {
    *       200:
    *         description: Sync result
    */
-  router.post('/ipa/sync', requireAdmin, requireScope('roster:write'), function(req, res) {
+  router.post('/ipa/sync', requireAdmin, requireScope('roster:write'), async function(req, res) {
     if (DEMO_MODE) {
       return res.json({ status: 'skipped', message: 'Sync disabled in demo mode' });
     }
@@ -145,8 +145,8 @@ function registerIpaRegistryRoutes(router, context) {
    *       200:
    *         description: Sync status
    */
-  router.get('/ipa/sync/status', requireScope('roster:read'), function(req, res) {
-    var log = loadSyncLog(storage);
+  router.get('/ipa/sync/status', requireScope('roster:read'), async function(req, res) {
+    var log = await loadSyncLog(storage);
     res.json({ running: isConsolidatedSyncInProgress(), startedAt: null, lastResult: log });
   });
 
@@ -162,16 +162,16 @@ function registerIpaRegistryRoutes(router, context) {
    *       200:
    *         description: Filtered list of people
    */
-  router.get('/registry/people', requireScope('roster:read'), function(req, res) {
-    var people = getPeopleMap();
+  router.get('/registry/people', requireScope('roster:read'), async function(req, res) {
+    var people = await getPeopleMap();
     var result = [];
     var uids = Object.keys(people);
 
     // Build team lookup — after consolidation, enrichment fields are directly
     // on registry people, so we can read them directly rather than going
     // through getAllPeople(). But we still use getAllPeople for backward compat.
-    var orgDisplayNames = getOrgDisplayNames(storage);
-    var rosterPeople = getAllPeople(storage);
+    var orgDisplayNames = await getOrgDisplayNames(storage);
+    var rosterPeople = await getAllPeople(storage);
     var teamsByUid = {};
     for (var r = 0; r < rosterPeople.length; r++) {
       var rp = rosterPeople[r];
@@ -201,7 +201,7 @@ function registerIpaRegistryRoutes(router, context) {
       });
       // For auxiliary people, include associated team names
       if (personOrgType === 'auxiliary') {
-        entry.associatedTeamNames = getAssociatedTeamNames(p.uid);
+        entry.associatedTeamNames = await getAssociatedTeamNames(p.uid);
       }
       result.push(entry);
     }
@@ -227,8 +227,8 @@ function registerIpaRegistryRoutes(router, context) {
    *       404:
    *         description: Person not found
    */
-  router.get('/registry/people/:uid', requireScope('roster:read'), function(req, res) {
-    var people = getPeopleMap();
+  router.get('/registry/people/:uid', requireScope('roster:read'), async function(req, res) {
+    var people = await getPeopleMap();
     var person = Object.prototype.hasOwnProperty.call(people, req.params.uid) ? people[req.params.uid] : undefined;
     // Fallback: if not found by UID key, try matching by name
     if (!person) {
@@ -264,7 +264,7 @@ function registerIpaRegistryRoutes(router, context) {
       }
     }
     var personWithOrgType = Object.assign({}, person, { orgType: person.orgType || 'engineering' });
-    var associatedTeams = getAssociatedTeams(person.uid || req.params.uid);
+    var associatedTeams = await getAssociatedTeams(person.uid || req.params.uid);
     res.json({ person: personWithOrgType, managerChain: managerChain, directReports: directReports, associatedTeams: associatedTeams });
   });
 
@@ -291,11 +291,11 @@ function registerIpaRegistryRoutes(router, context) {
    *       404:
    *         description: Person not found
    */
-  router.put('/registry/people/:uid/github', requireAdmin, requireScope('roster:write'), function(req, res) {
+  router.put('/registry/people/:uid/github', requireAdmin, requireScope('roster:write'), async function(req, res) {
     var username = req.body.username;
     if (!username || typeof username !== 'string' || !username.trim()) return res.status(400).json({ error: 'Username is required' });
     if (!VALID_USERNAME.test(username.trim())) return res.status(400).json({ error: 'Invalid username format (1-39 chars, alphanumeric/dash/underscore/dot)' });
-    var updated = writePeopleUpdate(req.params.uid, function(p) { p.github = { username: username.trim(), source: 'manual' }; });
+    var updated = await writePeopleUpdate(req.params.uid, function(p) { p.github = { username: username.trim(), source: 'manual' }; });
     if (!updated) return res.status(404).json({ error: 'Person not found' });
     res.json({ status: 'updated', github: updated.github });
   });
@@ -319,11 +319,11 @@ function registerIpaRegistryRoutes(router, context) {
    *       404:
    *         description: Person not found
    */
-  router.put('/registry/people/:uid/gitlab', requireAdmin, requireScope('roster:write'), function(req, res) {
+  router.put('/registry/people/:uid/gitlab', requireAdmin, requireScope('roster:write'), async function(req, res) {
     var username = req.body.username;
     if (!username || typeof username !== 'string' || !username.trim()) return res.status(400).json({ error: 'Username is required' });
     if (!VALID_USERNAME.test(username.trim())) return res.status(400).json({ error: 'Invalid username format (1-39 chars, alphanumeric/dash/underscore/dot)' });
-    var updated = writePeopleUpdate(req.params.uid, function(p) { p.gitlab = { username: username.trim(), source: 'manual' }; });
+    var updated = await writePeopleUpdate(req.params.uid, function(p) { p.gitlab = { username: username.trim(), source: 'manual' }; });
     if (!updated) return res.status(404).json({ error: 'Person not found' });
     res.json({ status: 'updated', gitlab: updated.gitlab });
   });
@@ -347,8 +347,8 @@ function registerIpaRegistryRoutes(router, context) {
    *       404:
    *         description: Person not found
    */
-  router.delete('/registry/people/:uid/github', requireAdmin, requireScope('roster:write'), function(req, res) {
-    var updated = writePeopleUpdate(req.params.uid, function(p) { p.github = null; });
+  router.delete('/registry/people/:uid/github', requireAdmin, requireScope('roster:write'), async function(req, res) {
+    var updated = await writePeopleUpdate(req.params.uid, function(p) { p.github = null; });
     if (!updated) return res.status(404).json({ error: 'Person not found' });
     res.json({ status: 'removed' });
   });
@@ -372,8 +372,8 @@ function registerIpaRegistryRoutes(router, context) {
    *       404:
    *         description: Person not found
    */
-  router.delete('/registry/people/:uid/gitlab', requireAdmin, requireScope('roster:write'), function(req, res) {
-    var updated = writePeopleUpdate(req.params.uid, function(p) { p.gitlab = null; });
+  router.delete('/registry/people/:uid/gitlab', requireAdmin, requireScope('roster:write'), async function(req, res) {
+    var updated = await writePeopleUpdate(req.params.uid, function(p) { p.gitlab = null; });
     if (!updated) return res.status(404).json({ error: 'Person not found' });
     res.json({ status: 'removed' });
   });
@@ -399,8 +399,8 @@ function registerIpaRegistryRoutes(router, context) {
    *       404:
    *         description: Person not found
    */
-  router.post('/registry/people/:uid/reactivate', requireAdmin, requireScope('roster:write'), function(req, res) {
-    var updated = writePeopleUpdate(req.params.uid, function(p) { p.status = 'active'; p.inactiveSince = null; });
+  router.post('/registry/people/:uid/reactivate', requireAdmin, requireScope('roster:write'), async function(req, res) {
+    var updated = await writePeopleUpdate(req.params.uid, function(p) { p.status = 'active'; p.inactiveSince = null; });
     if (!updated) return res.status(404).json({ error: 'Person not found' });
     res.json({ status: 'reactivated', person: updated });
   });
@@ -424,11 +424,11 @@ function registerIpaRegistryRoutes(router, context) {
    *       404:
    *         description: Person not found
    */
-  router.delete('/registry/people/:uid', requireAdmin, requireScope('roster:write'), function(req, res) {
-    var reg = loadRegistry(storage);
+  router.delete('/registry/people/:uid', requireAdmin, requireScope('roster:write'), async function(req, res) {
+    var reg = await loadRegistry(storage);
     if (!reg.people || !Object.prototype.hasOwnProperty.call(reg.people, req.params.uid)) return res.status(404).json({ error: 'Person not found' });
     delete reg.people[req.params.uid];
-    storage.writeToStorage(REGISTRY_KEY, reg);
+    await storage.writeToStorage(REGISTRY_KEY, reg);
     res.json({ status: 'purged' });
   });
 
@@ -444,8 +444,8 @@ function registerIpaRegistryRoutes(router, context) {
    *       200:
    *         description: Org tree hierarchy
    */
-  router.get('/registry/orgs', requireScope('roster:read'), function(req, res) {
-    var reg = loadRegistry(storage);
+  router.get('/registry/orgs', requireScope('roster:read'), async function(req, res) {
+    var reg = await loadRegistry(storage);
     var people = reg.people || {};
     var meta = reg.meta || {};
     var orgRoots = meta.orgRoots || [];
@@ -483,8 +483,8 @@ function registerIpaRegistryRoutes(router, context) {
    *       200:
    *         description: Registry stats including counts, coverage, and breakdowns
    */
-  router.get('/registry/stats', requireScope('roster:read'), function(req, res) {
-    var people = getPeopleMap();
+  router.get('/registry/stats', requireScope('roster:read'), async function(req, res) {
+    var people = await getPeopleMap();
     var uids = Object.keys(people);
     var active = 0, inactive = 0, auxiliaryCount = 0, byOrg = {}, byGeo = {};
     var byOrgType = { engineering: 0, auxiliary: 0 };
@@ -508,7 +508,7 @@ function registerIpaRegistryRoutes(router, context) {
         byGeo[geo] = (byGeo[geo] || 0) + 1;
       } else { inactive++; }
     }
-    var orgDisplayNames = getOrgDisplayNames(storage);
+    var orgDisplayNames = await getOrgDisplayNames(storage);
     orgDisplayNames['_auxiliary'] = 'Non-Engineering';
 
     res.json({ total: uids.length, active: active, inactive: inactive, auxiliaryCount: auxiliaryCount, byOrgType: byOrgType, coverage: computeCoverage(people), byOrg: byOrg, byGeo: byGeo, orgDisplayNames: orgDisplayNames });
@@ -516,18 +516,18 @@ function registerIpaRegistryRoutes(router, context) {
 
   // ─── Helpers for person-reference association ───
 
-  function getPersonRefFieldIds() {
-    var fieldDefs = storage.readFromStorage(FIELD_DEFS_KEY);
+  async function getPersonRefFieldIds() {
+    var fieldDefs = await storage.readFromStorage(FIELD_DEFS_KEY);
     if (!fieldDefs || !fieldDefs.teamFields) return [];
     return fieldDefs.teamFields
       .filter(function(f) { return f.type === 'person-reference-linked' && !f.deleted; })
       .map(function(f) { return { id: f.id, label: f.label }; });
   }
 
-  function getAssociatedTeams(uid) {
-    var refFields = getPersonRefFieldIds();
+  async function getAssociatedTeams(uid) {
+    var refFields = await getPersonRefFieldIds();
     if (refFields.length === 0) return [];
-    var teamsData = storage.readFromStorage(TEAMS_KEY);
+    var teamsData = await storage.readFromStorage(TEAMS_KEY);
     if (!teamsData || !teamsData.teams) return [];
     var results = [];
     var teamIds = Object.keys(teamsData.teams);
@@ -552,8 +552,8 @@ function registerIpaRegistryRoutes(router, context) {
     return results;
   }
 
-  function getAssociatedTeamNames(uid) {
-    var assoc = getAssociatedTeams(uid);
+  async function getAssociatedTeamNames(uid) {
+    var assoc = await getAssociatedTeams(uid);
     var names = [];
     var seen = {};
     for (var i = 0; i < assoc.length; i++) {
@@ -581,7 +581,7 @@ function registerIpaRegistryRoutes(router, context) {
    *       503:
    *         description: LDAP not available
    */
-  router.get('/registry/people/search/ldap', requireScope('team-tracker:read'), function(req, res) {
+  router.get('/registry/people/search/ldap', requireScope('team-tracker:read'), async function(req, res) {
     if (DEMO_MODE) {
       return res.status(503).json({ error: 'LDAP not available in demo mode', code: 'LDAP_UNAVAILABLE' });
     }
@@ -629,12 +629,12 @@ function registerIpaRegistryRoutes(router, context) {
       try {
         conn = ipaClient.createClient();
         await ipaClient.bindClient(conn.client, conn.config.bindDn, conn.config.bindPassword);
-        var results = await ipaClient.searchPeople(conn.client, conn.config.baseDn, query, limit, getEnabledLdapExtraAttrs());
+        var results = await ipaClient.searchPeople(conn.client, conn.config.baseDn, query, limit, await getEnabledLdapExtraAttrs());
 
         clearTimeout(timeout);
         if (res.headersSent) return;
 
-        var people = getPeopleMap();
+        var people = await getPeopleMap();
         var enriched = results.map(function(p) {
           var existing = people[p.uid];
           return Object.assign({}, p, {
@@ -675,7 +675,7 @@ function registerIpaRegistryRoutes(router, context) {
    *       503:
    *         description: LDAP not available
    */
-  router.post('/registry/people/ldap-import', requireScope('team-tracker:write'), function(req, res) {
+  router.post('/registry/people/ldap-import', requireScope('team-tracker:write'), async function(req, res) {
     if (!req.isAdmin && !req.isTeamAdmin && !req.isManager) {
       return res.status(403).json({ error: 'Requires team-admin, admin, or manager role' });
     }
@@ -697,7 +697,7 @@ function registerIpaRegistryRoutes(router, context) {
     }
 
     // Check if already in registry
-    var reg = loadRegistry(storage);
+    var reg = await loadRegistry(storage);
     if (reg.people && reg.people[uid]) {
       return res.json({ person: reg.people[uid], created: false });
     }
@@ -717,7 +717,7 @@ function registerIpaRegistryRoutes(router, context) {
       try {
         conn = ipaClient.createClient();
         await ipaClient.bindClient(conn.client, conn.config.bindDn, conn.config.bindPassword);
-        var ldapExtraAttrs = getEnabledLdapExtraAttrs();
+        var ldapExtraAttrs = await getEnabledLdapExtraAttrs();
         var ldapPerson = await ipaClient.lookupPerson(conn.client, conn.config.baseDn, uid, ldapExtraAttrs);
 
         clearTimeout(timeout);
@@ -756,11 +756,11 @@ function registerIpaRegistryRoutes(router, context) {
           depth++;
         }
 
-        storage.writeToStorage(REGISTRY_KEY, reg);
+        await storage.writeToStorage(REGISTRY_KEY, reg);
 
         // Audit log
         var actorEmail = req.auditActor || req.userEmail || 'unknown';
-        appendAuditEntry(storage, {
+        await appendAuditEntry(storage, {
           action: 'person.ldap-import',
           actor: actorEmail,
           entityType: 'person',
@@ -798,7 +798,9 @@ function registerIpaRegistryRoutes(router, context) {
   }
 
   if (!DEMO_MODE) {
-    scheduleAutoSync(loadConfig(storage) || {});
+    loadConfig(storage).then(function(config) {
+      scheduleAutoSync(config || {});
+    });
   }
 }
 
