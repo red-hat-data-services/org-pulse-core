@@ -31,6 +31,16 @@ const SAMPLE_COMPONENTS = [
   { id: '3', name: 'Operator', description: 'Lifecycle operator', lead: { displayName: 'Bob', emailAddress: 'bob@test.com' }, assigneeType: 'COMPONENT_LEAD' }
 ]
 
+const SAMPLE_TEAMS_PAGE = {
+  entities: [
+    { teamId: 'tid-1', displayName: 'RHAI Crimson', state: 'ACTIVE', teamType: 'MEMBER_INVITE' },
+    { teamId: 'tid-2', displayName: 'RHAI Green', state: 'ACTIVE', teamType: 'OPEN' },
+    { teamId: 'tid-3', displayName: 'Old Archived Team', state: 'ARCHIVED', teamType: 'OPEN' },
+    { teamId: 'tid-4', displayName: 'AIP Fine Tuning', state: 'ACTIVE', teamType: 'MEMBER_INVITE' }
+  ],
+  cursor: null
+}
+
 describe('field-options-sync', () => {
   describe('fetchJiraProjects', () => {
     it('returns project keys and names', async () => {
@@ -58,8 +68,66 @@ describe('field-options-sync', () => {
     })
   })
 
+  describe('fetchJiraTeams', () => {
+    it('returns sorted active teams with rich values', async () => {
+      const jiraRequest = makeJiraRequest({
+        '/gateway/api/public/teams/v1/org/': SAMPLE_TEAMS_PAGE
+      })
+      const result = await fieldOptionsSync.fetchJiraTeams(jiraRequest, 'org-123', 'site-456')
+      expect(result.values).toEqual(['AIP Fine Tuning', 'RHAI Crimson', 'RHAI Green'])
+      expect(result.richValues['RHAI Crimson'].id).toBe('tid-1')
+      expect(result.richValues['RHAI Crimson'].teamType).toBe('MEMBER_INVITE')
+    })
+
+    it('filters out archived teams', async () => {
+      const jiraRequest = makeJiraRequest({
+        '/gateway/api/public/teams/v1/org/': SAMPLE_TEAMS_PAGE
+      })
+      const result = await fieldOptionsSync.fetchJiraTeams(jiraRequest, 'org-123')
+      expect(result.values).not.toContain('Old Archived Team')
+    })
+
+    it('deduplicates teams with the same displayName', async () => {
+      const dupsPage = {
+        entities: [
+          { teamId: 'tid-1', displayName: 'Platform', state: 'ACTIVE', teamType: 'OPEN' },
+          { teamId: 'tid-2', displayName: 'Platform', state: 'ACTIVE', teamType: 'MEMBER_INVITE' }
+        ],
+        cursor: null
+      }
+      const jiraRequest = makeJiraRequest({
+        '/gateway/api/public/teams/v1/org/': dupsPage
+      })
+      const result = await fieldOptionsSync.fetchJiraTeams(jiraRequest, 'org-123')
+      expect(result.values).toHaveLength(2)
+      expect(result.values).toContain('Platform (tid-1)')
+      expect(result.values).toContain('Platform (tid-2)')
+      expect(result.richValues['Platform (tid-1)'].id).toBe('tid-1')
+      expect(result.richValues['Platform (tid-2)'].id).toBe('tid-2')
+    })
+
+    it('paginates using cursor', async () => {
+      const page1 = {
+        entities: [{ teamId: 'a', displayName: 'Team A', state: 'ACTIVE', teamType: 'OPEN' }],
+        cursor: 'next-page'
+      }
+      const page2 = {
+        entities: [{ teamId: 'b', displayName: 'Team B', state: 'ACTIVE', teamType: 'OPEN' }],
+        cursor: null
+      }
+      let callCount = 0
+      const jiraRequest = vi.fn(async (url) => {
+        callCount++
+        return url.includes('cursor=') ? page2 : page1
+      })
+      const result = await fieldOptionsSync.fetchJiraTeams(jiraRequest, 'org-123')
+      expect(result.values).toEqual(['Team A', 'Team B'])
+      expect(callCount).toBe(2)
+    })
+  })
+
   describe('linkToJira', () => {
-    it('syncs values and stores sourceConfig', async () => {
+    it('syncs components and stores sourceConfig', async () => {
       const storage = makeStorage({
         'team-data/field-definitions.json': { personFields: [], teamFields: [] },
         'audit-log.json': { entries: [] }
@@ -79,10 +147,34 @@ describe('field-options-sync', () => {
 
       const saved = storage._data['team-data/field-options/components.json']
       expect(saved.source).toBe('jira')
-      expect(saved.sourceProject).toBe('RHAI')
       expect(saved.sourceConfig).toEqual({ entityType: 'components', projectKey: 'RHAI' })
       expect(saved.values).toEqual(['Dashboard', 'Notebooks', 'Operator'])
       expect(saved.richValues.Dashboard.description).toBe('Web console')
+    })
+
+    it('syncs teams and stores sourceConfig with orgId', async () => {
+      const storage = makeStorage({
+        'team-data/field-definitions.json': { personFields: [], teamFields: [] },
+        'audit-log.json': { entries: [] }
+      })
+      const jiraRequest = makeJiraRequest({
+        '/gateway/api/public/teams/v1/org/': SAMPLE_TEAMS_PAGE
+      })
+
+      const result = await fieldOptionsSync.linkToJira(storage, jiraRequest, 'jira-teams', {
+        entityType: 'teams',
+        orgId: 'org-123',
+        siteId: 'site-456',
+        label: 'Jira Teams'
+      })
+
+      expect(result.linked).toBe(true)
+      expect(result.valuesCount).toBe(3)
+
+      const saved = storage._data['team-data/field-options/jira-teams.json']
+      expect(saved.source).toBe('jira')
+      expect(saved.sourceConfig).toEqual({ entityType: 'teams', orgId: 'org-123', siteId: 'site-456' })
+      expect(saved.values).toEqual(['AIP Fine Tuning', 'RHAI Crimson', 'RHAI Green'])
     })
 
     it('rejects invalid entityType', async () => {
@@ -94,13 +186,22 @@ describe('field-options-sync', () => {
       ).rejects.toThrow('entityType must be one of')
     })
 
-    it('rejects missing projectKey', async () => {
+    it('rejects missing projectKey for components', async () => {
       const storage = makeStorage({})
       const jiraRequest = makeJiraRequest({})
 
       await expect(
         fieldOptionsSync.linkToJira(storage, jiraRequest, 'test', { entityType: 'components' })
       ).rejects.toThrow('projectKey is required')
+    })
+
+    it('rejects missing orgId for teams', async () => {
+      const storage = makeStorage({})
+      const jiraRequest = makeJiraRequest({})
+
+      await expect(
+        fieldOptionsSync.linkToJira(storage, jiraRequest, 'test', { entityType: 'teams' })
+      ).rejects.toThrow('orgId is required')
     })
   })
 
@@ -141,7 +242,7 @@ describe('field-options-sync', () => {
   })
 
   describe('syncOptionSet', () => {
-    it('refreshes values from Jira', async () => {
+    it('refreshes component values from Jira', async () => {
       const storage = makeStorage({
         'team-data/field-options/components.json': {
           name: 'components', label: 'Components', values: ['Dashboard', 'Notebooks'],
@@ -159,6 +260,27 @@ describe('field-options-sync', () => {
       expect(result.valuesCount).toBe(3)
       expect(result.added).toEqual(['Operator'])
       expect(result.removed).toEqual([])
+      expect(result.entityType).toBe('components')
+    })
+
+    it('refreshes team values from Jira gateway', async () => {
+      const storage = makeStorage({
+        'team-data/field-options/jira-teams.json': {
+          name: 'jira-teams', label: 'Jira Teams', values: ['RHAI Crimson'],
+          source: 'jira', sourceProject: 'org:org-123',
+          sourceConfig: { entityType: 'teams', orgId: 'org-123', siteId: 'site-456' }
+        },
+        'team-data/field-definitions.json': { personFields: [], teamFields: [] },
+        'audit-log.json': { entries: [] }
+      })
+      const jiraRequest = makeJiraRequest({
+        '/gateway/api/public/teams/v1/org/': SAMPLE_TEAMS_PAGE
+      })
+
+      const result = await fieldOptionsSync.syncOptionSet(storage, jiraRequest, 'jira-teams')
+      expect(result.valuesCount).toBe(3)
+      expect(result.added).toEqual(['AIP Fine Tuning', 'RHAI Green'])
+      expect(result.entityType).toBe('teams')
     })
 
     it('throws for non-linked option set', async () => {

@@ -597,9 +597,21 @@
           Connect this option set to a Jira project. Values will be synced automatically and manual editing will be disabled.
         </p>
 
-        <!-- Step 1: Select project and entity type -->
+        <!-- Step 1: Select entity type and source config -->
         <div v-if="!linkPreview" class="space-y-4">
           <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Entity Type</label>
+            <select
+              v-model="linkEntityType"
+              class="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
+            >
+              <option value="components">Components</option>
+              <option value="teams">Atlassian Teams</option>
+            </select>
+          </div>
+
+          <!-- Project picker (for components) -->
+          <div v-if="linkEntityType === 'components'">
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Jira Project</label>
             <div class="relative">
               <input
@@ -644,15 +656,27 @@
             </div>
           </div>
 
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Entity Type</label>
-            <select
-              v-model="linkEntityType"
-              class="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
-            >
-              <option value="components">Components</option>
-            </select>
-          </div>
+          <!-- Org/Site ID inputs (for teams) -->
+          <template v-if="linkEntityType === 'teams'">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Organization ID</label>
+              <input
+                v-model="linkOrgId"
+                type="text"
+                placeholder="Atlassian org ID (UUID from admin URL)"
+                class="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 font-mono"
+              />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Site ID <span class="font-normal text-gray-400">(optional)</span></label>
+              <input
+                v-model="linkSiteId"
+                type="text"
+                placeholder="Cloud ID / site ID for scoping"
+                class="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 font-mono"
+              />
+            </div>
+          </template>
 
           <div class="flex gap-2">
             <button
@@ -661,7 +685,7 @@
             >Cancel</button>
             <button
               @click="loadLinkPreview"
-              :disabled="!linkProjectKey || !linkEntityType || linkPreviewLoading"
+              :disabled="linkPreviewDisabled || linkPreviewLoading"
               class="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <svg v-if="linkPreviewLoading" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
@@ -677,12 +701,10 @@
         <div v-else class="space-y-4">
           <div class="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg space-y-3">
             <div class="text-sm">
-              <span class="font-medium text-gray-700 dark:text-gray-300">Project:</span>
-              <span class="ml-1 text-gray-900 dark:text-gray-100">{{ linkPreview.projectKey }}</span>
-            </div>
-            <div class="text-sm">
-              <span class="font-medium text-gray-700 dark:text-gray-300">Entity:</span>
-              <span class="ml-1 text-gray-900 dark:text-gray-100">{{ linkPreview.entityType }}</span>
+              <span class="font-medium text-gray-700 dark:text-gray-300">Source:</span>
+              <span class="ml-1 text-gray-900 dark:text-gray-100">
+                {{ linkPreview.entityType === 'teams' ? 'Atlassian Teams (org ' + linkOrgId + ')' : linkPreview.projectKey + ' — ' + linkPreview.entityType }}
+              </span>
             </div>
             <div class="text-sm">
               <span class="font-medium text-gray-700 dark:text-gray-300">Values from Jira:</span>
@@ -967,6 +989,8 @@ const linkProjectDropdownOpen = ref(false)
 const linkProjectHighlight = ref(0)
 const linkProjectsError = ref('')
 const linkEntityType = ref('components')
+const linkOrgId = ref('')
+const linkSiteId = ref('')
 const linkPreview = ref(null)
 const linkPreviewLoading = ref(false)
 const linkExecuting = ref(false)
@@ -978,6 +1002,12 @@ const syncing = ref(false)
 const syncResult = ref(null)
 const syncError = ref(false)
 const showUnlinkConfirm = ref(false)
+
+const linkPreviewDisabled = computed(() => {
+  if (linkEntityType.value === 'components') return !linkProjectKey.value
+  if (linkEntityType.value === 'teams') return !linkOrgId.value.trim()
+  return true
+})
 
 let linkSearchTimer = null
 let linkSearchSeq = 0
@@ -1033,6 +1063,8 @@ async function openLinkWizard() {
   linkProjectDropdownOpen.value = false
   linkProjectHighlight.value = 0
   linkEntityType.value = 'components'
+  linkOrgId.value = ''
+  linkSiteId.value = ''
   linkPreview.value = null
   linkResult.value = null
   linkError.value = false
@@ -1044,9 +1076,14 @@ async function loadLinkPreview() {
   linkResult.value = null
   linkError.value = false
   try {
-    linkPreview.value = await apiRequest(
-      `/modules/team-tracker/field-options/${selectedOption.value}/sync/preview?projectKey=${encodeURIComponent(linkProjectKey.value)}&entityType=${encodeURIComponent(linkEntityType.value)}`
-    )
+    let previewUrl = `/modules/team-tracker/field-options/${selectedOption.value}/sync/preview?entityType=${encodeURIComponent(linkEntityType.value)}`
+    if (linkEntityType.value === 'components') {
+      previewUrl += `&projectKey=${encodeURIComponent(linkProjectKey.value)}`
+    } else if (linkEntityType.value === 'teams') {
+      previewUrl += `&orgId=${encodeURIComponent(linkOrgId.value.trim())}`
+      if (linkSiteId.value.trim()) previewUrl += `&siteId=${encodeURIComponent(linkSiteId.value.trim())}`
+    }
+    linkPreview.value = await apiRequest(previewUrl)
   } catch (err) {
     console.error('Link preview failed:', err)
   } finally {
@@ -1059,15 +1096,22 @@ async function executeLink() {
   linkResult.value = null
   linkError.value = false
   try {
+    const linkBody = { entityType: linkEntityType.value }
+    if (linkEntityType.value === 'components') {
+      linkBody.projectKey = linkProjectKey.value
+    } else if (linkEntityType.value === 'teams') {
+      linkBody.orgId = linkOrgId.value.trim()
+      if (linkSiteId.value.trim()) linkBody.siteId = linkSiteId.value.trim()
+    }
     const result = await apiRequest(`/modules/team-tracker/field-options/${selectedOption.value}/sync/link`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectKey: linkProjectKey.value,
-        entityType: linkEntityType.value
-      })
+      body: JSON.stringify(linkBody)
     })
-    linkResult.value = `Linked to ${result.projectKey} — ${result.valuesCount} values synced.`
+    const sourceLabel = linkEntityType.value === 'teams'
+      ? `org ${linkOrgId.value.trim()}`
+      : result.sourceConfig?.projectKey || linkProjectKey.value
+    linkResult.value = `Linked to ${sourceLabel} — ${result.valuesCount} values synced.`
     if (result.orphanedValues?.length > 0) {
       linkResult.value += ` ${result.orphanedValues.length} orphaned value(s) need mapping.`
     }
