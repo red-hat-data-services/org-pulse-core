@@ -120,13 +120,11 @@ async function fetchJiraTeams(jiraRequest, orgId, siteId) {
   for (const t of teams) {
     nameCounts[t.displayName] = (nameCounts[t.displayName] || 0) + 1;
   }
-  const namesSeen = {};
   const values = [];
   const richValues = {};
   for (const t of teams) {
     let name = t.displayName;
     if (nameCounts[name] > 1) {
-      namesSeen[name] = (namesSeen[name] || 0) + 1;
       name = name + ' (' + t.teamId + ')';
     }
     values.push(name);
