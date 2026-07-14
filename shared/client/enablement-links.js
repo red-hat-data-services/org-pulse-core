@@ -112,6 +112,15 @@ export const enablementCategories = [
     ],
   },
   {
+    id: 'skills-registry',
+    title: 'Skills Registry',
+    section: 'other',
+    links: [
+      { label: 'Enablement Slides', icon: 'Presentation', url: 'https://docs.google.com/presentation/d/1izke023uzA3YnUB9kxf3huM5ZIJODKhA82abymerrqU/edit?slide=id.g3f362a4cb5a_0_0#slide=id.g3f362a4cb5a_0_0' },
+      { label: 'Enablement Recording', icon: 'Video', url: 'https://drive.google.com/file/d/1CvEcigQBe4qYtldzSIAhPm4X9uiz6hBd/view' },
+    ],
+  },
+  {
     id: 'rfe-builder-lessons-learned',
     title: 'RFE Builder Lessons Learned',
     section: 'other',
