@@ -57,10 +57,14 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
 
   // Poll registry mtime every 60s to detect roster sync changes
   const registryCheckInterval = setInterval(async () => {
-    const mtime = await getFileMtime('team-data/registry.json');
-    if (mtime && mtime > registryMtime) {
-      registryMtime = mtime;
-      await rebuildUserTypeCache();
+    try {
+      const mtime = await getFileMtime('team-data/registry.json');
+      if (mtime && mtime > registryMtime) {
+        registryMtime = mtime;
+        await rebuildUserTypeCache();
+      }
+    } catch (err) {
+      console.error('[health-metrics] Registry check error:', err.message);
     }
   }, 60_000);
 
@@ -191,16 +195,16 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
   // Deferred startup pruning + daily schedule
   if (!DEMO_MODE) {
     const pruneTimer = setTimeout(() => {
-      try { runPruning(); } catch (err) {
+      runPruning().catch(err => {
         console.error('[health-metrics] Pruning error:', err.message);
-      }
+      });
     }, 30_000);
     if (pruneTimer.unref) pruneTimer.unref();
 
     const dailyPrune = setInterval(() => {
-      try { runPruning(); } catch (err) {
+      runPruning().catch(err => {
         console.error('[health-metrics] Pruning error:', err.message);
-      }
+      });
     }, 24 * 60 * 60 * 1000);
     if (dailyPrune.unref) dailyPrune.unref();
   }

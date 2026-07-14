@@ -768,7 +768,7 @@ async function migrateToInApp(storage, config, actorEmail, fieldOverrides) {
   });
 
   for (const entry of auditEntries) {
-    appendAuditEntry(storage, entry);
+    await appendAuditEntry(storage, entry);
   }
 
   return { migrated: true, teams: teamsCreated, fields: fieldsCreated, assignments: assignmentsCreated, boardsMigrated };

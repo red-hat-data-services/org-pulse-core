@@ -4,21 +4,10 @@
  * Module-scoped to team-tracker (not shared/) per stability contract.
  */
 
-const { Mutex } = require('async-mutex');
 const { appendAuditEntry } = require('../../../shared/server/audit-log');
+const { getStorageMutex } = require('../../../shared/server/storage-mutex');
 
 const FIELD_OPTIONS_DIR = 'team-data/field-options';
-
-// Per-key mutex infrastructure
-
-const storageMutexes = new Map();
-
-function getStorageMutex(key) {
-  if (!storageMutexes.has(key)) {
-    storageMutexes.set(key, new Mutex());
-  }
-  return storageMutexes.get(key);
-}
 
 async function acquireMultiLock(keys) {
   const sorted = [...keys].sort();
