@@ -6,10 +6,10 @@ const { createScopeRegistry } = require('../../shared/server/scope-registry')
 function createMockStorage() {
   const store = {}
   return {
-    readFromStorage(key) {
+    async readFromStorage(key) {
       return store[key] || null
     },
-    writeToStorage(key, data) {
+    async writeToStorage(key, data) {
       store[key] = JSON.parse(JSON.stringify(data))
     },
     _store: store
@@ -40,9 +40,9 @@ function createTestScopeRegistry() {
 describe('api-tokens', () => {
   let storage
 
-  beforeEach(() => {
+  beforeEach(async () => {
     storage = createMockStorage()
-    apiTokens.init(storage, { scopeRegistry: createTestScopeRegistry() })
+    await apiTokens.init(storage, { scopeRegistry: createTestScopeRegistry() })
     apiTokens._resetForTest()
   })
 
@@ -112,23 +112,23 @@ describe('api-tokens', () => {
   describe('validateToken', () => {
     it('validates a valid token', async () => {
       const { token } = await apiTokens.createToken('user@test.com', 'Test', null)
-      const record = apiTokens.validateToken(token)
+      const record = await apiTokens.validateToken(token)
       expect(record).toBeTruthy()
       expect(record.ownerEmail).toBe('user@test.com')
     })
 
-    it('returns null for invalid token', () => {
-      const record = apiTokens.validateToken('tt_0000000000000000000000000000000f')
+    it('returns null for invalid token', async () => {
+      const record = await apiTokens.validateToken('tt_0000000000000000000000000000000f')
       expect(record).toBeNull()
     })
 
-    it('returns null for non-tt_ prefixed token', () => {
-      expect(apiTokens.validateToken('not-a-token')).toBeNull()
+    it('returns null for non-tt_ prefixed token', async () => {
+      expect(await apiTokens.validateToken('not-a-token')).toBeNull()
     })
 
-    it('returns null for null/undefined', () => {
-      expect(apiTokens.validateToken(null)).toBeNull()
-      expect(apiTokens.validateToken(undefined)).toBeNull()
+    it('returns null for null/undefined', async () => {
+      expect(await apiTokens.validateToken(null)).toBeNull()
+      expect(await apiTokens.validateToken(undefined)).toBeNull()
     })
 
     it('returns null for expired token', async () => {
@@ -137,7 +137,7 @@ describe('api-tokens', () => {
       const data = storage._store['api-tokens.json']
       data.tokens[0].expiresAt = new Date(Date.now() - 1000).toISOString()
       apiTokens._resetForTest() // Clear index to force re-read
-      const record = apiTokens.validateToken(token)
+      const record = await apiTokens.validateToken(token)
       expect(record).toBeNull()
     })
   })
@@ -145,11 +145,11 @@ describe('api-tokens', () => {
   describe('isValidToken', () => {
     it('returns true for valid token', async () => {
       const { token } = await apiTokens.createToken('user@test.com', 'Test', null)
-      expect(apiTokens.isValidToken(token)).toBe(true)
+      expect(await apiTokens.isValidToken(token)).toBe(true)
     })
 
-    it('returns false for invalid token', () => {
-      expect(apiTokens.isValidToken('tt_invalid')).toBe(false)
+    it('returns false for invalid token', async () => {
+      expect(await apiTokens.isValidToken('tt_invalid')).toBe(false)
     })
   })
 
@@ -157,7 +157,7 @@ describe('api-tokens', () => {
     it('lists only tokens belonging to the user', async () => {
       await apiTokens.createToken('user1@test.com', 'User1 Token', null)
       await apiTokens.createToken('user2@test.com', 'User2 Token', null)
-      const list = apiTokens.listUserTokens('user1@test.com')
+      const list = await apiTokens.listUserTokens('user1@test.com')
       expect(list).toHaveLength(1)
       expect(list[0].name).toBe('User1 Token')
       expect(list[0].tokenHash).toBeUndefined() // sanitized
@@ -168,7 +168,7 @@ describe('api-tokens', () => {
     it('lists all tokens without hashes', async () => {
       await apiTokens.createToken('user1@test.com', 'Token 1', null)
       await apiTokens.createToken('user2@test.com', 'Token 2', null)
-      const list = apiTokens.listAllTokens()
+      const list = await apiTokens.listAllTokens()
       expect(list).toHaveLength(2)
       expect(list[0].tokenHash).toBeUndefined()
       expect(list[1].tokenHash).toBeUndefined()
@@ -180,14 +180,14 @@ describe('api-tokens', () => {
       const { id } = await apiTokens.createToken('user@test.com', 'Test', null)
       const result = await apiTokens.revokeToken(id, 'user@test.com')
       expect(result).toBe(true)
-      expect(apiTokens.listUserTokens('user@test.com')).toHaveLength(0)
+      expect(await apiTokens.listUserTokens('user@test.com')).toHaveLength(0)
     })
 
     it('does not revoke another user\'s token', async () => {
       const { id } = await apiTokens.createToken('user1@test.com', 'Test', null)
       const result = await apiTokens.revokeToken(id, 'user2@test.com')
       expect(result).toBe(false)
-      expect(apiTokens.listUserTokens('user1@test.com')).toHaveLength(1)
+      expect(await apiTokens.listUserTokens('user1@test.com')).toHaveLength(1)
     })
 
     it('returns false for non-existent token', async () => {
@@ -198,7 +198,7 @@ describe('api-tokens', () => {
     it('revoked token is no longer valid', async () => {
       const { token, id } = await apiTokens.createToken('user@test.com', 'Test', null)
       await apiTokens.revokeToken(id, 'user@test.com')
-      expect(apiTokens.validateToken(token)).toBeNull()
+      expect(await apiTokens.validateToken(token)).toBeNull()
     })
   })
 
@@ -207,7 +207,7 @@ describe('api-tokens', () => {
       const { id } = await apiTokens.createToken('user@test.com', 'Test', null)
       const result = await apiTokens.adminRevokeToken(id)
       expect(result).toBe(true)
-      expect(apiTokens.listAllTokens()).toHaveLength(0)
+      expect(await apiTokens.listAllTokens()).toHaveLength(0)
     })
   })
 
@@ -319,14 +319,14 @@ describe('api-tokens', () => {
   describe('sanitizeToken with scopes', () => {
     it('includes scopes field', async () => {
       await apiTokens.createToken('user@test.com', 'Test', null, ['roster:read'])
-      const list = apiTokens.listUserTokens('user@test.com')
+      const list = await apiTokens.listUserTokens('user@test.com')
       expect(list[0]).toHaveProperty('scopes')
       expect(list[0].scopes).toEqual(['roster:read'])
     })
 
-    it('normalizes undefined scopes to null', () => {
+    it('normalizes undefined scopes to null', async () => {
       // Simulate a legacy token record without scopes
-      storage.writeToStorage('api-tokens.json', {
+      await storage.writeToStorage('api-tokens.json', {
         tokens: [{
           id: 'legacy-1',
           name: 'Legacy',
@@ -340,7 +340,7 @@ describe('api-tokens', () => {
         }]
       })
       apiTokens._resetForTest()
-      const list = apiTokens.listUserTokens('user@test.com')
+      const list = await apiTokens.listUserTokens('user@test.com')
       expect(list[0].scopes).toBeNull()
     })
   })
@@ -352,7 +352,7 @@ describe('api-tokens', () => {
       const data = storage._store['api-tokens.json']
       delete data.tokens[0].scopes
       apiTokens._resetForTest()
-      const record = apiTokens.validateToken(token)
+      const record = await apiTokens.validateToken(token)
       expect(record).toBeTruthy()
       expect(record.ownerEmail).toBe('user@test.com')
     })
@@ -426,7 +426,7 @@ describe('api-tokens', () => {
         promises.push(apiTokens.createToken('user@test.com', `Token ${i}`, null))
       }
       await Promise.all(promises)
-      expect(apiTokens.listUserTokens('user@test.com')).toHaveLength(5)
+      expect(await apiTokens.listUserTokens('user@test.com')).toHaveLength(5)
     })
   })
 })

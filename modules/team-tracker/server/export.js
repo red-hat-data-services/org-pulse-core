@@ -36,7 +36,7 @@ module.exports = async function teamTrackerExport(addFile, storage, mapping) {
   await exportRosterSyncConfig(addFile, readFromStorage, mapping);
 
   // 10. last-refreshed.json (pass through)
-  const lastRefreshed = readFromStorage('last-refreshed.json');
+  const lastRefreshed = await readFromStorage('last-refreshed.json');
   if (lastRefreshed) {
     addFile('last-refreshed.json', lastRefreshed);
   }
@@ -74,7 +74,7 @@ function anonymizePerson(person, mapping) {
 
 async function exportRoster(addFile, readFromStorage, mapping) {
   const { readRosterFull } = require('../../../shared/server/roster');
-  const roster = readRosterFull({ readFromStorage });
+  const roster = await readRosterFull({ readFromStorage });
   if (!roster) return;
 
   const anonymized = {};
@@ -103,9 +103,9 @@ async function exportRoster(addFile, readFromStorage, mapping) {
 }
 
 async function exportPeopleFiles(addFile, storage, mapping) {
-  const files = storage.listStorageFiles('people');
+  const files = await storage.listStorageFiles('people');
   for (const file of files) {
-    const data = storage.readFromStorage(`people/${file}`);
+    const data = await storage.readFromStorage(`people/${file}`);
     if (!data) continue;
 
     const anonymized = { ...data };
@@ -143,7 +143,7 @@ async function exportPeopleFiles(addFile, storage, mapping) {
 }
 
 async function exportGithubContributions(addFile, readFromStorage, mapping) {
-  const data = readFromStorage('github-contributions.json');
+  const data = await readFromStorage('github-contributions.json');
   if (!data) return;
 
   const anonymized = { ...data };
@@ -161,7 +161,7 @@ async function exportGithubContributions(addFile, readFromStorage, mapping) {
 }
 
 async function exportGithubHistory(addFile, readFromStorage, mapping) {
-  const data = readFromStorage('github-history.json');
+  const data = await readFromStorage('github-history.json');
   if (!data) return;
 
   const anonymized = { ...data };
@@ -176,7 +176,7 @@ async function exportGithubHistory(addFile, readFromStorage, mapping) {
 }
 
 async function exportGitlabContributions(addFile, readFromStorage, mapping) {
-  const data = readFromStorage('gitlab-contributions.json');
+  const data = await readFromStorage('gitlab-contributions.json');
   if (!data) return;
 
   const anonymized = { ...data };
@@ -199,7 +199,7 @@ async function exportGitlabContributions(addFile, readFromStorage, mapping) {
 }
 
 async function exportGitlabHistory(addFile, readFromStorage, mapping) {
-  const data = readFromStorage('gitlab-history.json');
+  const data = await readFromStorage('gitlab-history.json');
   if (!data) return;
 
   const anonymized = { ...data };
@@ -246,7 +246,7 @@ async function exportSnapshots(addFile, storage, mapping) {
 
       const files = fs.readdirSync(path.join(snapshotsDir, dir)).filter(f => f.endsWith('.json'));
       for (const file of files) {
-        const data = storage.readFromStorage(`snapshots/${dir}/${file}`);
+        const data = await storage.readFromStorage(`snapshots/${dir}/${file}`);
         if (!data) continue;
 
         // Anonymize member names in snapshot data
@@ -291,7 +291,7 @@ function anonymizeSnapshotData(data, mapping) {
 }
 
 async function exportJiraNameMap(addFile, readFromStorage, mapping) {
-  const data = readFromStorage('jira-name-map.json');
+  const data = await readFromStorage('jira-name-map.json');
   if (!data) return;
 
   const anonymized = {};
@@ -308,7 +308,7 @@ async function exportJiraNameMap(addFile, readFromStorage, mapping) {
 
 async function exportRosterSyncConfig(addFile, readFromStorage, mapping) {
   const rosterSyncConfig = require('../../../shared/server/roster-sync/config');
-  const data = rosterSyncConfig.loadConfig({ readFromStorage });
+  const data = await rosterSyncConfig.loadConfig({ readFromStorage });
   if (!data) return;
 
   const anonymized = { ...data };

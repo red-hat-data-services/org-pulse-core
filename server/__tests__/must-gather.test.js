@@ -4,11 +4,11 @@ const { collect } = require('../must-gather')
 
 function makeStorage(data = {}) {
   return {
-    readFromStorage(key) {
+    async readFromStorage(key) {
       return data[key] !== undefined ? JSON.parse(JSON.stringify(data[key])) : null
     },
-    writeToStorage() {},
-    listStorageFiles() { return [] },
+    async writeToStorage() {},
+    async listStorageFiles() { return [] },
     DATA_DIR: '/app/data'
   }
 }

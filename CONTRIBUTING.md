@@ -130,6 +130,7 @@ hard constraints. Key points:
 
 - `<script setup>` for new Vue components
 - CommonJS (`require`) for server-side code, ES modules for frontend
+- Storage API is fully async — all `readFromStorage`/`writeToStorage`/etc. calls must be `await`ed (see [`docs/MIGRATION-v3.md`](docs/MIGRATION-v3.md))
 - No TypeScript — plain JavaScript throughout
 - Tailwind CSS utility classes for styling
 - No cross-module imports (use `@shared` or API calls)

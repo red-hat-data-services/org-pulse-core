@@ -4,19 +4,19 @@ import { describe, it, expect, vi } from 'vitest'
 function makeStorage(initial = {}) {
   const data = { ...initial }
   return {
-    readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
-    writeToStorage: vi.fn((key, val) => { data[key] = JSON.parse(JSON.stringify(val)) }),
-    listStorageFiles(dir) {
+    async readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
+    writeToStorage: vi.fn(async (key, val) => { data[key] = JSON.parse(JSON.stringify(val)) }),
+    listStorageFiles: vi.fn(async (dir) => {
       return Object.keys(data)
         .filter(k => k.startsWith(dir + '/') && k.endsWith('.json'))
         .map(k => k.split('/').pop())
-    },
-    deleteStorageDirectory: vi.fn(),
+    }),
+    deleteStorageDirectory: vi.fn().mockResolvedValue(),
     _data: data
   }
 }
 
-function setupRoutes(storageData) {
+async function setupRoutes(storageData) {
   const handlers = {}
   const mockRouter = {
     get(path, ...args) { handlers[`GET ${path}`] = args[args.length - 1] },
@@ -43,7 +43,7 @@ function setupRoutes(storageData) {
   }
 
   const registerRoutes = require('../../server/index.js')
-  registerRoutes(mockRouter, context)
+  await registerRoutes(mockRouter, context)
 
   return { handlers, storage }
 }
@@ -112,8 +112,8 @@ function baseStorageData() {
 }
 
 describe('GET /admin/field-completeness', () => {
-  it('returns 403 for regular users', () => {
-    const { handlers } = setupRoutes(baseStorageData())
+  it('returns 403 for regular users', async () => {
+    const { handlers } = await setupRoutes(baseStorageData())
     const res = mockRes()
     const req = {
       userUid: 'alice',
@@ -123,12 +123,12 @@ describe('GET /admin/field-completeness', () => {
       isManager: false
     }
 
-    handlers['GET /admin/field-completeness'](req, res)
+    await handlers['GET /admin/field-completeness'](req, res)
     expect(res._status).toBe(403)
   })
 
-  it('returns 403 for managers who are not team-admins', () => {
-    const { handlers } = setupRoutes(baseStorageData())
+  it('returns 403 for managers who are not team-admins', async () => {
+    const { handlers } = await setupRoutes(baseStorageData())
     const res = mockRes()
     const req = {
       userUid: 'mgr1',
@@ -138,12 +138,12 @@ describe('GET /admin/field-completeness', () => {
       isManager: true
     }
 
-    handlers['GET /admin/field-completeness'](req, res)
+    await handlers['GET /admin/field-completeness'](req, res)
     expect(res._status).toBe(403)
   })
 
-  it('returns all active people for team-admins', () => {
-    const { handlers } = setupRoutes(baseStorageData())
+  it('returns all active people for team-admins', async () => {
+    const { handlers } = await setupRoutes(baseStorageData())
     const res = mockRes()
     const req = {
       userUid: 'alice',
@@ -153,7 +153,7 @@ describe('GET /admin/field-completeness', () => {
       isManager: false
     }
 
-    handlers['GET /admin/field-completeness'](req, res)
+    await handlers['GET /admin/field-completeness'](req, res)
 
     expect(res._status).toBe(200)
     // Should include alice and bob (active), not inactive
@@ -161,8 +161,8 @@ describe('GET /admin/field-completeness', () => {
     expect(res._body.people.map(p => p.uid).sort()).toEqual(['alice', 'bob'])
   })
 
-  it('returns all teams for admins', () => {
-    const { handlers } = setupRoutes(baseStorageData())
+  it('returns all teams for admins', async () => {
+    const { handlers } = await setupRoutes(baseStorageData())
     const res = mockRes()
     const req = {
       userUid: 'alice',
@@ -172,15 +172,15 @@ describe('GET /admin/field-completeness', () => {
       isManager: false
     }
 
-    handlers['GET /admin/field-completeness'](req, res)
+    await handlers['GET /admin/field-completeness'](req, res)
 
     expect(res._status).toBe(200)
     expect(res._body.teams).toHaveLength(2)
     expect(res._body.teams.map(t => t.name).sort()).toEqual(['Alpha', 'Beta'])
   })
 
-  it('populates customFields from _appFields', () => {
-    const { handlers } = setupRoutes(baseStorageData())
+  it('populates customFields from _appFields', async () => {
+    const { handlers } = await setupRoutes(baseStorageData())
     const res = mockRes()
     const req = {
       userUid: 'alice',
@@ -190,7 +190,7 @@ describe('GET /admin/field-completeness', () => {
       isManager: false
     }
 
-    handlers['GET /admin/field-completeness'](req, res)
+    await handlers['GET /admin/field-completeness'](req, res)
 
     const alice = res._body.people.find(p => p.uid === 'alice')
     expect(alice.customFields).toEqual({ field_f1: 'backend' })
@@ -200,8 +200,8 @@ describe('GET /admin/field-completeness', () => {
     expect(bob.customFields).toEqual({ field_f1: null })
   })
 
-  it('returns field definitions', () => {
-    const { handlers } = setupRoutes(baseStorageData())
+  it('returns field definitions', async () => {
+    const { handlers } = await setupRoutes(baseStorageData())
     const res = mockRes()
     const req = {
       userUid: 'alice',
@@ -211,15 +211,15 @@ describe('GET /admin/field-completeness', () => {
       isManager: false
     }
 
-    handlers['GET /admin/field-completeness'](req, res)
+    await handlers['GET /admin/field-completeness'](req, res)
 
     expect(res._body.fieldDefinitions.person).toHaveLength(1)
     expect(res._body.fieldDefinitions.person[0].id).toBe('field_f1')
     expect(res._body.fieldDefinitions.team).toHaveLength(1)
   })
 
-  it('returns org keys from teams', () => {
-    const { handlers } = setupRoutes(baseStorageData())
+  it('returns org keys from teams', async () => {
+    const { handlers } = await setupRoutes(baseStorageData())
     const res = mockRes()
     const req = {
       userUid: 'alice',
@@ -229,14 +229,14 @@ describe('GET /admin/field-completeness', () => {
       isManager: false
     }
 
-    handlers['GET /admin/field-completeness'](req, res)
+    await handlers['GET /admin/field-completeness'](req, res)
 
     expect(res._body.orgKeys).toHaveLength(2)
     expect(res._body.orgKeys.map(o => o.key).sort()).toEqual(['org1', 'org2'])
   })
 
-  it('returns allPeople list for autocomplete', () => {
-    const { handlers } = setupRoutes(baseStorageData())
+  it('returns allPeople list for autocomplete', async () => {
+    const { handlers } = await setupRoutes(baseStorageData())
     const res = mockRes()
     const req = {
       userUid: 'alice',
@@ -246,15 +246,15 @@ describe('GET /admin/field-completeness', () => {
       isManager: false
     }
 
-    handlers['GET /admin/field-completeness'](req, res)
+    await handlers['GET /admin/field-completeness'](req, res)
 
     // allPeople includes all active people (including auxiliary) for autocomplete
     expect(res._body.allPeople).toHaveLength(3)
     expect(res._body.allPeople.every(p => p.uid && p.name)).toBe(true)
   })
 
-  it('excludes auxiliary people from the people list', () => {
-    const { handlers } = setupRoutes(baseStorageData())
+  it('excludes auxiliary people from the people list', async () => {
+    const { handlers } = await setupRoutes(baseStorageData())
     const res = mockRes()
     const req = {
       userUid: 'alice',
@@ -264,7 +264,7 @@ describe('GET /admin/field-completeness', () => {
       isManager: false
     }
 
-    handlers['GET /admin/field-completeness'](req, res)
+    await handlers['GET /admin/field-completeness'](req, res)
 
     const uids = res._body.people.map(p => p.uid)
     expect(uids).toContain('alice')
@@ -272,10 +272,10 @@ describe('GET /admin/field-completeness', () => {
     expect(uids).not.toContain('pmcarol')
   })
 
-  it('returns empty data when registry is missing', () => {
+  it('returns empty data when registry is missing', async () => {
     const data = baseStorageData()
     delete data['team-data/registry.json']
-    const { handlers } = setupRoutes(data)
+    const { handlers } = await setupRoutes(data)
     const res = mockRes()
     const req = {
       userUid: 'alice',
@@ -285,7 +285,7 @@ describe('GET /admin/field-completeness', () => {
       isManager: false
     }
 
-    handlers['GET /admin/field-completeness'](req, res)
+    await handlers['GET /admin/field-completeness'](req, res)
 
     expect(res._status).toBe(200)
     expect(res._body.people).toEqual([])

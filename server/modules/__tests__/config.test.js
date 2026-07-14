@@ -25,31 +25,31 @@ function createMockStorage(data = {}) {
 
 describe('modules config', () => {
   describe('loadModulesConfig', () => {
-    it('returns null when no config exists', () => {
+    it('returns null when no config exists', async () => {
       const storage = createMockStorage()
-      expect(loadModulesConfig(storage)).toBeNull()
+      expect(await loadModulesConfig(storage)).toBeNull()
     })
 
-    it('returns stored config', () => {
+    it('returns stored config', async () => {
       const config = { modules: [{ slug: 'test', name: 'Test', type: 'built-in' }] }
       const storage = createMockStorage({ 'modules-config.json': config })
-      expect(loadModulesConfig(storage)).toEqual(config)
+      expect(await loadModulesConfig(storage)).toEqual(config)
     })
   })
 
   describe('seedIfMissing', () => {
-    it('seeds default config when missing', () => {
+    it('seeds default config when missing', async () => {
       const storage = createMockStorage()
-      const result = seedIfMissing(storage)
+      const result = await seedIfMissing(storage)
       expect(result.modules).toHaveLength(1)
       expect(result.modules[0].slug).toBe('team-tracker')
       expect(storage.writeToStorage).toHaveBeenCalled()
     })
 
-    it('does not overwrite existing config', () => {
+    it('does not overwrite existing config', async () => {
       const config = { modules: [{ slug: 'custom', name: 'Custom', type: 'built-in' }] }
       const storage = createMockStorage({ 'modules-config.json': config })
-      const result = seedIfMissing(storage)
+      const result = await seedIfMissing(storage)
       expect(result.modules[0].slug).toBe('custom')
       expect(storage.writeToStorage).not.toHaveBeenCalled()
     })
@@ -90,9 +90,9 @@ describe('modules config', () => {
   })
 
   describe('addModule', () => {
-    it('adds a built-in module', () => {
+    it('adds a built-in module', async () => {
       const storage = createMockStorage({ 'modules-config.json': { modules: [] } })
-      const result = addModule(storage, {
+      const result = await addModule(storage, {
         name: 'Test',
         slug: 'test',
         type: 'built-in',
@@ -102,9 +102,9 @@ describe('modules config', () => {
       expect(result.error).toBeUndefined()
     })
 
-    it('adds a git-static module', () => {
+    it('adds a git-static module', async () => {
       const storage = createMockStorage({ 'modules-config.json': { modules: [] } })
-      const result = addModule(storage, {
+      const result = await addModule(storage, {
         name: 'Dashboard',
         slug: 'my-dashboard',
         type: 'git-static',
@@ -117,11 +117,11 @@ describe('modules config', () => {
       expect(result.module.lastSyncAt).toBeNull()
     })
 
-    it('rejects duplicate slugs', () => {
+    it('rejects duplicate slugs', async () => {
       const storage = createMockStorage({
         'modules-config.json': { modules: [{ slug: 'test', name: 'Test', type: 'built-in' }] }
       })
-      const result = addModule(storage, {
+      const result = await addModule(storage, {
         name: 'Test 2',
         slug: 'test',
         type: 'built-in'
@@ -129,9 +129,9 @@ describe('modules config', () => {
       expect(result.error).toContain('already in use')
     })
 
-    it('rejects invalid slug format', () => {
+    it('rejects invalid slug format', async () => {
       const storage = createMockStorage({ 'modules-config.json': { modules: [] } })
-      const result = addModule(storage, {
+      const result = await addModule(storage, {
         name: 'Test',
         slug: 'Invalid Slug',
         type: 'built-in'
@@ -139,9 +139,9 @@ describe('modules config', () => {
       expect(result.error).toContain('slug')
     })
 
-    it('rejects git-static without HTTPS URL', () => {
+    it('rejects git-static without HTTPS URL', async () => {
       const storage = createMockStorage({ 'modules-config.json': { modules: [] } })
-      const result = addModule(storage, {
+      const result = await addModule(storage, {
         name: 'Test',
         slug: 'test',
         type: 'git-static',
@@ -150,9 +150,9 @@ describe('modules config', () => {
       expect(result.error).toContain('HTTPS')
     })
 
-    it('rejects gitSubdirectory with path traversal', () => {
+    it('rejects gitSubdirectory with path traversal', async () => {
       const storage = createMockStorage({ 'modules-config.json': { modules: [] } })
-      const result = addModule(storage, {
+      const result = await addModule(storage, {
         name: 'Test',
         slug: 'test',
         type: 'git-static',
@@ -164,34 +164,34 @@ describe('modules config', () => {
   })
 
   describe('updateModule', () => {
-    it('updates module fields', () => {
+    it('updates module fields', async () => {
       const storage = createMockStorage({
         'modules-config.json': { modules: [{ slug: 'test', name: 'Test', type: 'built-in', description: '', icon: 'box', order: 0 }] }
       })
-      const result = updateModule(storage, 'test', { name: 'Updated Test', description: 'New desc' })
+      const result = await updateModule(storage, 'test', { name: 'Updated Test', description: 'New desc' })
       expect(result.module.name).toBe('Updated Test')
       expect(result.module.description).toBe('New desc')
     })
 
-    it('returns error for non-existent module', () => {
+    it('returns error for non-existent module', async () => {
       const storage = createMockStorage({ 'modules-config.json': { modules: [] } })
-      const result = updateModule(storage, 'nonexistent', { name: 'Test' })
+      const result = await updateModule(storage, 'nonexistent', { name: 'Test' })
       expect(result.error).toContain('not found')
     })
   })
 
   describe('removeModule', () => {
-    it('removes a module', () => {
+    it('removes a module', async () => {
       const storage = createMockStorage({
         'modules-config.json': { modules: [{ slug: 'test', name: 'Test', type: 'built-in' }] }
       })
-      const result = removeModule(storage, 'test')
+      const result = await removeModule(storage, 'test')
       expect(result.removed.slug).toBe('test')
     })
 
-    it('returns error for non-existent module', () => {
+    it('returns error for non-existent module', async () => {
       const storage = createMockStorage({ 'modules-config.json': { modules: [] } })
-      const result = removeModule(storage, 'nonexistent')
+      const result = await removeModule(storage, 'nonexistent')
       expect(result.error).toContain('not found')
     })
   })

@@ -11,9 +11,9 @@ const rosterSyncConfig = require('../../../../shared/server/roster-sync/config')
 function makeStorage(initial = {}) {
   const data = { ...initial }
   return {
-    readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
-    writeToStorage: vi.fn((key, val) => { data[key] = JSON.parse(JSON.stringify(val)) }),
-    listStorageFiles(dir) {
+    async readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
+    writeToStorage: vi.fn(async (key, val) => { data[key] = JSON.parse(JSON.stringify(val)) }),
+    async listStorageFiles(dir) {
       return Object.keys(data)
         .filter(k => k.startsWith(dir + '/') && k.endsWith('.json'))
         .map(k => k.split('/').pop())
@@ -97,7 +97,7 @@ beforeEach(() => {
 })
 
 describe('buildEnrichedTeams board cascade', () => {
-  it('prefers structure boards over metadata boards', () => {
+  it('prefers structure boards over metadata boards', async () => {
     const storageData = {
       ...buildRegistryAndConfig('org1', 'Org One', ['Platform']),
       'org-roster/teams-metadata.json': {
@@ -127,7 +127,7 @@ describe('buildEnrichedTeams board cascade', () => {
     const handlers = setupRoutes(storage)
     const res = mockRes()
 
-    handlers['GET /org-teams']({ query: {} }, res)
+    await handlers['GET /org-teams']({ query: {} }, res)
 
     expect(res._status).toBe(200)
     const team = res._body.teams.find(t => t.name === 'Platform')
@@ -139,7 +139,7 @@ describe('buildEnrichedTeams board cascade', () => {
     expect(team.structureId).toBe('team_abc')
   })
 
-  it('falls back to metadata boards when no structure team exists', () => {
+  it('falls back to metadata boards when no structure team exists', async () => {
     const storageData = {
       ...buildRegistryAndConfig('org1', 'Org One', ['Platform']),
       'org-roster/teams-metadata.json': {
@@ -157,7 +157,7 @@ describe('buildEnrichedTeams board cascade', () => {
     const handlers = setupRoutes(storage)
     const res = mockRes()
 
-    handlers['GET /org-teams']({ query: {} }, res)
+    await handlers['GET /org-teams']({ query: {} }, res)
 
     expect(res._status).toBe(200)
     const team = res._body.teams.find(t => t.name === 'Platform')
@@ -169,7 +169,7 @@ describe('buildEnrichedTeams board cascade', () => {
     expect(team.structureId).toBeUndefined()
   })
 
-  it('sources components from team metadata when component field exists', () => {
+  it('sources components from team metadata when component field exists', async () => {
     const storageData = {
       ...buildRegistryAndConfig('org1', 'Org One', ['Platform']),
       'org-roster/teams-metadata.json': {
@@ -204,7 +204,7 @@ describe('buildEnrichedTeams board cascade', () => {
     const handlers = setupRoutes(storage)
     const res = mockRes()
 
-    handlers['GET /org-teams']({ query: {} }, res)
+    await handlers['GET /org-teams']({ query: {} }, res)
 
     expect(res._status).toBe(200)
     const team = res._body.teams.find(t => t.name === 'Platform')
@@ -212,7 +212,7 @@ describe('buildEnrichedTeams board cascade', () => {
     expect(team.components).toEqual(['Platform Core', 'Dashboard'])
   })
 
-  it('falls back to legacy componentMap when no component field exists', () => {
+  it('falls back to legacy componentMap when no component field exists', async () => {
     const storageData = {
       ...buildRegistryAndConfig('org1', 'Org One', ['Platform']),
       'org-roster/teams-metadata.json': {
@@ -228,7 +228,7 @@ describe('buildEnrichedTeams board cascade', () => {
     const handlers = setupRoutes(storage)
     const res = mockRes()
 
-    handlers['GET /org-teams']({ query: {} }, res)
+    await handlers['GET /org-teams']({ query: {} }, res)
 
     expect(res._status).toBe(200)
     const team = res._body.teams.find(t => t.name === 'Platform')
@@ -236,7 +236,7 @@ describe('buildEnrichedTeams board cascade', () => {
     expect(team.components).toEqual(['Legacy Comp'])
   })
 
-  it('preserves structure boards on empty teams (no members in _teamGrouping)', () => {
+  it('preserves structure boards on empty teams (no members in _teamGrouping)', async () => {
     // Simulates a team that exists in team-data/teams.json with boards,
     // but has zero people with matching _teamGrouping (e.g. after a rename).
     // The "empty structure team" code path must carry boards forward.
@@ -264,7 +264,7 @@ describe('buildEnrichedTeams board cascade', () => {
     const handlers = setupRoutes(storage)
     const res = mockRes()
 
-    handlers['GET /org-teams']({ query: {} }, res)
+    await handlers['GET /org-teams']({ query: {} }, res)
 
     expect(res._status).toBe(200)
     const team = res._body.teams.find(t => t.name === 'Fine Tuning')
@@ -278,7 +278,7 @@ describe('buildEnrichedTeams board cascade', () => {
     expect(team.boardUrls).toEqual(['https://jira.example.com/boards/100'])
   })
 
-  it('backfills boardId on empty structure teams with legacy board entries', () => {
+  it('backfills boardId on empty structure teams with legacy board entries', async () => {
     const storageData = {
       ...buildRegistryAndConfig('org1', 'Org One', ['OtherTeam']),
       'org-roster/teams-metadata.json': { teams: [], boardNames: {} },
@@ -303,7 +303,7 @@ describe('buildEnrichedTeams board cascade', () => {
     const handlers = setupRoutes(storage)
     const res = mockRes()
 
-    handlers['GET /org-teams']({ query: {} }, res)
+    await handlers['GET /org-teams']({ query: {} }, res)
 
     expect(res._status).toBe(200)
     const team = res._body.teams.find(t => t.name === 'Legacy Team')
@@ -312,7 +312,7 @@ describe('buildEnrichedTeams board cascade', () => {
     expect(team.boards[0].boardId).toBe(42)
   })
 
-  it('handles missing boards array on structure team gracefully', () => {
+  it('handles missing boards array on structure team gracefully', async () => {
     const storageData = {
       ...buildRegistryAndConfig('org1', 'Org One', ['Platform']),
       'org-roster/teams-metadata.json': {
@@ -340,7 +340,7 @@ describe('buildEnrichedTeams board cascade', () => {
     const handlers = setupRoutes(storage)
     const res = mockRes()
 
-    handlers['GET /org-teams']({ query: {} }, res)
+    await handlers['GET /org-teams']({ query: {} }, res)
 
     expect(res._status).toBe(200)
     const team = res._body.teams.find(t => t.name === 'Platform')

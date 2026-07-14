@@ -57,10 +57,10 @@ async function collect(options) {
   bundle.storage = collectStorageInfo(storageModule)
 
   // 6. Allowlist
-  bundle.allowlist = collectAllowlistInfo(storageModule)
+  bundle.allowlist = await collectAllowlistInfo(storageModule)
 
   // 7. Git-static modules
-  bundle.gitStaticModules = collectGitStaticInfo(storageModule, gitSync)
+  bundle.gitStaticModules = await collectGitStaticInfo(storageModule, gitSync)
 
   // 8. Module diagnostics
   if (collectModuleDiagnostics) {
@@ -186,23 +186,23 @@ function collectStorageInfo(storageModule) {
   return result
 }
 
-function collectAllowlistInfo(storageModule) {
-  const data = storageModule.readFromStorage('allowlist.json')
+async function collectAllowlistInfo(storageModule) {
+  const data = await storageModule.readFromStorage('allowlist.json')
   return {
     emailCount: data?.emails?.length || 0
   }
 }
 
-function collectGitStaticInfo(storageModule, gitSync) {
+async function collectGitStaticInfo(storageModule, gitSync) {
   const result = { count: 0, slugs: [], syncStatus: null }
 
   try {
     const modulesConfig = require('./modules/config')
-    const config = modulesConfig.loadModulesConfig(storageModule) || { modules: [] }
+    const config = (await modulesConfig.loadModulesConfig(storageModule)) || { modules: [] }
     result.count = config.modules.length
     result.slugs = config.modules.map(function(m) { return m.slug })
     if (gitSync) {
-      result.syncStatus = gitSync.getSyncStatus(storageModule)
+      result.syncStatus = await gitSync.getSyncStatus(storageModule)
     }
   } catch { /* ignore */ }
 
@@ -211,14 +211,14 @@ function collectGitStaticInfo(storageModule, gitSync) {
 
 // ─── Redaction ───
 
-function redactBundle(bundle, mode, storageModule) {
+async function redactBundle(bundle, mode, storageModule) {
   if (mode === 'minimal') {
     return stripSecrets(bundle)
   }
 
   // Aggressive: build mapping from roster, then walk the tree
   const { readRosterFull } = require('../shared/server/roster')
-  const roster = readRosterFull(storageModule)
+  const roster = await readRosterFull(storageModule)
   const mapping = roster ? buildMapping(roster) : null
   const stripped = stripSecrets(bundle)
   if (!mapping) return stripped

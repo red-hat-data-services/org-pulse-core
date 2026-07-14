@@ -183,9 +183,12 @@ function createTestContext(overrides = {}) {
 
   const defaults = {
     storage: {
-      readFromStorage: function () { return null },
-      writeToStorage: noop,
-      deleteFromStorage: noop
+      readFromStorage: async function () { return null },
+      writeToStorage: async function () {},
+      deleteFromStorage: async function () {},
+      listStorageFiles: async function () { return [] },
+      deleteStorageDirectory: async function () { return { deleted: 0 } },
+      getFileMtime: async function () { return null }
     },
     requireAuth: noopMiddleware,
     requireAdmin: noopMiddleware,

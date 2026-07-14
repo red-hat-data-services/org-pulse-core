@@ -5,11 +5,20 @@
  */
 
 const { appendAuditEntry } = require('../../../shared/server/audit-log');
+const { getStorageMutex } = require('../../../shared/server/storage-mutex');
 
 const FIELD_OPTIONS_DIR = 'team-data/field-options';
 
+async function acquireMultiLock(keys) {
+  const sorted = [...keys].sort();
+  const releases = [];
+  for (const key of sorted) {
+    releases.push(await getStorageMutex(key).acquire());
+  }
+  return () => releases.forEach(r => r());
+}
+
 function optionsKey(name) {
-  // Sanitize name to prevent path traversal
   const safe = name.replace(/[^a-z0-9_-]/gi, '');
   if (!safe) {
     throw new Error('Invalid field option set name: empty after sanitization');
@@ -17,37 +26,37 @@ function optionsKey(name) {
   return `${FIELD_OPTIONS_DIR}/${safe}.json`;
 }
 
-function readFieldOptions(storage, name) {
-  return storage.readFromStorage(optionsKey(name)) || null;
+async function readFieldOptions(storage, name) {
+  return (await storage.readFromStorage(optionsKey(name))) || null;
 }
 
-function writeFieldOptions(storage, name, data) {
-  storage.writeToStorage(optionsKey(name), data);
+async function writeFieldOptions(storage, name, data) {
+  await storage.writeToStorage(optionsKey(name), data);
 }
 
 /**
  * List all field option sets (summary: name, label, value count, source).
  */
-function listFieldOptions(storage) {
-  const files = storage.listStorageFiles(FIELD_OPTIONS_DIR);
-  return files
-    .filter(f => f.endsWith('.json'))
-    .map(f => {
-      const data = storage.readFromStorage(`${FIELD_OPTIONS_DIR}/${f}`);
-      if (!data) return null;
-      const summary = { name: data.name, label: data.label, count: (data.values || []).length };
-      if (data.source) summary.source = data.source;
-      return summary;
-    })
-    .filter(Boolean);
+async function listFieldOptions(storage) {
+  const files = await storage.listStorageFiles(FIELD_OPTIONS_DIR);
+  const results = [];
+  for (const f of files) {
+    if (!f.endsWith('.json')) continue;
+    const data = await storage.readFromStorage(`${FIELD_OPTIONS_DIR}/${f}`);
+    if (!data) continue;
+    const summary = { name: data.name, label: data.label, count: (data.values || []).length };
+    if (data.source) summary.source = data.source;
+    results.push(summary);
+  }
+  return results;
 }
 
 /**
  * Get field option values by name.
  * Returns the values array, or null if the option set does not exist.
  */
-function getValues(storage, name) {
-  const options = readFieldOptions(storage, name);
+async function getValues(storage, name) {
+  const options = await readFieldOptions(storage, name);
   return options ? options.values || [] : null;
 }
 
@@ -55,72 +64,78 @@ function getValues(storage, name) {
  * Add values to a field option set. Creates the option set if it does not exist.
  * Rejects writes to externally-managed option sets.
  */
-function addValues(storage, name, values, actorEmail) {
-  let options = readFieldOptions(storage, name);
-  if (options && options.source) {
-    throw new Error(`Option set "${name}" is managed by external source "${options.source}" and cannot be manually modified`);
-  }
-  if (!options) {
-    options = { name, label: name.charAt(0).toUpperCase() + name.slice(1), values: [] };
-  }
-
-  const existing = new Set(options.values);
-  const added = [];
-  for (const v of values) {
-    const trimmed = v.trim();
-    if (trimmed && !existing.has(trimmed)) {
-      options.values.push(trimmed);
-      existing.add(trimmed);
-      added.push(trimmed);
+async function addValues(storage, name, values, actorEmail) {
+  const mutex = getStorageMutex(optionsKey(name));
+  return mutex.runExclusive(async () => {
+    let options = await readFieldOptions(storage, name);
+    if (options && options.source) {
+      throw new Error(`Option set "${name}" is managed by external source "${options.source}" and cannot be manually modified`);
     }
-  }
+    if (!options) {
+      options = { name, label: name.charAt(0).toUpperCase() + name.slice(1), values: [] };
+    }
 
-  if (added.length > 0) {
-    options.values.sort();
-    options.updatedAt = new Date().toISOString();
-    options.updatedBy = actorEmail;
-    writeFieldOptions(storage, name, options);
+    const existing = new Set(options.values);
+    const added = [];
+    for (const v of values) {
+      const trimmed = v.trim();
+      if (trimmed && !existing.has(trimmed)) {
+        options.values.push(trimmed);
+        existing.add(trimmed);
+        added.push(trimmed);
+      }
+    }
 
-    appendAuditEntry(storage, {
-      action: 'field-options.add',
-      actor: actorEmail,
-      entityType: 'field-options',
-      entityId: name,
-      detail: `Added ${added.length} values to "${name}": ${added.join(', ')}`
-    });
-  }
+    if (added.length > 0) {
+      options.values.sort();
+      options.updatedAt = new Date().toISOString();
+      options.updatedBy = actorEmail;
+      await writeFieldOptions(storage, name, options);
 
-  return { added, total: options.values.length };
+      await appendAuditEntry(storage, {
+        action: 'field-options.add',
+        actor: actorEmail,
+        entityType: 'field-options',
+        entityId: name,
+        detail: `Added ${added.length} values to "${name}": ${added.join(', ')}`
+      });
+    }
+
+    return { added, total: options.values.length };
+  });
 }
 
 /**
  * Replace all values in a field option set.
  * Rejects writes to externally-managed option sets (source !== undefined).
  */
-function replaceValues(storage, name, values, label, actorEmail) {
-  const existing = readFieldOptions(storage, name);
-  if (existing && existing.source) {
-    throw new Error(`Option set "${name}" is managed by external source "${existing.source}" and cannot be manually replaced`);
-  }
-  const deduped = [...new Set(values.map(v => v.trim()).filter(Boolean))].sort();
-  const options = {
-    name,
-    label: label || name.charAt(0).toUpperCase() + name.slice(1),
-    values: deduped,
-    updatedAt: new Date().toISOString(),
-    updatedBy: actorEmail
-  };
-  writeFieldOptions(storage, name, options);
+async function replaceValues(storage, name, values, label, actorEmail) {
+  const mutex = getStorageMutex(optionsKey(name));
+  return mutex.runExclusive(async () => {
+    const existing = await readFieldOptions(storage, name);
+    if (existing && existing.source) {
+      throw new Error(`Option set "${name}" is managed by external source "${existing.source}" and cannot be manually replaced`);
+    }
+    const deduped = [...new Set(values.map(v => v.trim()).filter(Boolean))].sort();
+    const options = {
+      name,
+      label: label || name.charAt(0).toUpperCase() + name.slice(1),
+      values: deduped,
+      updatedAt: new Date().toISOString(),
+      updatedBy: actorEmail
+    };
+    await writeFieldOptions(storage, name, options);
 
-  appendAuditEntry(storage, {
-    action: 'field-options.replace',
-    actor: actorEmail,
-    entityType: 'field-options',
-    entityId: name,
-    detail: `Replaced "${name}" field options with ${deduped.length} values`
+    await appendAuditEntry(storage, {
+      action: 'field-options.replace',
+      actor: actorEmail,
+      entityType: 'field-options',
+      entityId: name,
+      detail: `Replaced "${name}" field options with ${deduped.length} values`
+    });
+
+    return options;
   });
-
-  return options;
 }
 
 /**
@@ -138,57 +153,60 @@ function replaceValues(storage, name, values, label, actorEmail) {
  * @param {object} [opts.richValues] - Keyed by value name, contains enriched data
  * @returns {{ orphanedValues: string[], added: string[], removed: string[] }}
  */
-function syncFromExternal(storage, name, opts) {
-  const { source, sourceProject, values, label, richValues } = opts;
-  const deduped = [...new Set(values.map(v => v.trim()).filter(Boolean))].sort();
+async function syncFromExternal(storage, name, opts) {
+  const mutex = getStorageMutex(optionsKey(name));
+  return mutex.runExclusive(async () => {
+    const { source, sourceProject, values, label, richValues } = opts;
+    const deduped = [...new Set(values.map(v => v.trim()).filter(Boolean))].sort();
 
-  const existing = readFieldOptions(storage, name);
-  const previousValues = existing ? (existing.values || []) : [];
+    const existing = await readFieldOptions(storage, name);
+    const previousValues = existing ? (existing.values || []) : [];
 
-  const newSet = new Set(deduped);
-  const oldSet = new Set(previousValues);
-  const added = deduped.filter(v => !oldSet.has(v));
-  const removed = previousValues.filter(v => !newSet.has(v));
+    const newSet = new Set(deduped);
+    const oldSet = new Set(previousValues);
+    const added = deduped.filter(v => !oldSet.has(v));
+    const removed = previousValues.filter(v => !newSet.has(v));
 
-  // Detect orphaned values — removed from source but still referenced by records
-  const orphanedValues = removed.length > 0
-    ? findReferencedValues(storage, name, removed)
-    : [];
+    // Detect orphaned values -- removed from source but still referenced by records
+    const orphanedValues = removed.length > 0
+      ? await findReferencedValues(storage, name, removed)
+      : [];
 
-  const now = new Date().toISOString();
-  const options = {
-    name,
-    label: label || (existing && existing.label) || name.charAt(0).toUpperCase() + name.slice(1),
-    values: deduped,
-    source,
-    sourceProject: sourceProject || null,
-    syncedAt: now,
-    updatedAt: now,
-    updatedBy: source + '-sync'
-  };
-  if (richValues) {
-    options.richValues = richValues;
-  }
-  if (orphanedValues.length > 0) {
-    options.orphanedValues = orphanedValues;
-  } else {
-    // Clear any previously tracked orphans
-    delete options.orphanedValues;
-  }
+    const now = new Date().toISOString();
+    const options = {
+      name,
+      label: label || (existing && existing.label) || name.charAt(0).toUpperCase() + name.slice(1),
+      values: deduped,
+      source,
+      sourceProject: sourceProject || null,
+      syncedAt: now,
+      updatedAt: now,
+      updatedBy: source + '-sync'
+    };
+    if (richValues) {
+      options.richValues = richValues;
+    }
+    if (orphanedValues.length > 0) {
+      options.orphanedValues = orphanedValues;
+    } else {
+      // Clear any previously tracked orphans
+      delete options.orphanedValues;
+    }
 
-  writeFieldOptions(storage, name, options);
+    await writeFieldOptions(storage, name, options);
 
-  if (added.length > 0 || removed.length > 0) {
-    appendAuditEntry(storage, {
-      action: 'field-options.external-sync',
-      actor: source + '-sync',
-      entityType: 'field-options',
-      entityId: name,
-      detail: `Synced from ${source} (project: ${sourceProject || 'unknown'}): ${deduped.length} values (${added.length} added, ${removed.length} removed, ${orphanedValues.length} orphaned)`
-    });
-  }
+    if (added.length > 0 || removed.length > 0) {
+      await appendAuditEntry(storage, {
+        action: 'field-options.external-sync',
+        actor: source + '-sync',
+        entityType: 'field-options',
+        entityId: name,
+        detail: `Synced from ${source} (project: ${sourceProject || 'unknown'}): ${deduped.length} values (${added.length} added, ${removed.length} removed, ${orphanedValues.length} orphaned)`
+      });
+    }
 
-  return { orphanedValues, added, removed };
+    return { orphanedValues, added, removed };
+  });
 }
 
 /**
@@ -200,19 +218,19 @@ function syncFromExternal(storage, name, opts) {
  * @param {string[]} candidates - Values to check
  * @returns {string[]} Values from candidates that are still in use
  */
-function findReferencedValues(storage, optionSetName, candidates) {
+async function findReferencedValues(storage, optionSetName, candidates) {
   if (!candidates || candidates.length === 0) return [];
   const candidateSet = new Set(candidates);
   const referenced = new Set();
 
   // Find field definitions that use this option set
-  const fieldDefs = storage.readFromStorage('team-data/field-definitions.json') || { personFields: [], teamFields: [] };
+  const fieldDefs = (await storage.readFromStorage('team-data/field-definitions.json')) || { personFields: [], teamFields: [] };
   const personFieldIds = (fieldDefs.personFields || []).filter(f => !f.deleted && f.optionsRef === optionSetName).map(f => f.id);
   const teamFieldIds = (fieldDefs.teamFields || []).filter(f => !f.deleted && f.optionsRef === optionSetName).map(f => f.id);
 
   // Scan person records
   if (personFieldIds.length > 0) {
-    const registry = storage.readFromStorage('team-data/registry.json');
+    const registry = await storage.readFromStorage('team-data/registry.json');
     if (registry && registry.people) {
       for (const person of Object.values(registry.people)) {
         if (!person._appFields) continue;
@@ -232,7 +250,7 @@ function findReferencedValues(storage, optionSetName, candidates) {
 
   // Scan team records
   if (teamFieldIds.length > 0) {
-    const teamsData = storage.readFromStorage('team-data/teams.json');
+    const teamsData = await storage.readFromStorage('team-data/teams.json');
     if (teamsData && teamsData.teams) {
       for (const team of Object.values(teamsData.teams)) {
         if (!team.metadata) continue;
@@ -257,33 +275,36 @@ function findReferencedValues(storage, optionSetName, candidates) {
  * Remove values from a field option set.
  * Rejects writes to externally-managed option sets.
  */
-function removeValues(storage, name, valuesToRemove, actorEmail) {
-  const options = readFieldOptions(storage, name);
-  if (!options) return null;
-  if (options.source) {
-    throw new Error(`Option set "${name}" is managed by external source "${options.source}" and cannot be manually modified`);
-  }
+async function removeValues(storage, name, valuesToRemove, actorEmail) {
+  const mutex = getStorageMutex(optionsKey(name));
+  return mutex.runExclusive(async () => {
+    const options = await readFieldOptions(storage, name);
+    if (!options) return null;
+    if (options.source) {
+      throw new Error(`Option set "${name}" is managed by external source "${options.source}" and cannot be manually modified`);
+    }
 
-  const removeSet = new Set(valuesToRemove);
-  const before = options.values.length;
-  options.values = options.values.filter(v => !removeSet.has(v));
-  const removed = before - options.values.length;
+    const removeSet = new Set(valuesToRemove);
+    const before = options.values.length;
+    options.values = options.values.filter(v => !removeSet.has(v));
+    const removed = before - options.values.length;
 
-  if (removed > 0) {
-    options.updatedAt = new Date().toISOString();
-    options.updatedBy = actorEmail;
-    writeFieldOptions(storage, name, options);
+    if (removed > 0) {
+      options.updatedAt = new Date().toISOString();
+      options.updatedBy = actorEmail;
+      await writeFieldOptions(storage, name, options);
 
-    appendAuditEntry(storage, {
-      action: 'field-options.remove',
-      actor: actorEmail,
-      entityType: 'field-options',
-      entityId: name,
-      detail: `Removed ${removed} values from "${name}"`
-    });
-  }
+      await appendAuditEntry(storage, {
+        action: 'field-options.remove',
+        actor: actorEmail,
+        entityType: 'field-options',
+        entityId: name,
+        detail: `Removed ${removed} values from "${name}"`
+      });
+    }
 
-  return { removed, total: options.values.length };
+    return { removed, total: options.values.length };
+  });
 }
 
 /**
@@ -297,104 +318,113 @@ function removeValues(storage, name, valuesToRemove, actorEmail) {
  * @param {string} actorEmail
  * @returns {{ updated: number }|null} Count of person+team records updated, or null if set not found
  */
-function renameValue(storage, name, oldValue, newValue, actorEmail) {
-  const options = readFieldOptions(storage, name);
-  if (!options) return null;
-  if (options.source) {
-    throw new Error(`Option set "${name}" is managed by external source "${options.source}" and cannot be manually modified`);
-  }
+async function renameValue(storage, name, oldValue, newValue, actorEmail) {
+  const release = await acquireMultiLock([
+    optionsKey(name),
+    'team-data/registry.json',
+    'team-data/teams.json'
+  ]);
+  try {
+    const options = await readFieldOptions(storage, name);
+    if (!options) return null;
+    if (options.source) {
+      throw new Error(`Option set "${name}" is managed by external source "${options.source}" and cannot be manually modified`);
+    }
 
-  const idx = options.values.indexOf(oldValue);
-  if (idx === -1) {
-    throw new Error(`Value "${oldValue}" not found in option set "${name}"`);
-  }
-  if (options.values.includes(newValue)) {
-    throw new Error(`Value "${newValue}" already exists in option set "${name}"`);
-  }
+    const idx = options.values.indexOf(oldValue);
+    if (idx === -1) {
+      throw new Error(`Value "${oldValue}" not found in option set "${name}"`);
+    }
+    if (options.values.includes(newValue)) {
+      throw new Error(`Value "${newValue}" already exists in option set "${name}"`);
+    }
 
-  // 1. Update the option set itself
-  options.values[idx] = newValue;
-  options.values.sort();
-  options.updatedAt = new Date().toISOString();
-  options.updatedBy = actorEmail;
-  writeFieldOptions(storage, name, options);
+    // 1. Update the option set itself
+    options.values[idx] = newValue;
+    options.values.sort();
+    options.updatedAt = new Date().toISOString();
+    options.updatedBy = actorEmail;
+    await writeFieldOptions(storage, name, options);
 
-  // 2. Find all field definitions that reference this option set
-  const fieldDefs = storage.readFromStorage('team-data/field-definitions.json') || { personFields: [], teamFields: [] };
-  const personFieldIds = (fieldDefs.personFields || []).filter(f => !f.deleted && f.optionsRef === name).map(f => f.id);
-  const teamFieldIds = (fieldDefs.teamFields || []).filter(f => !f.deleted && f.optionsRef === name).map(f => f.id);
+    // 2. Find all field definitions that reference this option set
+    const fieldDefs = (await storage.readFromStorage('team-data/field-definitions.json')) || { personFields: [], teamFields: [] };
+    const personFieldIds = (fieldDefs.personFields || []).filter(f => !f.deleted && f.optionsRef === name).map(f => f.id);
+    const teamFieldIds = (fieldDefs.teamFields || []).filter(f => !f.deleted && f.optionsRef === name).map(f => f.id);
 
-  let updated = 0;
+    let updated = 0;
 
-  // 3. Cascade to person records
-  if (personFieldIds.length > 0) {
-    const registry = storage.readFromStorage('team-data/registry.json');
-    if (registry && registry.people) {
-      let registryModified = false;
-      for (const person of Object.values(registry.people)) {
-        if (!person._appFields) continue;
-        for (const fieldId of personFieldIds) {
-          const val = person._appFields[fieldId];
-          if (val === oldValue) {
-            person._appFields[fieldId] = newValue;
-            registryModified = true;
-            updated++;
-          } else if (Array.isArray(val)) {
-            const arrIdx = val.indexOf(oldValue);
-            if (arrIdx !== -1) {
-              val[arrIdx] = newValue;
+    // 3. Cascade to person records
+    if (personFieldIds.length > 0) {
+      const registry = await storage.readFromStorage('team-data/registry.json');
+      if (registry && registry.people) {
+        let registryModified = false;
+        for (const person of Object.values(registry.people)) {
+          if (!person._appFields) continue;
+          for (const fieldId of personFieldIds) {
+            const val = person._appFields[fieldId];
+            if (val === oldValue) {
+              person._appFields[fieldId] = newValue;
               registryModified = true;
               updated++;
+            } else if (Array.isArray(val)) {
+              const arrIdx = val.indexOf(oldValue);
+              if (arrIdx !== -1) {
+                val[arrIdx] = newValue;
+                registryModified = true;
+                updated++;
+              }
             }
           }
         }
-      }
-      if (registryModified) {
-        storage.writeToStorage('team-data/registry.json', registry);
+        if (registryModified) {
+          await storage.writeToStorage('team-data/registry.json', registry);
+        }
       }
     }
-  }
 
-  // 4. Cascade to team metadata
-  if (teamFieldIds.length > 0) {
-    const teamsData = storage.readFromStorage('team-data/teams.json');
-    if (teamsData && teamsData.teams) {
-      let teamsModified = false;
-      for (const team of Object.values(teamsData.teams)) {
-        if (!team.metadata) continue;
-        for (const fieldId of teamFieldIds) {
-          const val = team.metadata[fieldId];
-          if (val === oldValue) {
-            team.metadata[fieldId] = newValue;
-            teamsModified = true;
-            updated++;
-          } else if (Array.isArray(val)) {
-            const arrIdx = val.indexOf(oldValue);
-            if (arrIdx !== -1) {
-              val[arrIdx] = newValue;
+    // 4. Cascade to team metadata
+    if (teamFieldIds.length > 0) {
+      const teamsData = await storage.readFromStorage('team-data/teams.json');
+      if (teamsData && teamsData.teams) {
+        let teamsModified = false;
+        for (const team of Object.values(teamsData.teams)) {
+          if (!team.metadata) continue;
+          for (const fieldId of teamFieldIds) {
+            const val = team.metadata[fieldId];
+            if (val === oldValue) {
+              team.metadata[fieldId] = newValue;
               teamsModified = true;
               updated++;
+            } else if (Array.isArray(val)) {
+              const arrIdx = val.indexOf(oldValue);
+              if (arrIdx !== -1) {
+                val[arrIdx] = newValue;
+                teamsModified = true;
+                updated++;
+              }
             }
           }
         }
-      }
-      if (teamsModified) {
-        storage.writeToStorage('team-data/teams.json', teamsData);
+        if (teamsModified) {
+          await storage.writeToStorage('team-data/teams.json', teamsData);
+        }
       }
     }
+
+    await appendAuditEntry(storage, {
+      action: 'field-options.rename',
+      actor: actorEmail,
+      entityType: 'field-options',
+      entityId: name,
+      oldValue,
+      newValue,
+      detail: `Renamed "${oldValue}" to "${newValue}" in "${name}" (${updated} records updated)`
+    });
+
+    return { updated };
+  } finally {
+    release();
   }
-
-  appendAuditEntry(storage, {
-    action: 'field-options.rename',
-    actor: actorEmail,
-    entityType: 'field-options',
-    entityId: name,
-    oldValue,
-    newValue,
-    detail: `Renamed "${oldValue}" to "${newValue}" in "${name}" (${updated} records updated)`
-  });
-
-  return { updated };
 }
 
 module.exports = {

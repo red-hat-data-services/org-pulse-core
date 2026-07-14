@@ -30,14 +30,14 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
   // Initialize rfe module with secrets
   rfeModule.init(context.secrets);
 
-  function getSheetId() {
+  async function getSheetId() {
     const rosterSyncConfig = require('../../../../shared/server/roster-sync/config');
-    const config = rosterSyncConfig.loadConfig(storage);
+    const config = await rosterSyncConfig.loadConfig(storage);
     return config?.googleSheetId || null;
   }
 
-  function getOrgConfig() {
-    return readFromStorage('org-roster/config.json') || {
+  async function getOrgConfig() {
+    return (await readFromStorage('org-roster/config.json')) || {
       teamBoardsTab: '',
       componentsTab: '',
       jiraProject: 'RHAIRFE',
@@ -47,8 +47,8 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
     };
   }
 
-  function buildOrgKeyToDisplayName() {
-    return getOrgDisplayNames(storage);
+  async function buildOrgKeyToDisplayName() {
+    return await getOrgDisplayNames(storage);
   }
 
   function groupPeopleByOrgTeam(allPeople, orgKeyToDisplay) {
@@ -67,23 +67,23 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
     return map;
   }
 
-  function buildEnrichedTeams(orgFilter) {
-    const rosterConfig = loadRosterSyncConfig(storage);
+  async function buildEnrichedTeams(orgFilter) {
+    const rosterConfig = await loadRosterSyncConfig(storage);
     const isInAppMode = (rosterConfig?.teamDataSource || 'sheets') === 'in-app';
 
-    const metaData = readFromStorage('org-roster/teams-metadata.json');
+    const metaData = await readFromStorage('org-roster/teams-metadata.json');
     const boardNames = metaData?.boardNames || {};
 
     // Resolve component field from team field definitions via optionsRef
     const fieldStore = require('../../../../shared/server/field-store');
-    const fieldDefs = fieldStore.readFieldDefinitions(storage);
+    const fieldDefs = await fieldStore.readFieldDefinitions(storage);
     const componentFieldDef = (fieldDefs.teamFields || []).find(
       f => !f.deleted && f.optionsRef === 'component'
     );
     const componentFieldId = componentFieldDef?.id;
 
     // Fallback: legacy component map for pre-migration state
-    const compData = !componentFieldId ? readFromStorage('org-roster/components.json') : null;
+    const compData = !componentFieldId ? await readFromStorage('org-roster/components.json') : null;
     const componentMap = compData?.components || {};
 
     // Build a lookup of metadata by composite key for enrichment
@@ -95,8 +95,8 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
     }
 
     // Teams are derived from people's _teamGrouping values (the source of truth)
-    const allPeople = getAllPeople(storage);
-    const orgKeyToDisplay = buildOrgKeyToDisplayName();
+    const allPeople = await getAllPeople(storage);
+    const orgKeyToDisplay = await buildOrgKeyToDisplayName();
     const orgTeamPeopleMap = groupPeopleByOrgTeam(allPeople, orgKeyToDisplay);
 
     // In in-app mode, PM/Eng Lead are team fields in metadata — skip person-level rollup
@@ -144,7 +144,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
 
     // Enrich with structure team metadata (C1 fix)
     const teamStore = require('../../../../shared/server/team-store');
-    const structureData = teamStore.readTeams(storage);
+    const structureData = await teamStore.readTeams(storage);
     const structureByComposite = {};
     for (const [id, t] of Object.entries(structureData.teams)) {
       const displayName = orgKeyToDisplay[t.orgKey] || t.orgKey;
@@ -235,10 +235,10 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
    *       200:
    *         description: List of enriched teams with unassigned people
    */
-  router.get('/org-teams', requireScope('roster:read'), function(req, res) {
+  router.get('/org-teams', requireScope('roster:read'), async function(req, res) {
     try {
-      const { teams, unassigned, totalPeople, fetchedAt } = buildEnrichedTeams(req.query.org);
-      const rfeData = readFromStorage('org-roster/rfe-backlog.json');
+      const { teams, unassigned, totalPeople, fetchedAt } = await buildEnrichedTeams(req.query.org);
+      const rfeData = await readFromStorage('org-roster/rfe-backlog.json');
       const enriched = rfeData ? teams.map(function(t) {
         const teamKey = `${t.org}::${t.name}`;
         const rfe = rfeData.byTeam?.[teamKey];
@@ -272,7 +272,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
    *       404:
    *         description: Team not found
    */
-  router.get('/org-teams/:teamKey', requireScope('roster:read'), function(req, res) {
+  router.get('/org-teams/:teamKey', requireScope('roster:read'), async function(req, res) {
     try {
       const teamKey = decodeURIComponent(req.params.teamKey);
       const sepIdx = teamKey.indexOf('::');
@@ -280,11 +280,11 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
 
       const orgName = teamKey.substring(0, sepIdx);
       const teamName = teamKey.substring(sepIdx + 2);
-      const { teams } = buildEnrichedTeams(orgName);
+      const { teams } = await buildEnrichedTeams(orgName);
       const team = teams.find(t => t.name === teamName);
       if (!team) return res.status(404).json({ error: 'Team not found' });
 
-      const rfeData = readFromStorage('org-roster/rfe-backlog.json');
+      const rfeData = await readFromStorage('org-roster/rfe-backlog.json');
       const rfe = rfeData?.byTeam?.[teamKey];
       res.json({ ...team, rfeCount: rfe?.count || 0, rfeIssues: rfe?.issues || [] });
     } catch (error) {
@@ -312,7 +312,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
    *       200:
    *         description: List of team members
    */
-  router.get('/org-teams/:teamKey/members', requireScope('roster:read'), function(req, res) {
+  router.get('/org-teams/:teamKey/members', requireScope('roster:read'), async function(req, res) {
     try {
       const teamKey = decodeURIComponent(req.params.teamKey);
       const sepIdx = teamKey.indexOf('::');
@@ -320,8 +320,8 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
 
       const orgName = teamKey.substring(0, sepIdx);
       const teamName = teamKey.substring(sepIdx + 2);
-      const allPeople = getAllPeople(storage);
-      const orgKeyToDisplay = buildOrgKeyToDisplayName();
+      const allPeople = await getAllPeople(storage);
+      const orgKeyToDisplay = await buildOrgKeyToDisplayName();
       const members = allPeople.filter(function(person) {
         const personOrg = orgKeyToDisplay[person.orgKey] || '';
         if (personOrg !== orgName) return false;
@@ -347,11 +347,11 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
    *       200:
    *         description: List of orgs
    */
-  router.get('/org-list', requireScope('roster:read'), function(req, res) {
+  router.get('/org-list', requireScope('roster:read'), async function(req, res) {
     try {
       // Derive orgs and team counts from people data (source of truth)
-      const allPeople = getAllPeople(storage);
-      const orgKeyToDisplay = buildOrgKeyToDisplayName();
+      const allPeople = await getAllPeople(storage);
+      const orgKeyToDisplay = await buildOrgKeyToDisplayName();
       const orgTeamPeopleMap = groupPeopleByOrgTeam(allPeople, orgKeyToDisplay);
 
       const orgMap = {};
@@ -401,16 +401,16 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
    *       404:
    *         description: No data for this org
    */
-  router.get('/org-summary/:orgName', requireScope('roster:read'), function(req, res) {
+  router.get('/org-summary/:orgName', requireScope('roster:read'), async function(req, res) {
     try {
       const orgName = decodeURIComponent(req.params.orgName);
       const isAll = orgName === '_all';
-      const { teams } = buildEnrichedTeams(isAll ? undefined : orgName);
+      const { teams } = await buildEnrichedTeams(isAll ? undefined : orgName);
 
       if (teams.length === 0) return res.status(404).json({ error: 'No data available for this org' });
 
-      const allPeople = getAllPeople(storage);
-      const orgKeyToDisplay = buildOrgKeyToDisplayName();
+      const allPeople = await getAllPeople(storage);
+      const orgKeyToDisplay = await buildOrgKeyToDisplayName();
       const orgPeople = isAll ? allPeople : allPeople.filter(function(person) {
         return (orgKeyToDisplay[person.orgKey] || '') === orgName;
       });
@@ -427,7 +427,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
 
       const orgComponents = [...new Set(teams.flatMap(t => t.components || []))];
 
-      const rfeData = readFromStorage('org-roster/rfe-backlog.json');
+      const rfeData = await readFromStorage('org-roster/rfe-backlog.json');
       let totalRfeCount = 0;
       const rfeByComponent = {};
       if (rfeData) {
@@ -467,9 +467,9 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
    *         description: Component map
    *     deprecated: true
    */
-  router.get('/components', requireScope('team-tracker:read'), function(req, res) {
+  router.get('/components', requireScope('team-tracker:read'), async function(req, res) {
     try {
-      const { teams } = buildEnrichedTeams();
+      const { teams } = await buildEnrichedTeams();
       const components = {};
       for (const team of teams) {
         for (const comp of (team.components || [])) {
@@ -502,12 +502,12 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
    *       200:
    *         description: RFE backlog grouped by component and team
    */
-  router.get('/rfe-backlog', requireScope('roster:read'), function(req, res) {
+  router.get('/rfe-backlog', requireScope('roster:read'), async function(req, res) {
     try {
-      const data = readFromStorage('org-roster/rfe-backlog.json');
+      const data = await readFromStorage('org-roster/rfe-backlog.json');
       if (!data) return res.json({ byComponent: {}, byTeam: {} });
       if (req.query.org) {
-        const metaData = readFromStorage('org-roster/teams-metadata.json');
+        const metaData = await readFromStorage('org-roster/teams-metadata.json');
         if (metaData) {
           const orgTeams = metaData.teams.filter(t => t.org === req.query.org);
           const orgTeamKeys = new Set(orgTeams.map(t => `${t.org}::${t.name}`));
@@ -534,9 +534,9 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
    *       200:
    *         description: RFE configuration
    */
-  router.get('/rfe-config', requireScope('roster:read'), function(req, res) {
+  router.get('/rfe-config', requireScope('roster:read'), async function(req, res) {
     try {
-      const config = getOrgConfig();
+      const config = await getOrgConfig();
       res.json({
         jiraHost: process.env.JIRA_HOST || 'https://redhat.atlassian.net',
         jiraProject: config.jiraProject || 'RHAIRFE',
@@ -562,8 +562,8 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
    *       403:
    *         description: Admin access required
    */
-  router.get('/org-config', requireAdmin, requireScope('roster:write'), function(req, res) {
-    try { res.json(getOrgConfig()); }
+  router.get('/org-config', requireAdmin, requireScope('roster:write'), async function(req, res) {
+    try { res.json(await getOrgConfig()); }
     catch { res.status(500).json({ error: 'Failed to load configuration' }); }
   });
 
@@ -579,14 +579,14 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
    *       403:
    *         description: Admin access required
    */
-  router.post('/org-config', requireAdmin, requireScope('roster:write'), function(req, res) {
+  router.post('/org-config', requireAdmin, requireScope('roster:write'), async function(req, res) {
     try {
       const body = req.body;
       if (!body || typeof body !== 'object' || Array.isArray(body)) {
         return res.status(400).json({ error: 'Request body must be a JSON object' });
       }
 
-      const config = getOrgConfig();
+      const config = await getOrgConfig();
 
       if (body.teamBoardsTab !== undefined && typeof body.teamBoardsTab === 'string') config.teamBoardsTab = body.teamBoardsTab;
       if (body.componentsTab !== undefined && typeof body.componentsTab === 'string') config.componentsTab = body.componentsTab;
@@ -595,7 +595,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
       if (body.orgNameMapping !== undefined && typeof body.orgNameMapping === 'object' && !Array.isArray(body.orgNameMapping)) config.orgNameMapping = body.orgNameMapping;
       if (body.componentMapping !== undefined && typeof body.componentMapping === 'object' && !Array.isArray(body.componentMapping)) config.componentMapping = body.componentMapping;
 
-      writeToStorage('org-roster/config.json', config);
+      await writeToStorage('org-roster/config.json', config);
       res.json({ status: 'saved', config });
     } catch {
       res.status(500).json({ error: 'Failed to save configuration' });
@@ -618,11 +618,11 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
    */
   router.get('/sheet-orgs', requireAdmin, requireScope('roster:write'), async function(req, res) {
     try {
-      const config = getOrgConfig();
+      const config = await getOrgConfig();
       const tabName = config.teamBoardsTab;
 
       if (tabName) {
-        const sheetId = getSheetId();
+        const sheetId = await getSheetId();
         if (!sheetId) {
           return res.status(400).json({ error: 'No Google Sheet ID configured.' });
         }
@@ -632,7 +632,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
         return res.json({ sheetOrgs });
       }
 
-      const displayNames = getOrgDisplayNames(storage);
+      const displayNames = await getOrgDisplayNames(storage);
       const sheetOrgs = Object.values(displayNames).sort();
       res.json({ sheetOrgs });
     } catch (error) {
@@ -651,9 +651,9 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
    *       200:
    *         description: List of configured org names
    */
-  router.get('/configured-orgs', requireScope('roster:read'), function(req, res) {
+  router.get('/configured-orgs', requireScope('roster:read'), async function(req, res) {
     try {
-      const displayNames = buildOrgKeyToDisplayName();
+      const displayNames = await buildOrgKeyToDisplayName();
       const orgs = Object.values(displayNames).sort();
       res.json({ configuredOrgs: orgs });
     } catch (error) {
@@ -674,9 +674,9 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
    *       200:
    *         description: Sync status with last sync time and current state
    */
-  router.get('/org-sync/status', requireScope('roster:read'), function(req, res) {
+  router.get('/org-sync/status', requireScope('roster:read'), async function(req, res) {
     try {
-      const data = readFromStorage('org-roster/sync-status.json');
+      const data = await readFromStorage('org-roster/sync-status.json');
       res.json(data || { lastSyncAt: null, status: 'never', syncing: orgSyncInProgress });
     } catch {
       res.status(500).json({ error: 'Failed to load sync status' });
@@ -687,19 +687,19 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
     if (orgSyncInProgress) return { status: 'already_running' };
     orgSyncInProgress = true;
 
-    const sheetId = getSheetId();  // may be null — runSync handles it
-    const config = getOrgConfig();
+    const sheetId = await getSheetId();  // may be null — runSync handles it
+    const config = await getOrgConfig();
 
     try {
       await runSync(storage, sheetId, config, context.secrets);
       try {
-        const { teams } = buildEnrichedTeams();
+        const { teams } = await buildEnrichedTeams();
         const allComponents = [...new Set(teams.flatMap(t => t.components || []))];
         if (allComponents.length > 0) {
           const rfeResult = await fetchAllRfeBacklog(allComponents, teams, {
             jiraProject: config.jiraProject, rfeIssueType: config.rfeIssueType, componentMapping: config.componentMapping
           });
-          writeToStorage('org-roster/rfe-backlog.json', { fetchedAt: new Date().toISOString(), ...rfeResult });
+          await writeToStorage('org-roster/rfe-backlog.json', { fetchedAt: new Date().toISOString(), ...rfeResult });
         }
       } catch (rfeErr) {
         console.warn('[team-tracker] RFE refresh failed:', rfeErr.message);
@@ -707,7 +707,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
       return { status: 'success' };
     } catch (err) {
       console.error('[team-tracker] Org sync error:', err.message);
-      writeToStorage('org-roster/sync-status.json', { lastSyncAt: new Date().toISOString(), status: 'error', error: err.message });
+      await writeToStorage('org-roster/sync-status.json', { lastSyncAt: new Date().toISOString(), status: 'error', error: err.message });
       return { status: 'error', error: err.message };
     } finally {
       orgSyncInProgress = false;
@@ -741,8 +741,8 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
   // ─── Schedule org sync ───
 
   if (!DEMO_MODE) {
-    setTimeout(function() {
-      const rosterData = readFromStorage('team-data/registry.json');
+    setTimeout(async function() {
+      const rosterData = await readFromStorage('team-data/registry.json');
       if (rosterData) {
         triggerOrgSync().catch(function(err) {
           console.error('[team-tracker] Initial org sync error:', err.message);

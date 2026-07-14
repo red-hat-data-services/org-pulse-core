@@ -184,13 +184,13 @@ const { linkTo } = useModuleLink()
 module.exports = function registerRoutes(router, context) {
   const { storage, requireAuth, requireAdmin } = context
 
-  router.get('/data', function(req, res) {
-    const data = storage.readFromStorage('my-module-data.json')
+  router.get('/data', async function(req, res) {
+    const data = await storage.readFromStorage('my-module-data.json')
     res.json(data || {})
   })
 
-  router.post('/data', requireAdmin, function(req, res) {
-    storage.writeToStorage('my-module-data.json', req.body)
+  router.post('/data', requireAdmin, async function(req, res) {
+    await storage.writeToStorage('my-module-data.json', req.body)
     res.json({ success: true })
   })
 }
@@ -358,7 +358,7 @@ The CronJob (`deploy/openshift/base/cronjob-sync-refresh.yaml`, every 15 minutes
 
 ## Export Hook
 
-Modules that persist data via `writeToStorage` or `writeToStorageAtomic` **must** register an export hook via `context.registerExport(fn)` and declare exported files in `module.json`. This ensures all module data is included in the anonymized test data export (used for demo mode and testing). CI validation (`npm run validate:modules`) enforces this — modules that write to storage without an `export` section in `module.json` will fail the build.
+Modules that persist data via `writeToStorage` **must** register an export hook via `context.registerExport(fn)` and declare exported files in `module.json`. This ensures all module data is included in the anonymized test data export (used for demo mode and testing). CI validation (`npm run validate:modules`) enforces this — modules that write to storage without an `export` section in `module.json` will fail the build.
 
 ### module.json
 
@@ -390,7 +390,7 @@ module.exports = function registerRoutes(router, context) {
 
 ```javascript
 module.exports = async function(addFile, storage, mapping) {
-  const data = storage.readFromStorage('my-data.json');
+  const data = await storage.readFromStorage('my-data.json');
   if (!data) return;
 
   // Anonymize PII using the shared mapping
@@ -431,7 +431,7 @@ module.exports = function registerRoutes(router, context) {
     context.registerDiagnostics(async function() {
       return {
         refreshState,
-        dataExists: !!storage.readFromStorage('my-data.json'),
+        dataExists: !!(await storage.readFromStorage('my-data.json')),
         // Include whatever is useful for debugging
       }
     })
@@ -541,7 +541,7 @@ module.exports = function registerRoutes(router, context) {
       handler: async function(options) {
         // Fetch and store data
         const data = await fetchExternalData()
-        storage.writeToStorage('my-module/data.json', data)
+        await storage.writeToStorage('my-module/data.json', data)
         return { status: 'success', count: data.length }
       }
     })

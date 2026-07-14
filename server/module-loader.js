@@ -58,9 +58,9 @@ function invalidateDiscoveredModulesCache() {
 
 // ─── State Persistence ───
 
-function loadModuleState(storage) {
+async function loadModuleState(storage) {
   try {
-    const data = storage.readFromStorage('modules-state.json')
+    const data = await storage.readFromStorage('modules-state.json')
     if (data && typeof data === 'object' && !Array.isArray(data)) {
       return data
     }
@@ -71,8 +71,8 @@ function loadModuleState(storage) {
   }
 }
 
-function saveModuleState(storage, state) {
-  storage.writeToStorage('modules-state.json', state)
+async function saveModuleState(storage, state) {
+  await storage.writeToStorage('modules-state.json', state)
 }
 
 function getEffectiveState(modules, persistedState) {
@@ -87,7 +87,7 @@ function getEffectiveState(modules, persistedState) {
   return effective
 }
 
-function reconcileStartupState(modules, effectiveState, storage) {
+async function reconcileStartupState(modules, effectiveState, storage) {
   let changed = false
 
   for (const mod of modules) {
@@ -102,7 +102,7 @@ function reconcileStartupState(modules, effectiveState, storage) {
   }
 
   if (changed) {
-    saveModuleState(storage, effectiveState)
+    await saveModuleState(storage, effectiveState)
   }
 
   return effectiveState

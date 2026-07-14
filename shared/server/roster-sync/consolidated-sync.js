@@ -42,7 +42,7 @@ async function runConsolidatedSync(storage, credentials) {
     return { status: 'skipped', message: 'Sync already in progress' };
   }
 
-  const config = loadConfig(storage);
+  const config = await loadConfig(storage);
   if (!config || !config.orgRoots || config.orgRoots.length === 0) {
     return { status: 'error', message: 'No org roots configured' };
   }
@@ -184,7 +184,7 @@ async function runConsolidatedSync(storage, credentials) {
     }
 
     // ─── Phase 4: Lifecycle merge (LDAP people -> registry people) ───
-    var existing = storage.readFromStorage(REGISTRY_KEY) || { meta: null, people: {} };
+    var existing = (await storage.readFromStorage(REGISTRY_KEY)) || { meta: null, people: {} };
     var existingPeople = existing.people || {};
     var now = new Date().toISOString();
     var merged = {};
@@ -265,8 +265,8 @@ async function runConsolidatedSync(storage, credentials) {
     var unresolvedPersonRefs = [];
 
     try {
-      var fieldDefsData = storage.readFromStorage('team-data/field-definitions.json');
-      var teamsData = storage.readFromStorage('team-data/teams.json');
+      var fieldDefsData = await storage.readFromStorage('team-data/field-definitions.json');
+      var teamsData = await storage.readFromStorage('team-data/teams.json');
 
       if (fieldDefsData && teamsData && teamsData.teams) {
         // Find person-reference-linked team fields
@@ -436,7 +436,7 @@ async function runConsolidatedSync(storage, credentials) {
 
             // Write back updated teams.json if any names were replaced with UIDs
             if (teamsModified) {
-              storage.writeToStorage('team-data/teams.json', teamsData);
+              await storage.writeToStorage('team-data/teams.json', teamsData);
               console.log('[consolidated-sync] Phase 5b: Updated teams.json with resolved person references');
             }
           } catch (auxErr) {
@@ -500,23 +500,23 @@ async function runConsolidatedSync(storage, credentials) {
       coverage: computeCoverage(merged)
     };
 
-    storage.writeToStorage(REGISTRY_KEY, registry);
-    storage.writeToStorage(SYNC_LOG_KEY, syncLog);
+    await storage.writeToStorage(REGISTRY_KEY, registry);
+    await storage.writeToStorage(SYNC_LOG_KEY, syncLog);
 
-    updateSyncStatus(storage, 'success', null);
+    await updateSyncStatus(storage, 'success', null);
     console.log('[consolidated-sync] Complete: ' + mergedUids.length + ' people across ' + Object.keys(ldapOrgs).length + ' orgs');
 
     return syncLog;
   } catch (err) {
     console.error('[consolidated-sync] Sync failed:', err.message);
-    updateSyncStatus(storage, 'error', err.message);
+    await updateSyncStatus(storage, 'error', err.message);
     var errorLog = {
       completedAt: new Date().toISOString(),
       status: 'error',
       duration: Date.now() - startTime,
       message: err.message
     };
-    storage.writeToStorage(SYNC_LOG_KEY, errorLog);
+    await storage.writeToStorage(SYNC_LOG_KEY, errorLog);
     return errorLog;
   } finally {
     syncInProgress = false;

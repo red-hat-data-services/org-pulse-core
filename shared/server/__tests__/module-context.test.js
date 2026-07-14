@@ -145,10 +145,10 @@ describe('createTestContext', () => {
     expect(ctx.storage).toBe(customStorage)
   })
 
-  it('storage defaults return null / noop', () => {
+  it('storage defaults return null / noop', async () => {
     const ctx = createTestContext()
-    expect(ctx.storage.readFromStorage('any')).toBeNull()
-    expect(() => ctx.storage.writeToStorage('any', {})).not.toThrow()
+    expect(await ctx.storage.readFromStorage('any')).toBeNull()
+    expect(await ctx.storage.writeToStorage('any', {})).toBeUndefined()
   })
 
   it('registration functions are callable noops', () => {

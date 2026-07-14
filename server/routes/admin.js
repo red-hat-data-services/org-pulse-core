@@ -254,14 +254,14 @@ function registerAdminRoutes(app, context) {
    *       400:
    *         description: Invalid cadence value
    */
-  app.post('/api/admin/refresh-cadence', requireAdmin, requireScope('admin:manage'), function(req, res) {
+  app.post('/api/admin/refresh-cadence', requireAdmin, requireScope('admin:manage'), async function(req, res) {
     var handlerId = req.body && req.body.handlerId;
     var cadence = req.body && req.body.cadence;
     if (!handlerId || typeof handlerId !== 'string') {
       return res.status(400).json({ error: 'handlerId is required' });
     }
     try {
-      refreshRegistry.setCadenceOverride(handlerId, cadence === undefined ? null : cadence);
+      await refreshRegistry.setCadenceOverride(handlerId, cadence === undefined ? null : cadence);
       res.json({ status: 'ok', overrides: refreshRegistry.getCadenceOverrides() });
     } catch (err) {
       res.status(400).json({ error: err.message });

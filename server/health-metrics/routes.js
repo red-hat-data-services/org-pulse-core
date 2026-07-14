@@ -22,25 +22,25 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
   let configuredFieldId = null;
   let registryMtime = 0;
 
-  function loadConfig() {
-    return readFromStorage('health-metrics/config.json') || {
+  async function loadConfig() {
+    return (await readFromStorage('health-metrics/config.json')) || {
       userTypeFieldId: null,
       retentionDays: 90,
     };
   }
 
-  function saveConfig(config) {
-    writeToStorage('health-metrics/config.json', config);
+  async function saveConfig(config) {
+    await writeToStorage('health-metrics/config.json', config);
   }
 
-  function rebuildUserTypeCache() {
-    const config = loadConfig();
+  async function rebuildUserTypeCache() {
+    const config = await loadConfig();
     configuredFieldId = config.userTypeFieldId;
     userTypeCache.clear();
     if (!configuredFieldId) return;
 
     // Cross-module read: team-tracker exports team-data/registry.json (see module.json > export.files)
-    const registry = readFromStorage('team-data/registry.json');
+    const registry = await readFromStorage('team-data/registry.json');
     if (!registry?.people) return;
 
     for (const [uid, person] of Object.entries(registry.people)) {
@@ -53,14 +53,18 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
   }
 
   // Build cache on startup
-  rebuildUserTypeCache();
+  rebuildUserTypeCache().catch(err => console.error('[health-metrics] rebuildUserTypeCache startup error:', err.message));
 
   // Poll registry mtime every 60s to detect roster sync changes
-  const registryCheckInterval = setInterval(() => {
-    const mtime = getFileMtime('team-data/registry.json');
-    if (mtime && mtime > registryMtime) {
-      registryMtime = mtime;
-      rebuildUserTypeCache();
+  const registryCheckInterval = setInterval(async () => {
+    try {
+      const mtime = await getFileMtime('team-data/registry.json');
+      if (mtime && mtime > registryMtime) {
+        registryMtime = mtime;
+        await rebuildUserTypeCache();
+      }
+    } catch (err) {
+      console.error('[health-metrics] Registry check error:', err.message);
     }
   }, 60_000);
 
@@ -82,20 +86,20 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
 
   // ─── Access control ───
 
-  function requireMetricsViewer(req, res, next) {
+  async function requireMetricsViewer(req, res, next) {
     if (req.isAdmin) return next();
-    if (roleStore.hasRole(req.userEmail, 'usage-metrics-viewer')) return next();
+    if (await roleStore.hasRole(req.userEmail, 'usage-metrics-viewer')) return next();
     return res.status(403).json({ error: 'Usage metrics access required. Ask an admin to assign the usage-metrics-viewer role.' });
   }
 
   // ─── Opt-out ───
 
-  function loadOptedOut() {
-    return readFromStorage('health-metrics/opted-out.json') || { emails: [] };
+  async function loadOptedOut() {
+    return (await readFromStorage('health-metrics/opted-out.json')) || { emails: [] };
   }
 
-  function saveOptedOut(data) {
-    writeToStorage('health-metrics/opted-out.json', data);
+  async function saveOptedOut(data) {
+    await writeToStorage('health-metrics/opted-out.json', data);
   }
 
   // ─── Aggregate cache (current month, 5-min TTL) ───
@@ -104,9 +108,9 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
   let currentMonthAggregateAt = 0;
   const AGGREGATE_TTL_MS = 5 * 60 * 1000;
 
-  function getOrComputeAggregate(monthKey) {
+  async function getOrComputeAggregate(monthKey) {
     // Check for pre-computed aggregate
-    const stored = readFromStorage(`health-metrics/aggregates/${monthKey}.json`);
+    const stored = await readFromStorage(`health-metrics/aggregates/${monthKey}.json`);
     if (stored) return stored;
 
     // No raw events in demo mode — only pre-computed aggregates are available
@@ -138,8 +142,8 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
 
   // ─── Pruning scheduler ───
 
-  function runPruning() {
-    const config = loadConfig();
+  async function runPruning() {
+    const config = await loadConfig();
     const retentionDays = config.retentionDays || 90;
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - retentionDays);
@@ -159,10 +163,10 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
 
         if (monthKey < cutoffMonth) {
           // Fully expired month: aggregate then delete
-          const existing = readFromStorage(`health-metrics/aggregates/${monthKey}.json`);
+          const existing = await readFromStorage(`health-metrics/aggregates/${monthKey}.json`);
           if (!existing) {
             const agg = aggregateEvents(events, monthKey);
-            writeToStorage(`health-metrics/aggregates/${monthKey}.json`, agg);
+            await writeToStorage(`health-metrics/aggregates/${monthKey}.json`, agg);
           }
           eventStore.deleteMonthFile(monthKey);
         } else {
@@ -172,10 +176,10 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
             // Aggregate the pruned events before removing them
             const pruned = events.filter(e => e.ts < cutoffTs);
             if (pruned.length > 0) {
-              const existing = readFromStorage(`health-metrics/aggregates/${monthKey}.json`);
+              const existing = await readFromStorage(`health-metrics/aggregates/${monthKey}.json`);
               if (!existing) {
                 const agg = aggregateEvents(events, monthKey);
-                writeToStorage(`health-metrics/aggregates/${monthKey}.json`, agg);
+                await writeToStorage(`health-metrics/aggregates/${monthKey}.json`, agg);
               }
             }
             eventStore.rewriteMonth(monthKey, kept);
@@ -191,29 +195,29 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
   // Deferred startup pruning + daily schedule
   if (!DEMO_MODE) {
     const pruneTimer = setTimeout(() => {
-      try { runPruning(); } catch (err) {
+      runPruning().catch(err => {
         console.error('[health-metrics] Pruning error:', err.message);
-      }
+      });
     }, 30_000);
     if (pruneTimer.unref) pruneTimer.unref();
 
     const dailyPrune = setInterval(() => {
-      try { runPruning(); } catch (err) {
+      runPruning().catch(err => {
         console.error('[health-metrics] Pruning error:', err.message);
-      }
+      });
     }, 24 * 60 * 60 * 1000);
     if (dailyPrune.unref) dailyPrune.unref();
   }
 
   // ─── Helper: collect aggregates for a date range ───
 
-  function collectAggregates(from, to) {
+  async function collectAggregates(from, to) {
     const fromMonth = getMonthKey(new Date(from));
     const toMonth = getMonthKey(new Date(to));
     const aggregates = [];
 
     // Scan stored aggregates
-    const storedFiles = (listStorageFiles?.('health-metrics/aggregates') || []);
+    const storedFiles = ((listStorageFiles ? await listStorageFiles('health-metrics/aggregates') : null) || []);
     const monthFiles = eventStore ? eventStore.listMonthFiles() : [];
     const allMonths = new Set([
       ...storedFiles.map(f => f.replace('.json', '')),
@@ -222,7 +226,7 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
 
     for (const monthKey of [...allMonths].sort()) {
       if (monthKey < fromMonth || monthKey > toMonth) continue;
-      const agg = getOrComputeAggregate(monthKey);
+      const agg = await getOrComputeAggregate(monthKey);
       if (agg) aggregates.push(agg);
     }
     return aggregates;
@@ -250,7 +254,7 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
   const PAGE_ID_PATTERN = /^[a-zA-Z0-9:_/-]+$/;
   const PAGE_ID_MAX_LENGTH = 200;
 
-  router.post('/track', requireScope('health-metrics:write'), (req, res) => {
+  router.post('/track', requireScope('health-metrics:write'), async (req, res) => {
     if (DEMO_MODE) return res.json({ ok: true });
 
     const { page } = req.body;
@@ -270,7 +274,7 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
     }
 
     // Check opt-out (server-side defense in depth)
-    const optedOut = loadOptedOut();
+    const optedOut = await loadOptedOut();
     if (optedOut.emails.includes(email)) {
       return res.json({ ok: true, tracked: false });
     }
@@ -294,38 +298,38 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
     res.json({ ok: true });
   });
 
-  router.get('/tracking/status', requireScope('health-metrics:read'), (req, res) => {
-    const optedOut = loadOptedOut();
+  router.get('/tracking/status', requireScope('health-metrics:read'), async (req, res) => {
+    const optedOut = await loadOptedOut();
     res.json({ optedOut: optedOut.emails.includes(req.userEmail) });
   });
 
-  router.post('/tracking/opt-out', requireScope('health-metrics:write'), (req, res) => {
-    const optedOut = loadOptedOut();
+  router.post('/tracking/opt-out', requireScope('health-metrics:write'), async (req, res) => {
+    const optedOut = await loadOptedOut();
     if (!optedOut.emails.includes(req.userEmail)) {
       optedOut.emails.push(req.userEmail);
-      saveOptedOut(optedOut);
+      await saveOptedOut(optedOut);
     }
     res.json({ ok: true, optedOut: true });
   });
 
-  router.delete('/tracking/opt-out', requireScope('health-metrics:write'), (req, res) => {
-    const optedOut = loadOptedOut();
+  router.delete('/tracking/opt-out', requireScope('health-metrics:write'), async (req, res) => {
+    const optedOut = await loadOptedOut();
     const idx = optedOut.emails.indexOf(req.userEmail);
     if (idx !== -1) {
       optedOut.emails.splice(idx, 1);
-      saveOptedOut(optedOut);
+      await saveOptedOut(optedOut);
     }
     res.json({ ok: true, optedOut: false });
   });
 
   // ─── Routes: Dashboard (admin or viewer) ───
 
-  router.get('/dashboard', requireMetricsViewer, requireScope('health-metrics:read'), (req, res) => {
+  router.get('/dashboard', requireMetricsViewer, requireScope('health-metrics:read'), async (req, res) => {
     const to = req.query.to || new Date().toISOString().slice(0, 10);
     const fromDate = new Date(req.query.from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
     const toDate = new Date(to);
 
-    const aggregates = collectAggregates(fromDate, toDate);
+    const aggregates = await collectAggregates(fromDate, toDate);
 
     // Merge aggregates into summary
     let totalViews = 0;
@@ -390,14 +394,14 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
     });
   });
 
-  router.get('/pages', requireMetricsViewer, requireScope('health-metrics:read'), (req, res) => {
+  router.get('/pages', requireMetricsViewer, requireScope('health-metrics:read'), async (req, res) => {
     const to = req.query.to || new Date().toISOString().slice(0, 10);
     const fromDate = new Date(req.query.from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
     const toDate = new Date(to);
     const sort = req.query.sort === 'unique' ? 'uniqueUsers' : 'views';
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
 
-    const aggregates = collectAggregates(fromDate, toDate);
+    const aggregates = await collectAggregates(fromDate, toDate);
     const pageStats = {};
 
     for (const agg of aggregates) {
@@ -424,13 +428,13 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
     res.json({ pages });
   });
 
-  router.get('/pages/:pageId', requireMetricsViewer, requireScope('health-metrics:read'), (req, res) => {
+  router.get('/pages/:pageId', requireMetricsViewer, requireScope('health-metrics:read'), async (req, res) => {
     const pageId = req.params.pageId;
     const to = req.query.to || new Date().toISOString().slice(0, 10);
     const fromDate = new Date(req.query.from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
     const toDate = new Date(to);
 
-    const aggregates = collectAggregates(fromDate, toDate);
+    const aggregates = await collectAggregates(fromDate, toDate);
     const merged = { views: 0, uniqueUsers: 0, byUserType: {}, byPermissionTier: {} };
 
     for (const agg of aggregates) {
@@ -457,12 +461,12 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
     res.json({ pageId, ...merged, daily });
   });
 
-  router.get('/user-types', requireMetricsViewer, requireScope('health-metrics:read'), (req, res) => {
+  router.get('/user-types', requireMetricsViewer, requireScope('health-metrics:read'), async (req, res) => {
     const to = req.query.to || new Date().toISOString().slice(0, 10);
     const fromDate = new Date(req.query.from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
     const toDate = new Date(to);
 
-    const aggregates = collectAggregates(fromDate, toDate);
+    const aggregates = await collectAggregates(fromDate, toDate);
     const userTypes = {};
 
     for (const agg of aggregates) {
@@ -478,12 +482,12 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
 
   // ─── Routes: Admin config ───
 
-  router.get('/config', requireAdmin, requireScope('health-metrics:read'), (req, res) => {
-    res.json(loadConfig());
+  router.get('/config', requireAdmin, requireScope('health-metrics:read'), async (req, res) => {
+    res.json(await loadConfig());
   });
 
-  router.post('/config', requireAdmin, requireScope('health-metrics:write'), (req, res) => {
-    const config = loadConfig();
+  router.post('/config', requireAdmin, requireScope('health-metrics:write'), async (req, res) => {
+    const config = await loadConfig();
     if (req.body.userTypeFieldId !== undefined) {
       config.userTypeFieldId = req.body.userTypeFieldId;
     }
@@ -494,12 +498,12 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
       }
       config.retentionDays = days;
     }
-    saveConfig(config);
-    rebuildUserTypeCache();
+    await saveConfig(config);
+    await rebuildUserTypeCache();
     res.json(config);
   });
 
-  router.post('/aggregate', requireAdmin, requireScope('health-metrics:write'), (req, res) => {
+  router.post('/aggregate', requireAdmin, requireScope('health-metrics:write'), async (req, res) => {
     if (!eventStore) return res.json({ ok: true, generated: 0 });
     const monthFiles = eventStore.listMonthFiles();
     let generated = 0;
@@ -507,7 +511,7 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
       const events = eventStore.readMonth(monthKey);
       if (events.length === 0) continue;
       const agg = aggregateEvents(events, monthKey);
-      writeToStorage(`health-metrics/aggregates/${monthKey}.json`, agg);
+      await writeToStorage(`health-metrics/aggregates/${monthKey}.json`, agg);
       generated++;
     }
     invalidateCurrentMonthCache();
@@ -522,9 +526,9 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
 
   // ─── Routes: Field definitions (for settings UI) ───
 
-  router.get('/field-definitions', requireAdmin, requireScope('health-metrics:read'), (req, res) => {
+  router.get('/field-definitions', requireAdmin, requireScope('health-metrics:read'), async (req, res) => {
     // Cross-module read: team-tracker exports team-data/field-definitions.json (see module.json > export.files)
-    const fieldDefs = readFromStorage('team-data/field-definitions.json');
+    const fieldDefs = await readFromStorage('team-data/field-definitions.json');
     if (!fieldDefs) return res.json({ person: [], team: [] });
     // Return only person-level fields for user-type selection
     const personFields = (fieldDefs.personFields || []).filter(f => !f.deleted);
@@ -533,23 +537,23 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
 
   // ─── Routes: Viewer management ───
 
-  router.get('/viewers', requireAdmin, requireScope('health-metrics:read'), (req, res) => {
-    const assignments = roleStore.listAssignments();
+  router.get('/viewers', requireAdmin, requireScope('health-metrics:read'), async (req, res) => {
+    const assignments = await roleStore.listAssignments();
     const viewers = Object.entries(assignments)
       .filter(([, entry]) => Array.isArray(entry.roles) && entry.roles.includes('usage-metrics-viewer'))
       .map(([email]) => ({ email }));
     res.json({ viewers });
   });
 
-  router.post('/viewers', requireAdmin, requireScope('health-metrics:write'), (req, res) => {
+  router.post('/viewers', requireAdmin, requireScope('health-metrics:write'), async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'email is required.' });
-    roleStore.assignRole(email, 'usage-metrics-viewer', req.userEmail);
+    await roleStore.assignRole(email, 'usage-metrics-viewer', req.userEmail);
     res.json({ ok: true });
   });
 
-  router.delete('/viewers/:email', requireAdmin, requireScope('health-metrics:write'), (req, res) => {
-    roleStore.revokeRole(req.params.email, 'usage-metrics-viewer');
+  router.delete('/viewers/:email', requireAdmin, requireScope('health-metrics:write'), async (req, res) => {
+    await roleStore.revokeRole(req.params.email, 'usage-metrics-viewer');
     res.json({ ok: true });
   });
 

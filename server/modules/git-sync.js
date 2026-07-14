@@ -104,13 +104,13 @@ async function syncModule(storage, mod) {
     }
 
     const duration = Date.now() - startTime;
-    modulesConfig.updateSyncStatus(storage, mod.slug, 'success', null);
+    await modulesConfig.updateSyncStatus(storage, mod.slug, 'success', null);
     console.log(`[module-sync] ${mod.slug}: synced in ${duration}ms`);
     return { status: 'success', message: `Synced successfully`, duration };
   } catch (err) {
     const duration = Date.now() - startTime;
     const safeMessage = sanitizeError(err.message, mod.gitToken);
-    modulesConfig.updateSyncStatus(storage, mod.slug, 'error', safeMessage);
+    await modulesConfig.updateSyncStatus(storage, mod.slug, 'error', safeMessage);
     console.error(`[module-sync] ${mod.slug}: failed -`, safeMessage);
     return { status: 'error', message: safeMessage, duration };
   } finally {
@@ -141,7 +141,7 @@ function execGit(args, options, token) {
  * Sync all git-static modules sequentially.
  */
 async function syncAllModules(storage) {
-  const config = modulesConfig.loadModulesConfig(storage);
+  const config = await modulesConfig.loadModulesConfig(storage);
   if (!config || !config.modules) return { results: [] };
 
   const gitModules = config.modules.filter(m => m.type === 'git-static');
@@ -177,8 +177,8 @@ function scheduleDaily(storage) {
 /**
  * Get sync status overview.
  */
-function getSyncStatus(storage) {
-  const config = modulesConfig.loadModulesConfig(storage);
+async function getSyncStatus(storage) {
+  const config = await modulesConfig.loadModulesConfig(storage);
   if (!config || !config.modules) return { modules: [] };
 
   return {

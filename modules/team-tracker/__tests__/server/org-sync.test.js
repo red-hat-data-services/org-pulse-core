@@ -13,10 +13,10 @@ const {
 
 function makeStorage(data) {
   return {
-    readFromStorage(key) {
+    async readFromStorage(key) {
       return data[key] !== undefined ? JSON.parse(JSON.stringify(data[key])) : null
     },
-    writeToStorage: vi.fn((key, value) => { data[key] = value }),
+    writeToStorage: vi.fn(async (key, value) => { data[key] = value }),
   }
 }
 
@@ -50,13 +50,13 @@ function makeRosterData(orgRoots, people) {
 }
 
 describe('deriveTeamsFromPeople', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks()
     // Clear the org display names cache
-    rosterSyncConfig.saveConfig({ readFromStorage: () => ({}), writeToStorage: () => {} }, {})
+    await rosterSyncConfig.saveConfig({ readFromStorage: async () => ({}), writeToStorage: async () => {} }, {})
   })
 
-  it('builds teams from people _teamGrouping values', () => {
+  it('builds teams from people _teamGrouping values', async () => {
     const data = makeRosterData(
       [{ uid: 'org1', displayName: 'Org Alpha' }],
       [
@@ -67,7 +67,7 @@ describe('deriveTeamsFromPeople', () => {
     )
     const storage = makeStorage(data)
 
-    const teams = deriveTeamsFromPeople(storage)
+    const teams = await deriveTeamsFromPeople(storage)
     expect(teams).toHaveLength(2)
     expect(teams).toEqual(expect.arrayContaining([
       { org: 'Org Alpha', name: 'Team A', boardUrls: [] },
@@ -75,7 +75,7 @@ describe('deriveTeamsFromPeople', () => {
     ]))
   })
 
-  it('handles comma-separated multi-team values', () => {
+  it('handles comma-separated multi-team values', async () => {
     const data = makeRosterData(
       [{ uid: 'org1', displayName: 'Org Alpha' }],
       [
@@ -85,12 +85,12 @@ describe('deriveTeamsFromPeople', () => {
     )
     const storage = makeStorage(data)
 
-    const teams = deriveTeamsFromPeople(storage)
+    const teams = await deriveTeamsFromPeople(storage)
     expect(teams).toHaveLength(2)
     expect(teams.map(t => t.name)).toEqual(['Team A', 'Team B'])
   })
 
-  it('skips people with no org mapping', () => {
+  it('skips people with no org mapping', async () => {
     const data = {
       'team-data/registry.json': {
         meta: { generatedAt: '2026-01-15T00:00:00.000Z', provider: 'test', orgRoots: [], vp: null },
@@ -102,11 +102,11 @@ describe('deriveTeamsFromPeople', () => {
     }
     const storage = makeStorage(data)
 
-    const teams = deriveTeamsFromPeople(storage)
+    const teams = await deriveTeamsFromPeople(storage)
     expect(teams).toHaveLength(0)
   })
 
-  it('skips people with empty _teamGrouping', () => {
+  it('skips people with empty _teamGrouping', async () => {
     const data = makeRosterData(
       [{ uid: 'org1', displayName: 'Org Alpha' }],
       [
@@ -117,11 +117,11 @@ describe('deriveTeamsFromPeople', () => {
     )
     const storage = makeStorage(data)
 
-    const teams = deriveTeamsFromPeople(storage)
+    const teams = await deriveTeamsFromPeople(storage)
     expect(teams).toHaveLength(0)
   })
 
-  it('deduplicates teams from multiple people', () => {
+  it('deduplicates teams from multiple people', async () => {
     const data = makeRosterData(
       [{ uid: 'org1', displayName: 'Org Alpha' }],
       [
@@ -132,12 +132,12 @@ describe('deriveTeamsFromPeople', () => {
     )
     const storage = makeStorage(data)
 
-    const teams = deriveTeamsFromPeople(storage)
+    const teams = await deriveTeamsFromPeople(storage)
     expect(teams).toHaveLength(1)
     expect(teams[0].name).toBe('Team A')
   })
 
-  it('falls back to miroTeam when _teamGrouping is absent', () => {
+  it('falls back to miroTeam when _teamGrouping is absent', async () => {
     const data = makeRosterData(
       [{ uid: 'org1', displayName: 'Org Alpha' }],
       [
@@ -147,7 +147,7 @@ describe('deriveTeamsFromPeople', () => {
     )
     const storage = makeStorage(data)
 
-    const teams = deriveTeamsFromPeople(storage)
+    const teams = await deriveTeamsFromPeople(storage)
     expect(teams).toHaveLength(1)
     expect(teams[0].name).toBe('Legacy Team')
   })
@@ -156,10 +156,10 @@ describe('deriveTeamsFromPeople', () => {
 describe('runSync', () => {
   let fetchRawSheetSpy
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks()
     vi.restoreAllMocks()
-    rosterSyncConfig.saveConfig({ readFromStorage: () => ({}), writeToStorage: () => {} }, {})
+    await rosterSyncConfig.saveConfig({ readFromStorage: async () => ({}), writeToStorage: async () => {} }, {})
     fetchRawSheetSpy = vi.spyOn(googleSheets, 'fetchRawSheet')
   })
 

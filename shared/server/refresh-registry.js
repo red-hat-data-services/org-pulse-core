@@ -92,11 +92,11 @@ function parseCadence(str) {
 /**
  * @param {object} [storage] - Optional storage with readFromStorage/writeToStorage for persistence
  */
-function createRefreshRegistry(storage) {
+async function createRefreshRegistry(storage) {
   const entries = new Map()
   let running = false
   /** @type {object|null} */
-  let lastRun = storage ? storage.readFromStorage(STORAGE_KEY) : null
+  let lastRun = storage ? await storage.readFromStorage(STORAGE_KEY) : null
   /** @type {object} */
   let progress = {}
   /** @type {object} cadence overrides from admin UI */
@@ -104,13 +104,13 @@ function createRefreshRegistry(storage) {
 
   // Load cadence overrides from storage
   if (storage) {
-    var stored = storage.readFromStorage(OVERRIDES_KEY)
+    var stored = await storage.readFromStorage(OVERRIDES_KEY)
     if (stored && typeof stored === 'object') {
       cadenceOverrides = stored
     }
   }
 
-  function persistLastRun() {
+  async function persistLastRun() {
     if (storage && lastRun) {
       try {
         // Strip result values (may be large/non-serializable), keep state + timestamps
@@ -132,7 +132,7 @@ function createRefreshRegistry(storage) {
             reason: h.reason
           }
         }
-        storage.writeToStorage(STORAGE_KEY, persistable)
+        await storage.writeToStorage(STORAGE_KEY, persistable)
       } catch (e) {
         console.error('[refresh-registry] Failed to persist state:', e.message)
       }
@@ -384,21 +384,21 @@ function createRefreshRegistry(storage) {
           progress: { ...progress },
           results: {}
         }
-        persistLastRun()
+        await persistLastRun()
         return { counts, results: {} }
       }
 
       // Return counts + a promise for background execution
       const execution = runEntries(due, options).then(function (results) {
         return results
-      }).finally(function () {
+      }).finally(async function () {
         running = false
         lastRun = {
           completedAt: Date.now(),
           progress: { ...progress },
           results: {}
         }
-        persistLastRun()
+        await persistLastRun()
       })
 
       return { counts, execution }
@@ -443,7 +443,7 @@ function createRefreshRegistry(storage) {
         progress: Object.assign(baseline, progress),
         results: {}
       }
-      persistLastRun()
+      await persistLastRun()
     }
   }
 
@@ -477,7 +477,7 @@ function createRefreshRegistry(storage) {
         progress: Object.assign(baseline, progress),
         results: {}
       }
-      persistLastRun()
+      await persistLastRun()
     }
   }
 
@@ -577,7 +577,7 @@ function createRefreshRegistry(storage) {
    * @param {string} handlerId
    * @param {string|null} cadence - cadence string or null to clear override
    */
-  function setCadenceOverride(handlerId, cadence) {
+  async function setCadenceOverride(handlerId, cadence) {
     if (handlerId === '__proto__' || handlerId === 'constructor' || handlerId === 'prototype') {
       throw new Error('Invalid handlerId')
     }
@@ -591,7 +591,7 @@ function createRefreshRegistry(storage) {
       cadenceOverrides[handlerId] = cadence
     }
     if (storage) {
-      storage.writeToStorage(OVERRIDES_KEY, cadenceOverrides)
+      await storage.writeToStorage(OVERRIDES_KEY, cadenceOverrides)
     }
   }
 

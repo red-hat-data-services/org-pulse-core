@@ -93,13 +93,13 @@ vi.mock('../../../../shared/server/google-sheets', () => ({
   fetchRawSheet: vi.fn(async () => ({ headers: [], rows: [] }))
 }))
 
-function createApp() {
+async function createApp() {
   const app = express()
   app.use(express.json())
   const router = express.Router()
 
   const registerRoutes = require('../../server/index.js')
-  registerRoutes(router, {
+  await registerRoutes(router, {
     storage: storageMock,
     requireAdmin: (req, res, next) => next(),
     requireTeamAdmin: (req, res, next) => next(),
@@ -142,7 +142,7 @@ describe('Unified Sync Endpoint', () => {
   })
 
   it('returns started on successful trigger', async () => {
-    const app = createApp()
+    const app = await createApp()
     const { status, data } = await makeRequest(app, 'POST', '/api/modules/team-tracker/admin/roster-sync/unified')
     expect(status).toBe(200)
     expect(data.status).toBe('started')
@@ -182,7 +182,7 @@ describe('Unified Sync Endpoint', () => {
     const consolidatedSync = require('../../../../shared/server/roster-sync/consolidated-sync')
     consolidatedSync.isSyncInProgress = vi.fn(() => true)
     try {
-      const app = createApp()
+      const app = await createApp()
       const { status, data } = await makeRequest(app, 'POST', '/api/modules/team-tracker/admin/roster-sync/unified')
       expect(status).toBe(409)
       expect(data.error).toContain('sync already in progress')
@@ -196,7 +196,7 @@ describe('Unified Sync Endpoint', () => {
     const origIsOrgSync = orgTeams.isOrgSyncInProgress
     orgTeams.isOrgSyncInProgress = () => true
     try {
-      const app = createApp()
+      const app = await createApp()
       const { status, data } = await makeRequest(app, 'POST', '/api/modules/team-tracker/admin/roster-sync/unified')
       expect(status).toBe(409)
       expect(data.error).toContain('Org metadata sync already in progress')
@@ -212,7 +212,7 @@ describe('Unified Sync Endpoint', () => {
     consolidatedSync.runConsolidatedSync = () => new Promise(r => { resolveSync = r })
 
     try {
-      const app = createApp()
+      const app = await createApp()
 
       // Trigger first sync — sets unifiedSyncInProgress=true and hangs
       const first = await makeRequest(app, 'POST', '/api/modules/team-tracker/admin/roster-sync/unified')
@@ -246,7 +246,7 @@ describe('Unified Sync Endpoint', () => {
     orgTeams.getTriggerOrgSync = () => async () => { phase2Called = true }
 
     try {
-      const app = createApp()
+      const app = await createApp()
       const { status, data } = await makeRequest(app, 'POST', '/api/modules/team-tracker/admin/roster-sync/unified')
       expect(status).toBe(200)
       expect(data.status).toBe('started')
@@ -272,7 +272,7 @@ describe('Unified Sync Endpoint', () => {
     orgTeams.getTriggerOrgSync = () => async () => { phase2Called = true }
 
     try {
-      const app = createApp()
+      const app = await createApp()
       const { status, data } = await makeRequest(app, 'POST', '/api/modules/team-tracker/admin/roster-sync/unified')
       expect(status).toBe(200)
       expect(data.status).toBe('started')
@@ -297,7 +297,7 @@ describe('Unified Sync Endpoint', () => {
     orgTeams.getTriggerOrgSync = () => async () => { phase2Called = true }
 
     try {
-      const app = createApp()
+      const app = await createApp()
       const { status, data } = await makeRequest(app, 'POST', '/api/modules/team-tracker/admin/roster-sync/unified')
       expect(status).toBe(200)
       expect(data.status).toBe('started')
@@ -335,7 +335,7 @@ describe('Extended Status Endpoint', () => {
       componentCount: 3
     }
 
-    const app = createApp()
+    const app = await createApp()
     const { status, data } = await makeRequest(app, 'GET', '/api/modules/team-tracker/admin/roster-sync/status')
 
     expect(status).toBe(200)
@@ -366,7 +366,7 @@ describe('Extended Status Endpoint', () => {
       status: 'success'
     }
 
-    const app = createApp()
+    const app = await createApp()
     const { data } = await makeRequest(app, 'GET', '/api/modules/team-tracker/admin/roster-sync/status')
 
     expect(data.stale.roster).toBe(true)
@@ -374,7 +374,7 @@ describe('Extended Status Endpoint', () => {
   })
 
   it('returns phase info as null when not syncing', async () => {
-    const app = createApp()
+    const app = await createApp()
     const { data } = await makeRequest(app, 'GET', '/api/modules/team-tracker/admin/roster-sync/status')
 
     expect(data.syncing).toBe(false)

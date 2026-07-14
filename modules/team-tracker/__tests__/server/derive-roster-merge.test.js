@@ -23,12 +23,12 @@ const rosterSyncConfig = require('../../../../shared/server/roster-sync/config')
 
 function makeStorage(data) {
   return {
-    readFromStorage(key) {
+    async readFromStorage(key) {
       return data[key] !== undefined ? JSON.parse(JSON.stringify(data[key])) : null
     },
-    writeToStorage() {},
-    listStorageFiles() { return [] },
-    deleteStorageDirectory() {}
+    async writeToStorage() {},
+    async listStorageFiles() { return [] },
+    async deleteStorageDirectory() {}
   }
 }
 
@@ -110,12 +110,12 @@ function toRegistryData(rosterData, configData) {
 
 const http = require('http')
 
-function createTestServer(storageData) {
+async function createTestServer(storageData) {
   const app = express()
   app.use(express.json())
   const router = express.Router()
   const storage = makeStorage(storageData)
-  registerRoutes(router, {
+  await registerRoutes(router, {
     storage,
     requireAdmin: (_req, _res, next) => next(),
     requireTeamAdmin: (_req, _res, next) => next(),
@@ -176,7 +176,7 @@ describe('deriveRoster org merging', () => {
         }
       }
     }
-    const app = createTestServer(toRegistryData(roster, config))
+    const app = await createTestServer(toRegistryData(roster, config))
 
     const { status, body } = await requestGet(app, '/roster')
     expect(status).toBe(200)
@@ -206,7 +206,7 @@ describe('deriveRoster org merging', () => {
         }
       }
     }
-    const app = createTestServer(toRegistryData(roster, null))
+    const app = await createTestServer(toRegistryData(roster, null))
 
     const { body } = await requestGet(app, '/roster')
     expect(body.orgs).toHaveLength(2)
@@ -238,7 +238,7 @@ describe('deriveRoster org merging', () => {
         }
       }
     }
-    const app = createTestServer(toRegistryData(roster, config))
+    const app = await createTestServer(toRegistryData(roster, config))
 
     const { body } = await requestGet(app, '/roster')
     const merged = body.orgs[0]
@@ -269,7 +269,7 @@ describe('deriveRoster org merging', () => {
         }
       }
     }
-    const app = createTestServer(toRegistryData(roster, config))
+    const app = await createTestServer(toRegistryData(roster, config))
 
     const { body } = await requestGet(app, '/roster')
     const merged = body.orgs[0]
@@ -290,7 +290,7 @@ describe('deriveRoster org merging', () => {
         }
       }
     }
-    const app = createTestServer(toRegistryData(roster, config))
+    const app = await createTestServer(toRegistryData(roster, config))
 
     const { body } = await requestGet(app, '/roster')
     expect(body).not.toHaveProperty('mergedKeyMap')
@@ -316,7 +316,7 @@ describe('deriveRoster org merging', () => {
         }
       }
     }
-    const app = createTestServer(toRegistryData(roster, config))
+    const app = await createTestServer(toRegistryData(roster, config))
 
     // Access using secondary key uid_beta::TeamB
     const { status, body } = await requestGet(app, '/team/' + encodeURIComponent('uid_beta::TeamB') + '/metrics')
@@ -346,7 +346,7 @@ describe('deriveRoster org merging', () => {
         }
       }
     }
-    const app = createTestServer(toRegistryData(roster, config))
+    const app = await createTestServer(toRegistryData(roster, config))
 
     const { body } = await requestGet(app, '/roster')
     expect(body.orgs).toHaveLength(2)
@@ -365,7 +365,7 @@ describe('deriveRoster org merging', () => {
         }
       }
     }
-    const app = createTestServer(toRegistryData(roster, config))
+    const app = await createTestServer(toRegistryData(roster, config))
 
     const { body } = await requestGet(app, '/roster')
     expect(body.orgs[0]).not.toHaveProperty('mergedKeys')

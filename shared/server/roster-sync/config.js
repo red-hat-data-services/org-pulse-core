@@ -9,18 +9,18 @@ const LEGACY_CONFIG_KEY = 'roster-sync-config.json';
 // Simple cache for getOrgDisplayNames — invalidated on saveConfig
 let _orgDisplayNamesCache = null;
 
-function loadConfig(storage) {
+async function loadConfig(storage) {
   // One-time migration: merge legacy roster-sync-config.json into team-data/config.json
-  migrateFromLegacyConfig(storage);
+  await migrateFromLegacyConfig(storage);
 
-  const config = storage.readFromStorage(CONFIG_KEY);
+  const config = await storage.readFromStorage(CONFIG_KEY);
   if (config) {
     // Ensure teamDataSource has a default
     if (!config.teamDataSource) {
       config.teamDataSource = 'sheets';
     }
     const migrated = migrateConfig(config);
-    const instancesMigrated = migrateGitlabInstances(migrated, storage);
+    const instancesMigrated = await migrateGitlabInstances(migrated, storage);
     return instancesMigrated;
   }
   return config;
@@ -31,22 +31,22 @@ function loadConfig(storage) {
  * into team-data/config.json. Uses _migratedFrom guard flag to run only once.
  * The old file is never deleted (rollback safety net).
  */
-function migrateFromLegacyConfig(storage) {
+async function migrateFromLegacyConfig(storage) {
   if (!storage.writeToStorage) return;
 
-  var target = storage.readFromStorage(CONFIG_KEY);
+  var target = await storage.readFromStorage(CONFIG_KEY);
 
   // Already migrated — skip
   if (target && target._migratedFrom === LEGACY_CONFIG_KEY) return;
 
-  var legacy = storage.readFromStorage(LEGACY_CONFIG_KEY);
+  var legacy = await storage.readFromStorage(LEGACY_CONFIG_KEY);
   if (!legacy) return;
 
   // Merge legacy fields into target (target fields take precedence)
   var merged = Object.assign({}, legacy, target || {});
   merged._migratedFrom = LEGACY_CONFIG_KEY;
 
-  storage.writeToStorage(CONFIG_KEY, merged);
+  await storage.writeToStorage(CONFIG_KEY, merged);
   console.log('[config-migration] Merged roster-sync-config.json into team-data/config.json');
 }
 
@@ -100,7 +100,7 @@ function migrateConfig(config) {
  * Migrate legacy gitlabGroups to gitlabInstances.
  * Writes back to disk immediately so the file reflects runtime state.
  */
-function migrateGitlabInstances(config, storage) {
+async function migrateGitlabInstances(config, storage) {
   if (!config) return config;
   // Already has gitlabInstances — no migration needed
   if (config.gitlabInstances) return config;
@@ -118,26 +118,26 @@ function migrateGitlabInstances(config, storage) {
 
   // Write back to disk immediately
   if (storage && storage.writeToStorage) {
-    storage.writeToStorage(CONFIG_KEY, config);
+    await storage.writeToStorage(CONFIG_KEY, config);
   }
 
   console.log(`[roster-sync] Migrated gitlabGroups (${groups.length} groups) to gitlabInstances`);
   return config;
 }
 
-function saveConfig(storage, config) {
+async function saveConfig(storage, config) {
   _orgDisplayNamesCache = null;
-  storage.writeToStorage(CONFIG_KEY, config);
+  await storage.writeToStorage(CONFIG_KEY, config);
 }
 
-function isConfigured(storage) {
-  const config = loadConfig(storage);
+async function isConfigured(storage) {
+  const config = await loadConfig(storage);
   return config && Array.isArray(config.orgRoots) && config.orgRoots.length > 0;
 }
 
-function getOrgDisplayNames(storage) {
+async function getOrgDisplayNames(storage) {
   if (_orgDisplayNamesCache) return _orgDisplayNamesCache;
-  const config = loadConfig(storage);
+  const config = await loadConfig(storage);
   if (!config || !config.orgRoots) return {};
   const map = {};
   for (const root of config.orgRoots) {
@@ -147,13 +147,13 @@ function getOrgDisplayNames(storage) {
   return map;
 }
 
-function updateSyncStatus(storage, status, error) {
-  const config = loadConfig(storage);
+async function updateSyncStatus(storage, status, error) {
+  const config = await loadConfig(storage);
   if (!config) return;
   config.lastSyncAt = new Date().toISOString();
   config.lastSyncStatus = status;
   config.lastSyncError = error || null;
-  saveConfig(storage, config);
+  await saveConfig(storage, config);
 }
 
 function clearDisplayNamesCache() {

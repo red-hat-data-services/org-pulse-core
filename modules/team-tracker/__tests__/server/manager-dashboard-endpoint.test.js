@@ -4,19 +4,19 @@ import { describe, it, expect, vi } from 'vitest'
 function makeStorage(initial = {}) {
   const data = { ...initial }
   return {
-    readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
-    writeToStorage: vi.fn((key, val) => { data[key] = JSON.parse(JSON.stringify(val)) }),
-    listStorageFiles(dir) {
+    async readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
+    writeToStorage: vi.fn(async (key, val) => { data[key] = JSON.parse(JSON.stringify(val)) }),
+    listStorageFiles: vi.fn(async (dir) => {
       return Object.keys(data)
         .filter(k => k.startsWith(dir + '/') && k.endsWith('.json'))
         .map(k => k.split('/').pop())
-    },
-    deleteStorageDirectory: vi.fn(),
+    }),
+    deleteStorageDirectory: vi.fn().mockResolvedValue(),
     _data: data
   }
 }
 
-function setupRoutes(storageData) {
+async function setupRoutes(storageData) {
   const handlers = {}
   const middlewareMap = {}
   const mockRouter = {
@@ -49,7 +49,7 @@ function setupRoutes(storageData) {
   }
 
   const registerRoutes = require('../../server/index.js')
-  registerRoutes(mockRouter, context)
+  await registerRoutes(mockRouter, context)
 
   return { handlers, storage, middlewareMap }
 }
@@ -124,8 +124,8 @@ function baseStorageData() {
 }
 
 describe('GET /manager/dashboard', () => {
-  it('returns correct purview for a manager', () => {
-    const { handlers } = setupRoutes(baseStorageData())
+  it('returns correct purview for a manager', async () => {
+    const { handlers } = await setupRoutes(baseStorageData())
     const res = mockRes()
     const req = {
       userUid: 'mgr1',
@@ -135,7 +135,7 @@ describe('GET /manager/dashboard', () => {
       isManager: true
     }
 
-    handlers['GET /manager/dashboard'](req, res)
+    await handlers['GET /manager/dashboard'](req, res)
 
     expect(res._status).toBe(200)
     expect(res._body.manager).toEqual({
@@ -150,8 +150,8 @@ describe('GET /manager/dashboard', () => {
     expect(res._body.reason).toBeUndefined()
   })
 
-  it('returns 200 with reason "no-registry-identity" when req.userUid is null', () => {
-    const { handlers } = setupRoutes(baseStorageData())
+  it('returns 200 with reason "no-registry-identity" when req.userUid is null', async () => {
+    const { handlers } = await setupRoutes(baseStorageData())
     const res = mockRes()
     const req = {
       userUid: null,
@@ -161,7 +161,7 @@ describe('GET /manager/dashboard', () => {
       isManager: false
     }
 
-    handlers['GET /manager/dashboard'](req, res)
+    await handlers['GET /manager/dashboard'](req, res)
 
     expect(res._status).toBe(200)
     expect(res._body.reason).toBe('no-registry-identity')
@@ -170,8 +170,8 @@ describe('GET /manager/dashboard', () => {
     expect(res._body.teams).toEqual([])
   })
 
-  it('returns 200 with reason "no-direct-reports" for admin with no reports', () => {
-    const { handlers } = setupRoutes(baseStorageData())
+  it('returns 200 with reason "no-direct-reports" for admin with no reports', async () => {
+    const { handlers } = await setupRoutes(baseStorageData())
     const res = mockRes()
     const req = {
       userUid: 'charlie',
@@ -181,7 +181,7 @@ describe('GET /manager/dashboard', () => {
       isManager: false
     }
 
-    handlers['GET /manager/dashboard'](req, res)
+    await handlers['GET /manager/dashboard'](req, res)
 
     expect(res._status).toBe(200)
     expect(res._body.reason).toBe('no-direct-reports')
@@ -189,8 +189,8 @@ describe('GET /manager/dashboard', () => {
     expect(res._body.teams).toEqual([])
   })
 
-  it('returns 403 for user tier (not a manager)', () => {
-    const { handlers } = setupRoutes(baseStorageData())
+  it('returns 403 for user tier (not a manager)', async () => {
+    const { handlers } = await setupRoutes(baseStorageData())
     const res = mockRes()
     const req = {
       userUid: 'charlie',
@@ -200,14 +200,14 @@ describe('GET /manager/dashboard', () => {
       isManager: false
     }
 
-    handlers['GET /manager/dashboard'](req, res)
+    await handlers['GET /manager/dashboard'](req, res)
 
     expect(res._status).toBe(403)
     expect(res._body.error).toBe('You are not a manager')
   })
 
-  it('populates customFields from _appFields using field definitions', () => {
-    const { handlers } = setupRoutes(baseStorageData())
+  it('populates customFields from _appFields using field definitions', async () => {
+    const { handlers } = await setupRoutes(baseStorageData())
     const res = mockRes()
     const req = {
       userUid: 'mgr1',
@@ -217,7 +217,7 @@ describe('GET /manager/dashboard', () => {
       isManager: true
     }
 
-    handlers['GET /manager/dashboard'](req, res)
+    await handlers['GET /manager/dashboard'](req, res)
 
     const alice = res._body.directReports.find(r => r.uid === 'alice')
     expect(alice.customFields).toEqual({ field_f1: 'backend' })
@@ -226,8 +226,8 @@ describe('GET /manager/dashboard', () => {
     expect(bob.customFields).toEqual({ field_f1: 'frontend' })
   })
 
-  it('directReportUids contains only direct reports, not all team members', () => {
-    const { handlers } = setupRoutes(baseStorageData())
+  it('directReportUids contains only direct reports, not all team members', async () => {
+    const { handlers } = await setupRoutes(baseStorageData())
     const res = mockRes()
     const req = {
       userUid: 'mgr1',
@@ -237,15 +237,15 @@ describe('GET /manager/dashboard', () => {
       isManager: true
     }
 
-    handlers['GET /manager/dashboard'](req, res)
+    await handlers['GET /manager/dashboard'](req, res)
 
     const teamA = res._body.teams.find(t => t.id === 'team_a')
     expect(teamA.directReportUids).toEqual(expect.arrayContaining(['alice', 'bob']))
     expect(teamA.directReportUids).not.toContain('charlie')
   })
 
-  it('totalMemberCount reflects all team members, not just direct reports', () => {
-    const { handlers } = setupRoutes(baseStorageData())
+  it('totalMemberCount reflects all team members, not just direct reports', async () => {
+    const { handlers } = await setupRoutes(baseStorageData())
     const res = mockRes()
     const req = {
       userUid: 'mgr1',
@@ -255,7 +255,7 @@ describe('GET /manager/dashboard', () => {
       isManager: true
     }
 
-    handlers['GET /manager/dashboard'](req, res)
+    await handlers['GET /manager/dashboard'](req, res)
 
     const teamA = res._body.teams.find(t => t.id === 'team_a')
     // alice, bob (direct reports) + charlie (not a report) = 3

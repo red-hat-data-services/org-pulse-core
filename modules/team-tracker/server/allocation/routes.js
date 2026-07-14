@@ -28,11 +28,11 @@ module.exports = function registerAllocationRoutes(router, context) {
 
   const { performRefresh } = require('./orchestration');
 
-  // Storage helpers — all allocation data under allocation/ prefix
-  function allocRead(key) { return readFromStorage(allocationKey(key)); }
-  function allocWrite(key, data) { writeToStorage(allocationKey(key), data); }
+  // Storage helpers -- all allocation data under allocation/ prefix
+  async function allocRead(key) { return await readFromStorage(allocationKey(key)); }
+  async function allocWrite(key, data) { await writeToStorage(allocationKey(key), data); }
 
-  // ─── Strategy metadata endpoint ───
+  // Strategy metadata endpoint
 
   /**
    * @openapi
@@ -57,7 +57,7 @@ module.exports = function registerAllocationRoutes(router, context) {
     });
   });
 
-  // ─── Refresh state (in-memory) ───
+  // Refresh state (in-memory)
 
   const refreshState = {
     running: false,
@@ -66,7 +66,7 @@ module.exports = function registerAllocationRoutes(router, context) {
     lastResult: null
   };
 
-  // ─── Refresh routes ───
+  // Refresh routes
 
   /**
    * @openapi
@@ -125,7 +125,7 @@ module.exports = function registerAllocationRoutes(router, context) {
     setImmediate(async function() {
       try {
         // Read all teams from team-store
-        const teamData = readTeams(storage);
+        const teamData = await readTeams(storage);
         let teams = Object.values(teamData.teams || {});
 
         // Filter to single team if requested
@@ -207,7 +207,7 @@ module.exports = function registerAllocationRoutes(router, context) {
     res.json(sanitized);
   });
 
-  // ─── Refresh Registry Handler ───
+  // Refresh Registry Handler
 
   async function runAllocationRefresh(options = {}) {
     if (DEMO_MODE) return;
@@ -223,7 +223,7 @@ module.exports = function registerAllocationRoutes(router, context) {
     refreshState.startedAt = new Date().toISOString();
 
     try {
-      const teamData = readTeams(storage);
+      const teamData = await readTeams(storage);
       let teams = Object.values(teamData.teams || {});
 
       for (const t of teams) {
@@ -279,7 +279,7 @@ module.exports = function registerAllocationRoutes(router, context) {
     }
   });
 
-  // ─── Summary routes ───
+  // Summary routes
 
   /**
    * @openapi
@@ -297,10 +297,10 @@ module.exports = function registerAllocationRoutes(router, context) {
    *       200:
    *         description: Team allocation summary
    */
-  router.get('/allocation/team/:teamId/summary', requireScope('metrics:read'), function(req, res) {
+  router.get('/allocation/team/:teamId/summary', requireScope('metrics:read'), async function(req, res) {
     try {
       const { teamId } = req.params;
-      const data = allocRead(`summaries/team-${teamId}.json`);
+      const data = await allocRead(`summaries/team-${teamId}.json`);
       if (!data) {
         return res.json({ lastUpdated: null, totalPoints: 0, boardCount: 0, buckets: {} });
       }
@@ -327,17 +327,17 @@ module.exports = function registerAllocationRoutes(router, context) {
    *       200:
    *         description: Org allocation summary
    */
-  router.get('/allocation/org/:orgKey/summary', requireScope('metrics:read'), function(req, res) {
+  router.get('/allocation/org/:orgKey/summary', requireScope('metrics:read'), async function(req, res) {
     try {
       const orgParam = req.params.orgKey;
       // Try direct lookup first (orgParam is already an orgKey)
-      let data = allocRead(`summaries/org-${orgParam}.json`);
+      let data = await allocRead(`summaries/org-${orgParam}.json`);
       // If not found, resolve display name to orgKey
       if (!data) {
-        const displayNames = getOrgDisplayNames(storage);
+        const displayNames = await getOrgDisplayNames(storage);
         const resolvedKey = Object.entries(displayNames).find(([, name]) => name === orgParam)?.[0];
         if (resolvedKey) {
-          data = allocRead(`summaries/org-${resolvedKey}.json`);
+          data = await allocRead(`summaries/org-${resolvedKey}.json`);
         }
       }
       if (!data) {
@@ -360,9 +360,9 @@ module.exports = function registerAllocationRoutes(router, context) {
    *       200:
    *         description: Global allocation summary
    */
-  router.get('/allocation/global/summary', requireScope('metrics:read'), function(_req, res) {
+  router.get('/allocation/global/summary', requireScope('metrics:read'), async function(_req, res) {
     try {
-      const data = allocRead('summaries/global.json');
+      const data = await allocRead('summaries/global.json');
       if (!data) {
         return res.json({ lastUpdated: null, totalPoints: 0, teamCount: 0, boardCount: 0, buckets: {} });
       }
@@ -373,7 +373,7 @@ module.exports = function registerAllocationRoutes(router, context) {
     }
   });
 
-  // ─── Sprint data routes ───
+  // Sprint data routes
 
   /**
    * @openapi
@@ -396,7 +396,7 @@ module.exports = function registerAllocationRoutes(router, context) {
    *       200:
    *         description: Board sprint index
    */
-  router.get('/allocation/board/:boardId/sprints', requireScope('metrics:read'), function(req, res) {
+  router.get('/allocation/board/:boardId/sprints', requireScope('metrics:read'), async function(req, res) {
     try {
       const { boardId } = req.params;
       if (!isValidBoardId(boardId)) {
@@ -407,11 +407,11 @@ module.exports = function registerAllocationRoutes(router, context) {
       const sprintFilter = req.query.sprintFilter;
       if (sprintFilter) {
         const filterKey = sprintFilter.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-        const filtered = allocRead(`sprints/board-${boardId}-${filterKey}.json`);
+        const filtered = await allocRead(`sprints/board-${boardId}-${filterKey}.json`);
         if (filtered) return res.json(filtered);
       }
 
-      const data = allocRead(`sprints/board-${boardId}.json`);
+      const data = await allocRead(`sprints/board-${boardId}.json`);
       if (!data) {
         return res.json({ sprints: [] });
       }
@@ -440,13 +440,13 @@ module.exports = function registerAllocationRoutes(router, context) {
    *       404:
    *         description: Sprint data not found
    */
-  router.get('/allocation/sprints/:sprintId/issues', requireScope('metrics:read'), function(req, res) {
+  router.get('/allocation/sprints/:sprintId/issues', requireScope('metrics:read'), async function(req, res) {
     try {
       const { sprintId } = req.params;
       if (!isValidSprintId(sprintId)) {
         return res.status(400).json({ error: 'Invalid request parameter' });
       }
-      const data = allocRead(`sprints/${sprintId}.json`);
+      const data = await allocRead(`sprints/${sprintId}.json`);
       if (!data) {
         return res.status(404).json({
           error: 'Sprint data not found. Please refresh to fetch data from Jira.'

@@ -98,13 +98,13 @@ function getMonthlyContribution(userHistory, monthKey) {
  * @param {object} [options] - Optional github/gitlab caches and history
  * @returns {object} The generated snapshot
  */
-function generateSnapshot(storage, teamKey, team, period, options = {}) {
+async function generateSnapshot(storage, teamKey, team, period, options = {}) {
   const { readFromStorage } = storage;
-  const githubHistory = options.githubHistory || readFromStorage('github-history.json') || { users: {} };
-  const gitlabHistory = options.gitlabHistory || readFromStorage('gitlab-history.json') || { users: {} };
+  const githubHistory = options.githubHistory || (await readFromStorage('github-history.json')) || { users: {} };
+  const gitlabHistory = options.gitlabHistory || (await readFromStorage('gitlab-history.json')) || { users: {} };
   // Fallback caches used only when history data is unavailable for a user
-  const githubCache = options.githubCache || readFromStorage('github-contributions.json') || { users: {} };
-  const gitlabCache = options.gitlabCache || readFromStorage('gitlab-contributions.json') || { users: {} };
+  const githubCache = options.githubCache || (await readFromStorage('github-contributions.json')) || { users: {} };
+  const gitlabCache = options.gitlabCache || (await readFromStorage('gitlab-contributions.json')) || { users: {} };
 
   const seen = new Set();
   const uniqueMembers = team.members.filter(m => {
@@ -126,7 +126,7 @@ function generateSnapshot(storage, teamKey, team, period, options = {}) {
 
   for (const member of uniqueMembers) {
     const key = member.jiraDisplayName.toLowerCase().replace(/[^a-z0-9]/g, '_');
-    const cached = readFromStorage(`people/${key}.json`);
+    const cached = await readFromStorage(`people/${key}.json`);
 
     // Filter resolved issues to this period's date range
     const allIssues = cached?.resolved?.issues || [];
@@ -207,30 +207,30 @@ function generateSnapshot(storage, teamKey, team, period, options = {}) {
  * Generate and store a snapshot if one doesn't already exist for the period.
  * Returns the snapshot (existing or newly generated).
  */
-function generateAndStoreSnapshot(storage, teamKey, team, period) {
+async function generateAndStoreSnapshot(storage, teamKey, team, period) {
   const { readFromStorage, writeToStorage } = storage;
   const path = snapshotPath(teamKey, period.end);
 
-  const existing = readFromStorage(path);
+  const existing = await readFromStorage(path);
   if (existing) return existing;
 
-  const snapshot = generateSnapshot(storage, teamKey, team, period);
-  writeToStorage(path, snapshot);
+  const snapshot = await generateSnapshot(storage, teamKey, team, period);
+  await writeToStorage(path, snapshot);
   return snapshot;
 }
 
 /**
  * Load all snapshots for a team, sorted by period start date.
  */
-function loadTeamSnapshots(storage, teamKey) {
+async function loadTeamSnapshots(storage, teamKey) {
   const { listStorageFiles, readFromStorage } = storage;
   const dir = `snapshots/${sanitizeTeamKey(teamKey)}`;
-  const files = listStorageFiles(dir);
+  const files = await listStorageFiles(dir);
   const snapshots = [];
 
   for (const file of files) {
     try {
-      const data = readFromStorage(`${dir}/${file}`);
+      const data = await readFromStorage(`${dir}/${file}`);
       if (data) snapshots.push(data);
     } catch {
       // skip malformed files
@@ -244,8 +244,8 @@ function loadTeamSnapshots(storage, teamKey) {
 /**
  * Load snapshots for a specific person within a team.
  */
-function loadPersonSnapshots(storage, teamKey, personName) {
-  const allSnapshots = loadTeamSnapshots(storage, teamKey);
+async function loadPersonSnapshots(storage, teamKey, personName) {
+  const allSnapshots = await loadTeamSnapshots(storage, teamKey);
   return allSnapshots.map(s => ({
     periodStart: s.periodStart,
     periodEnd: s.periodEnd,

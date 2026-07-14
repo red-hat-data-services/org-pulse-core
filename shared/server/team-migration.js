@@ -226,7 +226,7 @@ function tryCreateLdapConnection() {
  * and person-reference match info.
  */
 async function previewMigration(storage, config) {
-  const registry = storage.readFromStorage(REGISTRY_KEY);
+  const registry = await storage.readFromStorage(REGISTRY_KEY);
   if (!registry || !registry.people) {
     return { fields: [], totalPeople: 0 };
   }
@@ -418,7 +418,7 @@ async function migrateToInApp(storage, config, actorEmail, fieldOverrides) {
     return { migrated: false, teams: 0, fields: 0, assignments: 0, boardsMigrated: 0 };
   }
 
-  const registry = storage.readFromStorage(REGISTRY_KEY);
+  const registry = await storage.readFromStorage(REGISTRY_KEY);
   if (!registry || !registry.people) {
     return { migrated: false, teams: 0, fields: 0, assignments: 0, boardsMigrated: 0 };
   }
@@ -428,8 +428,8 @@ async function migrateToInApp(storage, config, actorEmail, fieldOverrides) {
   const { readFieldDefinitions, FIELD_DEFS_KEY } = require('./field-store');
   const { getOrgDisplayNames } = require('./roster-sync/config');
 
-  const teamsData = readTeams(storage);
-  const fieldDefs = readFieldDefinitions(storage);
+  const teamsData = await readTeams(storage);
+  const fieldDefs = await readFieldDefinitions(storage);
 
   // Build override lookup: key → { type, multiValue, scope }
   const overrideMap = {};
@@ -581,10 +581,10 @@ async function migrateToInApp(storage, config, actorEmail, fieldOverrides) {
   // ─── Step 1.5: Migrate boards from teams-metadata.json ───
 
   let boardsMigrated = 0;
-  const metaData = storage.readFromStorage('org-roster/teams-metadata.json');
+  const metaData = await storage.readFromStorage('org-roster/teams-metadata.json');
 
   if (metaData && metaData.teams) {
-    const orgDisplayNames = getOrgDisplayNames(storage);
+    const orgDisplayNames = await getOrgDisplayNames(storage);
     const boardNames = metaData.boardNames || {};
 
     // Build a case-insensitive lookup for metadata teams
@@ -754,9 +754,9 @@ async function migrateToInApp(storage, config, actorEmail, fieldOverrides) {
   }
 
   // ─── Step 3: Write all data once ───
-  storage.writeToStorage(TEAMS_KEY, teamsData);
-  storage.writeToStorage(REGISTRY_KEY, registry);
-  storage.writeToStorage(FIELD_DEFS_KEY, fieldDefs);
+  await storage.writeToStorage(TEAMS_KEY, teamsData);
+  await storage.writeToStorage(REGISTRY_KEY, registry);
+  await storage.writeToStorage(FIELD_DEFS_KEY, fieldDefs);
 
   // Batch all audit entries
   auditEntries.push({
@@ -768,7 +768,7 @@ async function migrateToInApp(storage, config, actorEmail, fieldOverrides) {
   });
 
   for (const entry of auditEntries) {
-    appendAuditEntry(storage, entry);
+    await appendAuditEntry(storage, entry);
   }
 
   return { migrated: true, teams: teamsCreated, fields: fieldsCreated, assignments: assignmentsCreated, boardsMigrated };

@@ -16,9 +16,9 @@ import {
 function createMockStorage(data = {}) {
   const store = { ...data }
   return {
-    readFromStorage: vi.fn((key) => store[key] || null),
-    writeToStorage: vi.fn((key, value) => { store[key] = value }),
-    listStorageFiles: vi.fn((dir) => {
+    readFromStorage: vi.fn(async (key) => store[key] || null),
+    writeToStorage: vi.fn(async (key, value) => { store[key] = value }),
+    listStorageFiles: vi.fn(async (dir) => {
       return Object.keys(store)
         .filter(k => k.startsWith(dir + '/'))
         .map(k => k.slice(dir.length + 1))
@@ -113,36 +113,36 @@ const mockGitlabHistoryFlat = {
 
 describe('snapshots', () => {
   describe('formatDate', () => {
-    it('formats a date as YYYY-MM-DD', () => {
+    it('formats a date as YYYY-MM-DD', async () => {
       expect(formatDate(new Date('2026-01-15T00:00:00Z'))).toBe('2026-01-15')
     })
   })
 
   describe('sanitizeTeamKey', () => {
-    it('replaces :: with --', () => {
+    it('replaces :: with --', async () => {
       expect(sanitizeTeamKey('orgKey::teamName')).toBe('orgKey--teamName')
     })
 
-    it('removes special characters', () => {
+    it('removes special characters', async () => {
       expect(sanitizeTeamKey('org::My Team!')).toBe('org--My_Team_')
     })
   })
 
   describe('snapshotPath', () => {
-    it('builds the correct storage path', () => {
+    it('builds the correct storage path', async () => {
       const end = new Date('2026-02-01T00:00:00Z')
       expect(snapshotPath('org::team', end)).toBe('snapshots/org--team/2026-02-01.json')
     })
   })
 
   describe('getSnapshotPeriods', () => {
-    it('returns periods starting from epoch', () => {
+    it('returns periods starting from epoch', async () => {
       const periods = getSnapshotPeriods()
       expect(periods.length).toBeGreaterThan(0)
       expect(periods[0].start.getTime()).toBe(SNAPSHOT_EPOCH.getTime())
     })
 
-    it('each period is a calendar month', () => {
+    it('each period is a calendar month', async () => {
       const periods = getSnapshotPeriods()
       for (const period of periods) {
         expect(period.start.getUTCDate()).toBe(1)
@@ -157,12 +157,12 @@ describe('snapshots', () => {
       }
     })
 
-    it('each period has a monthKey', () => {
+    it('each period has a monthKey', async () => {
       const periods = getSnapshotPeriods()
       expect(periods[0].monthKey).toBe('2026-01')
     })
 
-    it('periods are contiguous', () => {
+    it('periods are contiguous', async () => {
       const periods = getSnapshotPeriods()
       for (let i = 1; i < periods.length; i++) {
         expect(periods[i].start.getTime()).toBe(periods[i - 1].end.getTime())
@@ -171,7 +171,7 @@ describe('snapshots', () => {
   })
 
   describe('getCurrentPeriod', () => {
-    it('returns a period containing today', () => {
+    it('returns a period containing today', async () => {
       const period = getCurrentPeriod()
       expect(period).not.toBeNull()
       const now = new Date()
@@ -180,7 +180,7 @@ describe('snapshots', () => {
   })
 
   describe('getCompletedPeriods', () => {
-    it('only returns periods whose end is in the past', () => {
+    it('only returns periods whose end is in the past', async () => {
       const completed = getCompletedPeriods()
       const now = new Date()
       for (const period of completed) {
@@ -188,7 +188,7 @@ describe('snapshots', () => {
       }
     })
 
-    it('returns fewer periods than getSnapshotPeriods', () => {
+    it('returns fewer periods than getSnapshotPeriods', async () => {
       const all = getSnapshotPeriods()
       const completed = getCompletedPeriods()
       expect(completed.length).toBeLessThanOrEqual(all.length)
@@ -196,11 +196,11 @@ describe('snapshots', () => {
   })
 
   describe('generateSnapshot', () => {
-    it('generates a snapshot with correct team aggregates using monthly history', () => {
+    it('generates a snapshot with correct team aggregates using monthly history', async () => {
       const storage = createMockStorage(mockPersonData)
       const period = { start: new Date('2026-01-01'), end: new Date('2026-02-01'), monthKey: '2026-01' }
 
-      const snapshot = generateSnapshot(storage, 'org::team', mockTeam, period, {
+      const snapshot = await generateSnapshot(storage, 'org::team', mockTeam, period, {
         githubHistory: mockGithubHistory,
         gitlabHistory: mockGitlabHistory,
         githubCache: mockGithubCache,
@@ -217,11 +217,11 @@ describe('snapshots', () => {
       expect(snapshot.team.gitlabContributions).toBe(18) // 18 + 0 (Jan monthly)
     })
 
-    it('falls back to total contributions when no history available', () => {
+    it('falls back to total contributions when no history available', async () => {
       const storage = createMockStorage(mockPersonData)
       const period = { start: new Date('2026-01-01'), end: new Date('2026-02-01'), monthKey: '2026-01' }
 
-      const snapshot = generateSnapshot(storage, 'org::team', mockTeam, period, {
+      const snapshot = await generateSnapshot(storage, 'org::team', mockTeam, period, {
         githubHistory: { users: {} },
         gitlabHistory: { users: {} },
         githubCache: mockGithubCache,
@@ -233,11 +233,11 @@ describe('snapshots', () => {
       expect(snapshot.team.gitlabContributions).toBe(30) // 30 + 0
     })
 
-    it('generates per-member metrics with monthly history', () => {
+    it('generates per-member metrics with monthly history', async () => {
       const storage = createMockStorage(mockPersonData)
       const period = { start: new Date('2026-01-01'), end: new Date('2026-02-01'), monthKey: '2026-01' }
 
-      const snapshot = generateSnapshot(storage, 'org::team', mockTeam, period, {
+      const snapshot = await generateSnapshot(storage, 'org::team', mockTeam, period, {
         githubHistory: mockGithubHistory,
         gitlabHistory: mockGitlabHistory,
         githubCache: mockGithubCache,
@@ -265,11 +265,11 @@ describe('snapshots', () => {
       })
     })
 
-    it('handles missing person data gracefully', () => {
+    it('handles missing person data gracefully', async () => {
       const storage = createMockStorage({}) // no person files
       const period = { start: new Date('2026-01-01'), end: new Date('2026-02-01'), monthKey: '2026-01' }
 
-      const snapshot = generateSnapshot(storage, 'org::team', mockTeam, period, {
+      const snapshot = await generateSnapshot(storage, 'org::team', mockTeam, period, {
         githubCache: { users: {} },
         gitlabCache: { users: {} }
       })
@@ -279,7 +279,7 @@ describe('snapshots', () => {
       expect(snapshot.team.avgCycleTimeDays).toBeNull()
     })
 
-    it('deduplicates members by jiraDisplayName', () => {
+    it('deduplicates members by jiraDisplayName', async () => {
       const teamWithDupes = {
         members: [
           { name: 'Alice Smith', jiraDisplayName: 'Alice Smith', githubUsername: null, gitlabUsername: null },
@@ -289,7 +289,7 @@ describe('snapshots', () => {
       const storage = createMockStorage(mockPersonData)
       const period = { start: new Date('2026-01-01'), end: new Date('2026-02-01'), monthKey: '2026-01' }
 
-      const snapshot = generateSnapshot(storage, 'org::team', teamWithDupes, period, {
+      const snapshot = await generateSnapshot(storage, 'org::team', teamWithDupes, period, {
         githubCache: { users: {} },
         gitlabCache: { users: {} }
       })
@@ -299,11 +299,11 @@ describe('snapshots', () => {
       expect(Object.keys(snapshot.members)).toHaveLength(1)
     })
 
-    it('handles flat format history (backward compatibility)', () => {
+    it('handles flat format history (backward compatibility)', async () => {
       const storage = createMockStorage(mockPersonData)
       const period = { start: new Date('2026-01-01'), end: new Date('2026-02-01'), monthKey: '2026-01' }
 
-      const snapshot = generateSnapshot(storage, 'org::team', mockTeam, period, {
+      const snapshot = await generateSnapshot(storage, 'org::team', mockTeam, period, {
         githubHistory: mockGithubHistoryFlat,
         gitlabHistory: mockGitlabHistoryFlat,
         githubCache: mockGithubCache,
@@ -319,11 +319,11 @@ describe('snapshots', () => {
   })
 
   describe('generateAndStoreSnapshot', () => {
-    it('writes snapshot to storage when none exists', () => {
+    it('writes snapshot to storage when none exists', async () => {
       const storage = createMockStorage(mockPersonData)
       const period = { start: new Date('2026-01-01'), end: new Date('2026-02-01'), monthKey: '2026-01' }
 
-      const snapshot = generateAndStoreSnapshot(storage, 'org::team', mockTeam, period)
+      const snapshot = await generateAndStoreSnapshot(storage, 'org::team', mockTeam, period)
 
       expect(storage.writeToStorage).toHaveBeenCalledWith(
         'snapshots/org--team/2026-02-01.json',
@@ -331,7 +331,7 @@ describe('snapshots', () => {
       )
     })
 
-    it('returns existing snapshot without regenerating', () => {
+    it('returns existing snapshot without regenerating', async () => {
       const existingSnapshot = { periodStart: '2026-01-01', periodEnd: '2026-02-01', team: {}, members: {} }
       const storage = createMockStorage({
         ...mockPersonData,
@@ -339,7 +339,7 @@ describe('snapshots', () => {
       })
       const period = { start: new Date('2026-01-01'), end: new Date('2026-02-01'), monthKey: '2026-01' }
 
-      const result = generateAndStoreSnapshot(storage, 'org::team', mockTeam, period)
+      const result = await generateAndStoreSnapshot(storage, 'org::team', mockTeam, period)
 
       expect(result).toEqual(existingSnapshot)
       expect(storage.writeToStorage).not.toHaveBeenCalled()
@@ -347,28 +347,28 @@ describe('snapshots', () => {
   })
 
   describe('loadTeamSnapshots', () => {
-    it('returns snapshots sorted by periodStart', () => {
+    it('returns snapshots sorted by periodStart', async () => {
       const storage = createMockStorage({
         'snapshots/org--team/2026-03-01.json': { periodStart: '2026-02-01', periodEnd: '2026-03-01', team: {}, members: {} },
         'snapshots/org--team/2026-02-01.json': { periodStart: '2026-01-01', periodEnd: '2026-02-01', team: {}, members: {} }
       })
 
-      const snapshots = loadTeamSnapshots(storage, 'org::team')
+      const snapshots = await loadTeamSnapshots(storage, 'org::team')
 
       expect(snapshots).toHaveLength(2)
       expect(snapshots[0].periodStart).toBe('2026-01-01')
       expect(snapshots[1].periodStart).toBe('2026-02-01')
     })
 
-    it('returns empty array when no snapshots exist', () => {
+    it('returns empty array when no snapshots exist', async () => {
       const storage = createMockStorage({})
-      const snapshots = loadTeamSnapshots(storage, 'org::team')
+      const snapshots = await loadTeamSnapshots(storage, 'org::team')
       expect(snapshots).toEqual([])
     })
   })
 
   describe('loadPersonSnapshots', () => {
-    it('returns only snapshots that include the person', () => {
+    it('returns only snapshots that include the person', async () => {
       const storage = createMockStorage({
         'snapshots/org--team/2026-02-01.json': {
           periodStart: '2026-01-01',
@@ -390,16 +390,16 @@ describe('snapshots', () => {
         }
       })
 
-      const aliceSnapshots = loadPersonSnapshots(storage, 'org::team', 'Alice Smith')
+      const aliceSnapshots = await loadPersonSnapshots(storage, 'org::team', 'Alice Smith')
       expect(aliceSnapshots).toHaveLength(1)
       expect(aliceSnapshots[0].metrics.resolvedCount).toBe(12)
 
-      const bobSnapshots = loadPersonSnapshots(storage, 'org::team', 'Bob Jones')
+      const bobSnapshots = await loadPersonSnapshots(storage, 'org::team', 'Bob Jones')
       expect(bobSnapshots).toHaveLength(1)
       expect(bobSnapshots[0].metrics.resolvedCount).toBe(5)
     })
 
-    it('returns empty array for unknown person', () => {
+    it('returns empty array for unknown person', async () => {
       const storage = createMockStorage({
         'snapshots/org--team/2026-02-01.json': {
           periodStart: '2026-01-01',
@@ -410,7 +410,7 @@ describe('snapshots', () => {
         }
       })
 
-      const result = loadPersonSnapshots(storage, 'org::team', 'Unknown Person')
+      const result = await loadPersonSnapshots(storage, 'org::team', 'Unknown Person')
       expect(result).toEqual([])
     })
   })

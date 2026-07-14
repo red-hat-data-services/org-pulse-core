@@ -15,8 +15,8 @@ const { computeCoverage } = require('../../../../shared/server/roster-sync/lifec
 function makeStorage(initial = {}) {
   const data = { ...initial }
   return {
-    readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
-    writeToStorage(key, val) { data[key] = JSON.parse(JSON.stringify(val)) },
+    async readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
+    async writeToStorage(key, val) { data[key] = JSON.parse(JSON.stringify(val)) },
     _data: data
   }
 }
@@ -63,31 +63,31 @@ const TEAMS = {
 }
 
 describe('registry list orgType filter', () => {
-  it('returns all people by default', () => {
+  it('returns all people by default', async () => {
     const storage = makeStorage({
       'team-data/registry.json': makeRegistry({ eng1: ENG_PERSON, pm1: AUX_PERSON }),
       'team-data/field-definitions.json': FIELD_DEFS,
       'team-data/teams.json': TEAMS
     })
-    const people = Object.values(storage.readFromStorage('team-data/registry.json').people)
+    const people = Object.values((await storage.readFromStorage('team-data/registry.json')).people)
     expect(people).toHaveLength(2)
   })
 
-  it('filters by orgType=engineering', () => {
+  it('filters by orgType=engineering', async () => {
     const people = { eng1: ENG_PERSON, pm1: AUX_PERSON }
     const filtered = Object.values(people).filter(p => (p.orgType || 'engineering') === 'engineering')
     expect(filtered).toHaveLength(1)
     expect(filtered[0].uid).toBe('eng1')
   })
 
-  it('filters by orgType=auxiliary', () => {
+  it('filters by orgType=auxiliary', async () => {
     const people = { eng1: ENG_PERSON, pm1: AUX_PERSON }
     const filtered = Object.values(people).filter(p => (p.orgType || 'engineering') === 'auxiliary')
     expect(filtered).toHaveLength(1)
     expect(filtered[0].uid).toBe('pm1')
   })
 
-  it('treats missing orgType as engineering', () => {
+  it('treats missing orgType as engineering', async () => {
     const personNoType = { ...ENG_PERSON, uid: 'noType' }
     delete personNoType.orgType
     const filtered = [personNoType].filter(p => (p.orgType || 'engineering') === 'engineering')
@@ -96,15 +96,15 @@ describe('registry list orgType filter', () => {
 })
 
 describe('associatedTeamNames for auxiliary people', () => {
-  it('returns associated team names for auxiliary people', () => {
+  it('returns associated team names for auxiliary people', async () => {
     const storage = makeStorage({
       'team-data/field-definitions.json': FIELD_DEFS,
       'team-data/teams.json': TEAMS
     })
 
     // Simulate the getAssociatedTeamNames logic
-    const fieldDefs = storage.readFromStorage('team-data/field-definitions.json')
-    const teamsData = storage.readFromStorage('team-data/teams.json')
+    const fieldDefs = await storage.readFromStorage('team-data/field-definitions.json')
+    const teamsData = await storage.readFromStorage('team-data/teams.json')
     const refFields = fieldDefs.teamFields
       .filter(f => f.type === 'person-reference-linked' && !f.deleted)
       .map(f => ({ id: f.id, label: f.label }))
@@ -122,13 +122,13 @@ describe('associatedTeamNames for auxiliary people', () => {
     expect(names).toEqual(['Platform'])
   })
 
-  it('returns empty array for people not referenced', () => {
+  it('returns empty array for people not referenced', async () => {
     const storage = makeStorage({
       'team-data/field-definitions.json': FIELD_DEFS,
       'team-data/teams.json': TEAMS
     })
-    const teamsData = storage.readFromStorage('team-data/teams.json')
-    const fieldDefs = storage.readFromStorage('team-data/field-definitions.json')
+    const teamsData = await storage.readFromStorage('team-data/teams.json')
+    const fieldDefs = await storage.readFromStorage('team-data/field-definitions.json')
     const refFields = fieldDefs.teamFields
       .filter(f => f.type === 'person-reference-linked' && !f.deleted)
 
@@ -147,13 +147,13 @@ describe('associatedTeamNames for auxiliary people', () => {
 })
 
 describe('person detail associatedTeams', () => {
-  it('returns associatedTeams with team detail and field labels', () => {
+  it('returns associatedTeams with team detail and field labels', async () => {
     const storage = makeStorage({
       'team-data/field-definitions.json': FIELD_DEFS,
       'team-data/teams.json': TEAMS
     })
-    const fieldDefs = storage.readFromStorage('team-data/field-definitions.json')
-    const teamsData = storage.readFromStorage('team-data/teams.json')
+    const fieldDefs = await storage.readFromStorage('team-data/field-definitions.json')
+    const teamsData = await storage.readFromStorage('team-data/teams.json')
 
     const refFields = fieldDefs.teamFields
       .filter(f => f.type === 'person-reference-linked' && !f.deleted)
@@ -188,7 +188,7 @@ describe('person detail associatedTeams', () => {
     })
   })
 
-  it('includes orgType on person detail response', () => {
+  it('includes orgType on person detail response', async () => {
     const person = { ...AUX_PERSON }
     const withOrgType = { ...person, orgType: person.orgType || 'engineering' }
     expect(withOrgType.orgType).toBe('auxiliary')
@@ -196,7 +196,7 @@ describe('person detail associatedTeams', () => {
 })
 
 describe('stats exclude auxiliary from active count', () => {
-  it('active count excludes auxiliary people', () => {
+  it('active count excludes auxiliary people', async () => {
     const people = { eng1: ENG_PERSON, pm1: AUX_PERSON }
     let active = 0, auxiliaryCount = 0
     const byOrgType = { engineering: 0, auxiliary: 0 }
@@ -217,7 +217,7 @@ describe('stats exclude auxiliary from active count', () => {
     expect(byOrgType).toEqual({ engineering: 1, auxiliary: 1 })
   })
 
-  it('computeCoverage excludes auxiliary people', () => {
+  it('computeCoverage excludes auxiliary people', async () => {
     const people = {
       eng1: { ...ENG_PERSON },
       pm1: { ...AUX_PERSON }
@@ -228,20 +228,20 @@ describe('stats exclude auxiliary from active count', () => {
 })
 
 describe('LDAP search route logic', () => {
-  it('returns 503 when LDAP is not configured', () => {
+  it('returns 503 when LDAP is not configured', async () => {
     // Simulate: IPA_BIND_DN not set
     const configured = !!process.env.IPA_BIND_DN && !!process.env.IPA_BIND_PASSWORD
     // In test env these are not set, so this simulates the 503 path
     expect(configured).toBe(false)
   })
 
-  it('returns 503 in demo mode', () => {
+  it('returns 503 in demo mode', async () => {
     const DEMO_MODE = true
     expect(DEMO_MODE).toBe(true)
     // Route handler would return 503 with code: LDAP_UNAVAILABLE
   })
 
-  it('rate limit logic tracks requests per user', () => {
+  it('rate limit logic tracks requests per user', async () => {
     const rateLimitMap = new Map()
     const email = 'user@test.com'
     const now = Date.now()
@@ -259,7 +259,7 @@ describe('LDAP search route logic', () => {
     expect(userTimestamps.length >= 5).toBe(true) // would return 429
   })
 
-  it('rate limit prunes old entries', () => {
+  it('rate limit prunes old entries', async () => {
     const rateLimitMap = new Map()
     const email = 'user@test.com'
     const now = Date.now()
@@ -274,27 +274,27 @@ describe('LDAP search route logic', () => {
 })
 
 describe('LDAP import route logic', () => {
-  it('returns existing person if already in registry (idempotent)', () => {
+  it('returns existing person if already in registry (idempotent)', async () => {
     const reg = makeRegistry({ pm1: AUX_PERSON })
     const existing = reg.people['pm1']
     expect(existing).toBeDefined()
     // Route would return { person: existing, created: false }
   })
 
-  it('rejects invalid uid format', () => {
+  it('rejects invalid uid format', async () => {
     const uid = 'some invalid uid!'
     const valid = /^[a-zA-Z0-9._-]+$/.test(uid)
     expect(valid).toBe(false)
   })
 
-  it('accepts valid uid format', () => {
+  it('accepts valid uid format', async () => {
     const validUids = ['jdoe', 'j.doe', 'j-doe', 'j_doe', 'JDoe123']
     for (const uid of validUids) {
       expect(/^[a-zA-Z0-9._-]+$/.test(uid)).toBe(true)
     }
   })
 
-  it('creates auxiliary entry with correct orgType and orgRoot', () => {
+  it('creates auxiliary entry with correct orgType and orgRoot', async () => {
     const { mergePerson } = require('../../../../shared/server/roster-sync/lifecycle')
     const ldapPerson = {
       uid: 'newpm', name: 'New PM', email: 'newpm@test.com', title: 'PM',
@@ -310,11 +310,11 @@ describe('LDAP import route logic', () => {
     expect(result.isNew).toBe(true)
   })
 
-  it('writes audit log entry on import', () => {
+  it('writes audit log entry on import', async () => {
     const { appendAuditEntry } = require('../../../../shared/server/audit-log')
     const storage = makeStorage({ 'audit-log.json': { entries: [], maxEntries: 100 } })
 
-    appendAuditEntry(storage, {
+    await appendAuditEntry(storage, {
       action: 'person.ldap-import',
       actor: 'admin@test.com',
       entityType: 'person',
@@ -322,7 +322,7 @@ describe('LDAP import route logic', () => {
       detail: 'Imported auxiliary person from LDAP'
     })
 
-    const log = storage.readFromStorage('audit-log.json')
+    const log = await storage.readFromStorage('audit-log.json')
     expect(log.entries).toHaveLength(1)
     expect(log.entries[0].action).toBe('person.ldap-import')
     expect(log.entries[0].entityId).toBe('newpm')

@@ -38,7 +38,7 @@ import { readFromStorage, writeToStorage } from '../../../../shared/server/stora
 // Grab the actual sheets module to spy on discoverSheetNames
 const sheetsModule = require('../../../../shared/server/roster-sync/sheets')
 
-function createTestApp() {
+async function createTestApp() {
   const app = express()
   app.use(express.json())
   app.use((req, res, next) => {
@@ -56,7 +56,7 @@ function createTestApp() {
     registerDiagnostics: vi.fn(),
     registerScopes: vi.fn()
   }
-  registerRoutes(router, context)
+  await registerRoutes(router, context)
   app.use('/api/modules/team-tracker', router)
   return app
 }
@@ -97,11 +97,11 @@ function request(app, method, path) {
 describe('GET /sheets/discover', () => {
   let app
 
-  beforeEach(() => {
+  beforeEach(async () => {
     Object.keys(mockStorage).forEach(k => delete mockStorage[k])
     vi.clearAllMocks()
     vi.restoreAllMocks()
-    app = createTestApp()
+    app = await createTestApp()
   })
 
   it('returns 400 when spreadsheetId is missing', async () => {
