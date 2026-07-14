@@ -75,6 +75,56 @@ router.get('/data', async (req, res) => {
 });
 ```
 
+### Refresh Registry
+
+`createRefreshRegistry(storage)` is now `async` — it reads persisted state
+and cadence overrides from storage during initialization. `setCadenceOverride`
+is also now `async`.
+
+**Before:**
+```js
+const registry = createRefreshRegistry(storage);
+registry.setCadenceOverride('my-handler', '12h');
+```
+
+**After:**
+```js
+const registry = await createRefreshRegistry(storage);
+await registry.setCadenceOverride('my-handler', '12h');
+```
+
+### Roster Functions
+
+All roster access functions are now `async`:
+
+- `readRosterFull(storage)` → `async readRosterFull(storage)`
+- `getAllPeople(storage)` → `async getAllPeople(storage)`
+- `getPeopleByOrg(storage, orgKey)` → `async getPeopleByOrg(storage, orgKey)`
+- `getOrgKeys(storage)` → `async getOrgKeys(storage)`
+- `getOrgDisplayNames(storage)` → `async getOrgDisplayNames(storage)`
+
+**Before:**
+```js
+const people = roster.getAllPeople(storage);
+const orgKeys = roster.getOrgKeys(storage);
+```
+
+**After:**
+```js
+const people = await roster.getAllPeople(storage);
+const orgKeys = await roster.getOrgKeys(storage);
+```
+
+### Roster Sync Config
+
+All roster-sync config functions are now `async`:
+
+- `loadConfig(storage)` → `async loadConfig(storage)`
+- `saveConfig(storage, config)` → `async saveConfig(storage, config)`
+- `isConfigured(storage)` → `async isConfigured(storage)`
+- `getOrgDisplayNames(storage)` → `async getOrgDisplayNames(storage)`
+- `updateSyncStatus(storage, status, error)` → `async updateSyncStatus(storage, status, error)`
+
 ### Refresh Handlers
 
 Refresh handler functions should `await` storage calls:
