@@ -143,7 +143,7 @@ jobs:
         run: docker save ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA} -o /tmp/core-backend.tar
 
       - name: Upload image artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: core-backend-image
           path: /tmp/core-backend.tar
@@ -176,7 +176,7 @@ jobs:
         run: docker save ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA} -o /tmp/core-frontend.tar
 
       - name: Upload image artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: core-frontend-image
           path: /tmp/core-frontend.tar
