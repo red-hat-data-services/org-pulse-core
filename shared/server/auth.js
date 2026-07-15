@@ -182,7 +182,7 @@ function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
     if (authHeader && authHeader.startsWith('Bearer tt_')) {
       const rawToken = authHeader.slice('Bearer '.length);
       if (tokenValidator) {
-        const tokenRecord = tokenValidator.validateToken(rawToken);
+        const tokenRecord = await tokenValidator.validateToken(rawToken);
         if (!tokenRecord) {
           // HARD STOP: invalid/expired token must NEVER fall through
           return res.status(401).json({ error: 'Invalid or expired API token' });
