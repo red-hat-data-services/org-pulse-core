@@ -240,6 +240,81 @@ describe('requireScope', () => {
   })
 })
 
+describe('authMiddleware with async tokenValidator (real-world behavior)', () => {
+  let storage, authMiddleware, requireAdmin
+
+  beforeEach(() => {
+    storage = createMockStorage()
+    // The real tokenValidator.validateToken is async — the mock must match
+    const tokenValidator = {
+      async validateToken(rawToken) {
+        if (rawToken === 'tt_validtoken00000000000000000000') {
+          return { id: 'tok-1', ownerEmail: 'admin@test.com', name: 'Test', scopes: null }
+        }
+        if (rawToken === 'tt_scopedtoken000000000000000000000') {
+          return { id: 'tok-2', ownerEmail: 'admin@test.com', name: 'Scoped', scopes: ['roster:read'] }
+        }
+        return null
+      },
+      touchLastUsed() {}
+    }
+    const result = createAuthMiddleware(
+      storage.readFromStorage.bind(storage),
+      storage.writeToStorage.bind(storage),
+      { tokenValidator }
+    )
+    authMiddleware = result.authMiddleware
+    requireAdmin = result.requireAdmin
+  })
+
+  it('resolves ownerEmail from async validateToken', async () => {
+    const req = createMockReq({
+      headers: { authorization: 'Bearer tt_validtoken00000000000000000000' }
+    })
+    const res = createMockRes()
+    let nextCalled = false
+    await authMiddleware(req, res, () => { nextCalled = true })
+    expect(nextCalled).toBe(true)
+    expect(req.userEmail).toBe('admin@test.com')
+    expect(req.authMethod).toBe('token')
+  })
+
+  it('grants admin to token owner who is in the admin allowlist', async () => {
+    const req = createMockReq({
+      headers: { authorization: 'Bearer tt_validtoken00000000000000000000' }
+    })
+    const res = createMockRes()
+    await authMiddleware(req, res, () => {})
+    expect(req.isAdmin).toBe(true)
+
+    // requireAdmin should pass
+    const res2 = createMockRes()
+    let adminNextCalled = false
+    requireAdmin(req, res2, () => { adminNextCalled = true })
+    expect(adminNextCalled).toBe(true)
+  })
+
+  it('rejects invalid token with 401 when validateToken is async', async () => {
+    const req = createMockReq({
+      headers: { authorization: 'Bearer tt_garbage0000000000000000000000' }
+    })
+    const res = createMockRes()
+    let nextCalled = false
+    await authMiddleware(req, res, () => { nextCalled = true })
+    expect(nextCalled).toBe(false)
+    expect(res.statusCode).toBe(401)
+  })
+
+  it('preserves scopes from async validateToken', async () => {
+    const req = createMockReq({
+      headers: { authorization: 'Bearer tt_scopedtoken000000000000000000000' }
+    })
+    const res = createMockRes()
+    await authMiddleware(req, res, () => {})
+    expect(req.tokenScopes).toEqual(['roster:read'])
+  })
+})
+
 describe('proxySecretGuard with Bearer tokens', () => {
   let originalEnv, tokenValidator
 
