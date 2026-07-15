@@ -156,7 +156,7 @@
                   :data-tour="idx === 0 ? 'field-cell' : undefined"
                   class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider"
                   :class="bulkEditing ? 'text-primary-700 dark:text-primary-300 bg-blue-50 dark:bg-blue-900/30' : 'text-gray-500 dark:text-gray-400'"
-                >{{ field.label }}</th>
+                ><span class="inline-flex items-center gap-1">{{ field.label }}<FieldHelpText :text="field.helpText" size="xs" /></span></th>
               </tr>
             </thead>
             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
@@ -373,7 +373,7 @@
                     :key="field.id"
                     class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider"
                     :class="teamBulkEditing ? 'text-primary-700 dark:text-primary-300 bg-blue-50 dark:bg-blue-900/30' : 'text-gray-500 dark:text-gray-400'"
-                  >{{ field.label }}</th>
+                  ><span class="inline-flex items-center gap-1">{{ field.label }}<FieldHelpText :text="field.helpText" size="xs" /></span></th>
                   <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider" :class="teamBulkEditing ? 'text-primary-700 dark:text-primary-300 bg-blue-50 dark:bg-blue-900/30' : 'text-gray-500 dark:text-gray-400'">Boards</th>
                 </tr>
               </thead>
@@ -513,6 +513,7 @@ import { isFieldEmpty as _isFieldEmpty, buildExceptionSet, hasException as _hasE
 import ConstrainedAutocomplete from '../components/ConstrainedAutocomplete.vue'
 import FieldDisplayCell from '../components/FieldDisplayCell.vue'
 import FieldEditCell from '../components/FieldEditCell.vue'
+import FieldHelpText from '../components/FieldHelpText.vue'
 import TeamBoardsDrawer from '../components/TeamBoardsDrawer.vue'
 import { useManagerTutorial } from '../composables/useManagerTutorial'
 

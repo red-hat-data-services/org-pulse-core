@@ -3,6 +3,7 @@ import { ref, computed, watch, onUnmounted } from 'vue'
 import { useTeams } from '@shared/client/composables/useTeams'
 import PersonAutocomplete from './PersonAutocomplete.vue'
 import ConstrainedAutocomplete from './ConstrainedAutocomplete.vue'
+import FieldHelpText from './FieldHelpText.vue'
 
 const props = defineProps({
   teamId: { type: String, required: true },
@@ -170,8 +171,9 @@ function isPersonRefType(field) {
         editingFieldId === field.id ? 'bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md px-2 py-1' : ''
       ]"
     >
-      <span :class="inline ? 'text-sm text-gray-400 dark:text-gray-500 shrink-0' : 'text-sm text-gray-600 dark:text-gray-400 w-32 shrink-0'">
-        {{ field.label }}<span v-if="field.required" class="text-red-500 ml-0.5">*</span>:
+      <span :class="[inline ? 'text-sm text-gray-400 dark:text-gray-500 shrink-0' : 'text-sm text-gray-600 dark:text-gray-400 w-32 shrink-0', 'inline-flex items-center gap-1']">
+        <span>{{ field.label }}<span v-if="field.required" class="text-red-500 ml-0.5">*</span>:</span>
+        <FieldHelpText :text="field.helpText" size="xs" />
       </span>
       <template v-if="editingFieldId === field.id">
         <!-- Constrained field (single or multi-value): autocomplete -->

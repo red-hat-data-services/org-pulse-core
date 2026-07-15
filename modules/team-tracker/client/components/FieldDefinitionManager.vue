@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { apiRequest } from '@shared/client/services/api.js'
 import { useFieldDefinitions } from '@shared/client/composables/useFieldDefinitions'
+import FieldHelpText from './FieldHelpText.vue'
 
 const { definitions, loading, demoToast, fetchDefinitions, createField, updateField, deleteField } = useFieldDefinitions()
 
@@ -12,6 +13,7 @@ const newFieldType = ref('free-text')
 const newFieldMultiValue = ref(false)
 const newFieldOptions = ref([])
 const newOptionInput = ref('')
+const newFieldHelpText = ref('')
 const newFieldOptionsSource = ref('inline')
 const newFieldOptionsRef = ref('')
 const availableOptionSets = ref([])
@@ -55,6 +57,7 @@ function openCreateModal() {
   newFieldLabel.value = ''
   newFieldType.value = 'free-text'
   newFieldMultiValue.value = false
+  newFieldHelpText.value = ''
   newFieldOptions.value = []
   newOptionInput.value = ''
   newFieldOptionsSource.value = 'inline'
@@ -93,6 +96,9 @@ async function handleCreate() {
       label: newFieldLabel.value.trim(),
       type: newFieldType.value
     }
+    if (newFieldHelpText.value.trim()) {
+      body.helpText = newFieldHelpText.value.trim()
+    }
     if (newFieldType.value === 'constrained') {
       body.multiValue = newFieldMultiValue.value
       if (newFieldOptionsSource.value === 'shared') {
@@ -109,11 +115,13 @@ async function handleCreate() {
 }
 
 const editType = ref('')
+const editHelpText = ref('')
 
 function startEdit(field) {
   editingFieldId.value = field.id
   editLabel.value = field.label
   editType.value = field.type
+  editHelpText.value = field.helpText || ''
 }
 
 async function saveEdit(fieldId) {
@@ -124,6 +132,10 @@ async function saveEdit(fieldId) {
     const originalField = activeFields.value.find(f => f.id === fieldId)
     if (originalField && editType.value !== originalField.type) {
       updates.type = editType.value
+    }
+    const newHelp = editHelpText.value.trim() || null
+    if (newHelp !== (originalField?.helpText || null)) {
+      updates.helpText = newHelp
     }
     await updateField(activeTab.value, fieldId, updates)
     editingFieldId.value = null
@@ -228,17 +240,29 @@ async function toggleVisibility(field) {
         <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
           <tr v-for="field in activeFields" :key="field.id" :class="['hover:bg-gray-50 dark:hover:bg-gray-700/50', editingFieldId === field.id ? 'bg-blue-50 dark:bg-blue-900/20' : '']">
             <td class="px-4 py-3 text-sm whitespace-nowrap">
-              <div v-if="editingFieldId === field.id" class="flex items-center gap-2">
-                <input
-                  v-model="editLabel"
-                  class="block flex-1 rounded border-gray-300 dark:border-gray-600 shadow-sm text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                  @keyup.enter="saveEdit(field.id)"
+              <div v-if="editingFieldId === field.id" class="space-y-2">
+                <div class="flex items-center gap-2">
+                  <input
+                    v-model="editLabel"
+                    class="block flex-1 rounded border-gray-300 dark:border-gray-600 shadow-sm text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                    @keyup.enter="saveEdit(field.id)"
+                    @keyup.escape="editingFieldId = null"
+                  >
+                  <button class="px-2.5 py-1 text-xs font-medium text-white bg-primary-600 rounded hover:bg-primary-700 transition-colors" @click="saveEdit(field.id)">Save</button>
+                  <button class="px-2.5 py-1 text-xs font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" @click="editingFieldId = null">Cancel</button>
+                </div>
+                <textarea
+                  v-model="editHelpText"
+                  rows="2"
+                  class="block w-full rounded border-gray-300 dark:border-gray-600 shadow-sm text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                  placeholder="Help text (optional) — supports **bold** and [links](https://...)"
                   @keyup.escape="editingFieldId = null"
-                >
-                <button class="px-2.5 py-1 text-xs font-medium text-white bg-primary-600 rounded hover:bg-primary-700 transition-colors" @click="saveEdit(field.id)">Save</button>
-                <button class="px-2.5 py-1 text-xs font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" @click="editingFieldId = null">Cancel</button>
+                ></textarea>
               </div>
-              <span v-else class="font-medium text-gray-900 dark:text-gray-100">{{ field.label }}</span>
+              <div v-else>
+                <span class="font-medium text-gray-900 dark:text-gray-100">{{ field.label }}</span>
+                <FieldHelpText :text="field.helpText" size="xs" />
+              </div>
             </td>
             <td class="px-4 py-3 text-sm whitespace-nowrap text-gray-600 dark:text-gray-400">
               <template v-if="editingFieldId === field.id">
@@ -309,6 +333,15 @@ async function toggleVisibility(field) {
             >
               <option v-for="t in fieldTypes" :key="t.value" :value="t.value">{{ t.label }}</option>
             </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Help Text <span class="text-xs text-gray-400 font-normal">(optional)</span></label>
+            <textarea
+              v-model="newFieldHelpText"
+              rows="2"
+              class="block w-full rounded border-gray-300 shadow-sm text-sm focus:ring-primary-500 focus:border-primary-500"
+              placeholder="Guidance shown to users when filling in this field. Supports **bold** and [links](https://...)."
+            ></textarea>
           </div>
           <!-- Allowed values for constrained type -->
           <div v-if="newFieldType === 'constrained'" class="space-y-3">

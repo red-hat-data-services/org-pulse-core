@@ -164,6 +164,7 @@ async function createFieldDefinition(storage, scope, definition, actorEmail) {
       required: definition.required || false,
       visible: definition.visible !== false,
       primaryDisplay: definition.primaryDisplay || false,
+      helpText: definition.helpText || null,
       allowedValues: definition.allowedValues || null,
       optionsRef: definition.optionsRef || null,
       deleted: false,
@@ -218,7 +219,7 @@ async function updateFieldDefinition(storage, scope, fieldId, updates, actorEmai
 
     const changes = {};
     for (const [k, v] of Object.entries(updates)) {
-      if (['label', 'type', 'required', 'visible', 'primaryDisplay', 'allowedValues', 'multiValue', 'optionsRef'].includes(k)) {
+      if (['label', 'type', 'required', 'visible', 'primaryDisplay', 'helpText', 'allowedValues', 'multiValue', 'optionsRef'].includes(k)) {
         changes[k] = { old: field[k], new: v };
         field[k] = v;
       }

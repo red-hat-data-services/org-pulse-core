@@ -471,6 +471,7 @@ Stores custom field definitions for person-level and team-level fields. Created 
       "required": false,
       "visible": true,
       "primaryDisplay": true,
+      "helpText": "The primary area this person is currently focused on.",
       "allowedValues": null,
       "optionsRef": null,
       "deleted": false,
@@ -488,6 +489,7 @@ Stores custom field definitions for person-level and team-level fields. Created 
       "required": false,
       "visible": true,
       "primaryDisplay": false,
+      "helpText": null,
       "allowedValues": null,
       "optionsRef": null,
       "deleted": false,
@@ -507,6 +509,7 @@ Stores custom field definitions for person-level and team-level fields. Created 
 - `deleted` supports soft-delete — deleted fields are hidden from the UI but values are preserved.
 - `allowedValues` is an array of strings for `constrained` fields (the set of selectable options), or `null` for other field types. Maximum 100 items, each up to 200 characters. When `optionsRef` is set, `allowedValues` is `null` in storage and resolved at runtime from the referenced field option set.
 - `optionsRef` is an optional string referencing a named field option set (e.g., `"components"`). When set, the field's allowed values are sourced dynamically from `data/team-data/field-options/<optionsRef>.json` instead of from the static `allowedValues` array. The `GET /structure/field-definitions` API response resolves `optionsRef` fields by injecting the option values into `allowedValues` (with a `_resolvedFromOptions: true` flag). Defaults to `null`.
+- `helpText` is an optional string (or `null`) providing guidance displayed to users via an info icon. Supports a minimal inline-markdown subset: `**bold**` and `[text](https://...)` links. Defaults to `null`.
 - At most one person field can have `primaryDisplay: true`.
 
 ## Field Options — `data/team-data/field-options/<name>.json`
