@@ -2,6 +2,14 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import DOMPurify from 'dompurify'
 
+const purify = DOMPurify(window)
+purify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'A') {
+    node.setAttribute('target', '_blank')
+    node.setAttribute('rel', 'noopener noreferrer')
+  }
+})
+
 const props = defineProps({
   text: { type: String, default: null },
   size: { type: String, default: 'sm' }
@@ -16,16 +24,9 @@ const sizeClasses = computed(() =>
   props.size === 'xs' ? 'h-3 w-3' : 'h-3.5 w-3.5'
 )
 
-DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-  if (node.tagName === 'A') {
-    node.setAttribute('target', '_blank')
-    node.setAttribute('rel', 'noopener noreferrer')
-  }
-})
-
 const renderedHtml = computed(() => {
   if (!props.text) return ''
-  return DOMPurify.sanitize(props.text, {
+  return purify.sanitize(props.text, {
     ALLOWED_TAGS: ['a', 'p', 'br', 'strong', 'em', 'ul', 'ol', 'li', 'span', 'code'],
     ALLOWED_ATTR: ['href', 'target', 'rel']
   })
