@@ -255,7 +255,7 @@ async function toggleVisibility(field) {
                   v-model="editHelpText"
                   rows="2"
                   class="block w-full rounded border-gray-300 dark:border-gray-600 shadow-sm text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                  placeholder="Help text (optional) — supports **bold** and [links](https://...)"
+                  placeholder="Help text (optional) — supports HTML (e.g., <a href=&quot;...&quot;>links</a>, <strong>bold</strong>)"
                   @keyup.escape="editingFieldId = null"
                 ></textarea>
               </div>
@@ -340,7 +340,7 @@ async function toggleVisibility(field) {
               v-model="newFieldHelpText"
               rows="2"
               class="block w-full rounded border-gray-300 shadow-sm text-sm focus:ring-primary-500 focus:border-primary-500"
-              placeholder="Guidance shown to users when filling in this field. Supports **bold** and [links](https://...)."
+              placeholder="Guidance shown to users when filling in this field. Supports HTML (e.g., <a href=&quot;...&quot;>links</a>, <strong>bold</strong>)."
             ></textarea>
           </div>
           <!-- Allowed values for constrained type -->

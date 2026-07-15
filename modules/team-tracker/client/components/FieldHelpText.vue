@@ -1,5 +1,14 @@
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import DOMPurify from 'dompurify'
+
+const purify = DOMPurify(window)
+purify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'A') {
+    node.setAttribute('target', '_blank')
+    node.setAttribute('rel', 'noopener noreferrer')
+  }
+})
 
 const props = defineProps({
   text: { type: String, default: null },
@@ -15,27 +24,12 @@ const sizeClasses = computed(() =>
   props.size === 'xs' ? 'h-3 w-3' : 'h-3.5 w-3.5'
 )
 
-/**
- * Render a minimal inline-markdown subset to HTML:
- *   **bold** -> <strong>
- *   [text](url) -> <a>
- * Escapes HTML entities first to prevent XSS.
- */
 const renderedHtml = computed(() => {
   if (!props.text) return ''
-  let s = props.text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-
-  // **bold**
-  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-  // [text](url) — only allow http(s) URLs
-  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary-600 dark:text-primary-400 underline">$1</a>')
-  // Newlines to <br>
-  s = s.replace(/\n/g, '<br>')
-  return s
+  return purify.sanitize(props.text, {
+    ALLOWED_TAGS: ['a', 'p', 'br', 'strong', 'em', 'ul', 'ol', 'li', 'span', 'code'],
+    ALLOWED_ATTR: ['href', 'target', 'rel']
+  })
 })
 
 function updatePosition() {
@@ -90,7 +84,7 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside, true))
         class="fixed z-[100] max-w-xs w-72 p-3 text-sm text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg"
         :style="{ top: popoverPos.top + 'px', left: popoverPos.left + 'px' }"
       >
-        <div v-html="renderedHtml" class="leading-relaxed [&_strong]:font-semibold"></div>
+        <div v-html="renderedHtml" class="field-description-html leading-relaxed [&_strong]:font-semibold [&_a]:text-primary-600 dark:[&_a]:text-primary-400 [&_a]:underline [&_a:hover]:text-primary-700 dark:[&_a:hover]:text-primary-300 [&_p]:mt-2 [&_p:first-child]:mt-0 [&_ul]:mt-2 [&_ul]:ml-4 [&_ul]:list-disc [&_ol]:mt-2 [&_ol]:ml-4 [&_ol]:list-decimal [&_li]:mt-1"></div>
       </div>
     </Teleport>
   </span>
