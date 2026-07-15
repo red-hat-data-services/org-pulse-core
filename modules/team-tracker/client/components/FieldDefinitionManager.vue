@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
+import { apiRequest } from '@shared/client/services/api.js'
 import { useFieldDefinitions } from '@shared/client/composables/useFieldDefinitions'
 
 const { definitions, loading, demoToast, fetchDefinitions, createField, updateField, deleteField } = useFieldDefinitions()
@@ -11,6 +12,9 @@ const newFieldType = ref('free-text')
 const newFieldMultiValue = ref(false)
 const newFieldOptions = ref([])
 const newOptionInput = ref('')
+const newFieldOptionsSource = ref('inline')
+const newFieldOptionsRef = ref('')
+const availableOptionSets = ref([])
 const editingFieldId = ref(null)
 const editLabel = ref('')
 const showOptionsModal = ref(null)
@@ -38,14 +42,26 @@ const activeFields = computed(() => {
   return (definitions.value[key] || []).filter(f => !f.deleted)
 })
 
+async function loadOptionSets() {
+  try {
+    const data = await apiRequest('/modules/team-tracker/field-options')
+    availableOptionSets.value = data.options || []
+  } catch {
+    availableOptionSets.value = []
+  }
+}
+
 function openCreateModal() {
   newFieldLabel.value = ''
   newFieldType.value = 'free-text'
   newFieldMultiValue.value = false
   newFieldOptions.value = []
   newOptionInput.value = ''
+  newFieldOptionsSource.value = 'inline'
+  newFieldOptionsRef.value = ''
   error.value = null
   showCreateModal.value = true
+  loadOptionSets()
 }
 
 function addNewOption() {
@@ -62,7 +78,10 @@ function removeNewOption(index) {
 
 const createDisabled = computed(() => {
   if (!newFieldLabel.value.trim()) return true
-  if (newFieldType.value === 'constrained' && newFieldOptions.value.length === 0) return true
+  if (newFieldType.value === 'constrained') {
+    if (newFieldOptionsSource.value === 'shared') return !newFieldOptionsRef.value
+    return newFieldOptions.value.length === 0
+  }
   return false
 })
 
@@ -75,8 +94,12 @@ async function handleCreate() {
       type: newFieldType.value
     }
     if (newFieldType.value === 'constrained') {
-      body.allowedValues = newFieldOptions.value
       body.multiValue = newFieldMultiValue.value
+      if (newFieldOptionsSource.value === 'shared') {
+        body.optionsRef = newFieldOptionsRef.value
+      } else {
+        body.allowedValues = newFieldOptions.value
+      }
     }
     await createField(activeTab.value, body)
     showCreateModal.value = false
@@ -228,7 +251,10 @@ async function toggleVisibility(field) {
               </template>
               <template v-else>
                 {{ fieldTypeLabels[field.type] || field.type }}
-                <span v-if="field.type === 'constrained'" class="text-xs text-gray-400 dark:text-gray-500 ml-1">
+                <span v-if="field.type === 'constrained' && field.optionsRef" class="text-xs text-primary-500 dark:text-primary-400 ml-1">
+                  ({{ field.optionsRef }})
+                </span>
+                <span v-else-if="field.type === 'constrained'" class="text-xs text-gray-400 dark:text-gray-500 ml-1">
                   ({{ (field.allowedValues || []).length }} options)
                 </span>
                 <span v-if="field.multiValue" class="text-xs text-primary-500 dark:text-primary-400 ml-1">(multi)</span>
@@ -245,7 +271,7 @@ async function toggleVisibility(field) {
             </td>
             <td class="px-4 py-3 text-sm text-right whitespace-nowrap">
               <div v-if="editingFieldId !== field.id" class="flex items-center justify-end gap-2">
-                <button v-if="field.type === 'constrained'" class="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" @click="openOptionsModal(field)">Options</button>
+                <button v-if="field.type === 'constrained' && !field.optionsRef" class="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" @click="openOptionsModal(field)">Options</button>
                 <button class="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" @click="startEdit(field)">Edit</button>
                 <button class="text-sm text-red-500 hover:text-red-700" @click="handleDelete(field.id)">Delete</button>
               </div>
@@ -285,30 +311,69 @@ async function toggleVisibility(field) {
             </select>
           </div>
           <!-- Allowed values for constrained type -->
-          <div v-if="newFieldType === 'constrained'">
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Options</label>
-            <div class="flex gap-2 mb-2">
-              <input
-                v-model="newOptionInput"
-                type="text"
-                class="block flex-1 rounded border-gray-300 shadow-sm text-sm focus:ring-primary-500 focus:border-primary-500"
-                placeholder="Add an option..."
-                @keyup.enter="addNewOption"
-              >
-              <button
-                type="button"
-                class="px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-200 dark:hover:bg-gray-600"
-                @click="addNewOption"
-              >Add</button>
+          <div v-if="newFieldType === 'constrained'" class="space-y-3">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Options Source</label>
+              <div class="flex gap-3">
+                <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300">
+                  <input type="radio" v-model="newFieldOptionsSource" value="inline" class="text-primary-600 focus:ring-primary-500" />
+                  Inline values
+                </label>
+                <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300">
+                  <input type="radio" v-model="newFieldOptionsSource" value="shared" class="text-primary-600 focus:ring-primary-500" />
+                  Shared option set
+                </label>
+              </div>
             </div>
-            <ul v-if="newFieldOptions.length > 0" class="space-y-1">
-              <li v-for="(opt, i) in newFieldOptions" :key="i" class="flex items-center justify-between bg-gray-50 dark:bg-gray-700/50 rounded px-3 py-1.5 text-sm">
-                <span class="text-gray-900 dark:text-gray-100">{{ opt }}</span>
-                <button class="text-red-500 hover:text-red-700 text-xs ml-2" @click="removeNewOption(i)">&times;</button>
-              </li>
-            </ul>
-            <p v-else class="text-xs text-gray-400 mt-1">Add at least one option.</p>
-            <label class="flex items-center gap-2 mt-3">
+
+            <!-- Inline options -->
+            <template v-if="newFieldOptionsSource === 'inline'">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Options</label>
+                <div class="flex gap-2 mb-2">
+                  <input
+                    v-model="newOptionInput"
+                    type="text"
+                    class="block flex-1 rounded border-gray-300 shadow-sm text-sm focus:ring-primary-500 focus:border-primary-500"
+                    placeholder="Add an option..."
+                    @keyup.enter="addNewOption"
+                  >
+                  <button
+                    type="button"
+                    class="px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-200 dark:hover:bg-gray-600"
+                    @click="addNewOption"
+                  >Add</button>
+                </div>
+                <ul v-if="newFieldOptions.length > 0" class="space-y-1">
+                  <li v-for="(opt, i) in newFieldOptions" :key="i" class="flex items-center justify-between bg-gray-50 dark:bg-gray-700/50 rounded px-3 py-1.5 text-sm">
+                    <span class="text-gray-900 dark:text-gray-100">{{ opt }}</span>
+                    <button class="text-red-500 hover:text-red-700 text-xs ml-2" @click="removeNewOption(i)">&times;</button>
+                  </li>
+                </ul>
+                <p v-else class="text-xs text-gray-400 mt-1">Add at least one option.</p>
+              </div>
+            </template>
+
+            <!-- Shared option set reference -->
+            <template v-else>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Option Set</label>
+                <select
+                  v-model="newFieldOptionsRef"
+                  class="block w-full rounded border-gray-300 dark:border-gray-600 shadow-sm text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-primary-500 focus:border-primary-500"
+                >
+                  <option value="" disabled>Select an option set...</option>
+                  <option v-for="os in availableOptionSets" :key="os.name" :value="os.name">
+                    {{ os.label || os.name }} ({{ os.count }} values)
+                  </option>
+                </select>
+                <p v-if="availableOptionSets.length === 0" class="text-xs text-gray-400 mt-1">
+                  No option sets available. Create one in Field Option Sets first.
+                </p>
+              </div>
+            </template>
+
+            <label class="flex items-center gap-2">
               <input
                 type="checkbox"
                 v-model="newFieldMultiValue"
