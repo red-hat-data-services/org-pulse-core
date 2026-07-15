@@ -3,6 +3,7 @@ import { ref, computed, watch, inject, onUnmounted } from 'vue'
 import { useFieldDefinitions } from '@shared/client/composables/useFieldDefinitions'
 import PersonAutocomplete from './PersonAutocomplete.vue'
 import ConstrainedAutocomplete from './ConstrainedAutocomplete.vue'
+import FieldHelpText from './FieldHelpText.vue'
 
 const props = defineProps({
   uid: { type: String, required: true },
@@ -152,8 +153,9 @@ function isPersonRefType(field) {
         <div v-for="field in visibleFields" :key="field.id" :class="['group', editingFieldId === field.id ? 'bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md px-2 py-1.5' : '']">
           <!-- Edit mode -->
           <template v-if="editingFieldId === field.id">
-            <div class="text-xs text-gray-500 dark:text-gray-400 mb-1">
-              {{ field.label }}<span v-if="field.required" class="text-red-500 ml-0.5">*</span>
+            <div class="text-xs text-gray-500 dark:text-gray-400 mb-1 flex items-center gap-1">
+              <span>{{ field.label }}<span v-if="field.required" class="text-red-500 ml-0.5">*</span></span>
+              <FieldHelpText :text="field.helpText" size="xs" />
             </div>
             <!-- Constrained field (single or multi-value): autocomplete -->
             <ConstrainedAutocomplete
@@ -196,7 +198,10 @@ function isPersonRefType(field) {
                 <path stroke-linecap="round" stroke-linejoin="round" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
               </svg>
               <div class="flex-1 min-w-0">
-                <div class="text-[11px] text-gray-400 dark:text-gray-500 leading-tight">{{ field.label }}<span v-if="field.required" class="text-red-500 ml-0.5">*</span></div>
+                <div class="text-[11px] text-gray-400 dark:text-gray-500 leading-tight flex items-center gap-0.5">
+                  <span>{{ field.label }}<span v-if="field.required" class="text-red-500 ml-0.5">*</span></span>
+                  <FieldHelpText :text="field.helpText" size="xs" />
+                </div>
                 <!-- Multi-value display -->
                 <div v-if="isMultiValue(field)" class="flex flex-wrap gap-1 mt-0.5">
                   <span
