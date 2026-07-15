@@ -2406,6 +2406,8 @@ module.exports = async function registerRoutes(router, context) {
   // ─── Field-Options Sync (Jira link) ───
 
   const fieldOptionsSync = require('./field-options-sync');
+  const FIELD_OPTIONS_SYNC_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+  const _fieldOptionsSyncState = {}; // per-name: { lastSuccessAt: ISO string }
 
   /**
    * @openapi
@@ -2734,6 +2736,8 @@ module.exports = async function registerRoutes(router, context) {
    *         description: Sync result
    *       400:
    *         description: Option set is not linked
+   *       429:
+   *         description: Sync was triggered too recently (cooldown period)
    *       502:
    *         description: Sync failed
    */
@@ -2743,8 +2747,20 @@ module.exports = async function registerRoutes(router, context) {
     }
     const safeName = sanitizeOptionsName(req.params.name);
     if (!safeName) return res.status(400).json({ error: 'Invalid option set name' });
+
+    // Cooldown: prevent manual triggers more often than every 5 minutes
+    const state = _fieldOptionsSyncState[safeName];
+    if (state && state.lastSuccessAt) {
+      const elapsed = Date.now() - new Date(state.lastSuccessAt).getTime();
+      if (elapsed < FIELD_OPTIONS_SYNC_COOLDOWN_MS) {
+        const retryAfter = Math.ceil((FIELD_OPTIONS_SYNC_COOLDOWN_MS - elapsed) / 1000);
+        return res.status(429).json({ status: 'cooldown', retryAfter });
+      }
+    }
+
     try {
       const result = await fieldOptionsSync.syncOptionSet(storage, jiraRequest, safeName);
+      _fieldOptionsSyncState[safeName] = { lastSuccessAt: new Date().toISOString() };
       res.json(result);
     } catch (err) {
       const status = err.message.includes('not linked') ? 400 : 502;
