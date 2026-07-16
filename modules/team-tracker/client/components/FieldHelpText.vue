@@ -18,7 +18,7 @@ const props = defineProps({
 const showPopover = ref(false)
 const triggerEl = ref(null)
 const popoverEl = ref(null)
-const popoverPos = ref({ top: 0, left: 0 })
+const popoverStyle = ref({})
 
 const sizeClasses = computed(() =>
   props.size === 'xs' ? 'h-3 w-3' : 'h-3.5 w-3.5'
@@ -34,11 +34,21 @@ const renderedHtml = computed(() => {
 
 function updatePosition() {
   if (!triggerEl.value) return
+  const gap = 6
+  const viewportPad = 16
   const rect = triggerEl.value.getBoundingClientRect()
-  const top = rect.bottom + 6
-  const left = Math.max(8, rect.left - 100)
-  const maxLeft = window.innerWidth - 300
-  popoverPos.value = { top, left: Math.min(left, maxLeft) }
+  const spaceBelow = window.innerHeight - rect.bottom - gap - viewportPad
+  const spaceAbove = rect.top - gap - viewportPad
+  const openAbove = spaceBelow < 150 && spaceAbove > spaceBelow
+  const maxHeight = Math.max(150, openAbove ? spaceAbove : spaceBelow)
+  const left = Math.max(8, Math.min(rect.left - 100, window.innerWidth - 300))
+  const style = { left: left + 'px', maxHeight: maxHeight + 'px' }
+  if (openAbove) {
+    style.bottom = (window.innerHeight - rect.top + gap) + 'px'
+  } else {
+    style.top = (rect.bottom + gap) + 'px'
+  }
+  popoverStyle.value = style
 }
 
 function toggle(e) {
@@ -81,8 +91,8 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside, true))
       <div
         v-if="showPopover"
         ref="popoverEl"
-        class="fixed z-[100] max-w-xs w-72 p-3 text-sm text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg"
-        :style="{ top: popoverPos.top + 'px', left: popoverPos.left + 'px' }"
+        class="fixed z-[100] max-w-xs w-72 p-3 text-sm text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg overflow-y-auto"
+        :style="popoverStyle"
       >
         <div v-html="renderedHtml" class="field-description-html leading-relaxed [&_strong]:font-semibold [&_a]:text-primary-600 dark:[&_a]:text-primary-400 [&_a]:underline [&_a:hover]:text-primary-700 dark:[&_a:hover]:text-primary-300 [&_p]:mt-2 [&_p:first-child]:mt-0 [&_ul]:mt-2 [&_ul]:ml-4 [&_ul]:list-disc [&_ol]:mt-2 [&_ol]:ml-4 [&_ol]:list-decimal [&_li]:mt-1"></div>
       </div>
