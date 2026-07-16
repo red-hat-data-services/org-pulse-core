@@ -7,10 +7,11 @@
  *
  * Matches the same four row patterns and 6-milestone completeness check
  * as the Python client:
- *   - EA1/EA2 Code Freeze
- *   - EA1/EA2 RELEASE
+ *   - EA1/EA2 Code Freeze (dot or space separator: "3.6.EA1" or "3.6 EA1")
+ *   - EA1/EA2 RELEASE (dot or space separator)
  *   - GA Code Freeze
  *   - GA Release
+ * Accepts RHOAI and RHAII product prefixes.
  *
  * Only surfaces versions with all 6 required milestones (ea1_freeze,
  * ea1_target, ea2_freeze, ea2_target, ga_freeze, ga_target).
@@ -89,25 +90,25 @@ async function parseSmartsheetReleases(filterFn) {
     var dateStr = String(startVal).split('T')[0]
     var m
 
-    m = task.match(/^(\d+\.\d+)\.(EA[12])\s+(?:RHOAI\s+)?Code\s+Freeze/i)
+    m = task.match(/^(\d+\.\d+)[. ](EA[12])\s+(?:(?:RHOAI|RHAII)\s+)?Code\s+Freeze/i)
     if (m) {
       if (!milestones[m[1]]) milestones[m[1]] = {}
       milestones[m[1]][m[2].toLowerCase() + '_freeze'] = dateStr
       continue
     }
-    m = task.match(/^(\d+\.\d+)\.(EA[12])\s+(?:RHOAI\s+)?RELEASE/i)
+    m = task.match(/^(\d+\.\d+)[. ](EA[12])\s+(?:(?:RHOAI|RHAII)\s+)?RELEASE/i)
     if (m) {
       if (!milestones[m[1]]) milestones[m[1]] = {}
       milestones[m[1]][m[2].toLowerCase() + '_target'] = dateStr
       continue
     }
-    m = task.match(/^(\d+\.\d+)\s+(?:RHOAI\s+)?Code\s+Freeze$/i)
+    m = task.match(/^(\d+\.\d+)\s+(?:(?:RHOAI|RHAII)\s+)?Code\s+Freeze$/i)
     if (m) {
       if (!milestones[m[1]]) milestones[m[1]] = {}
       milestones[m[1]].ga_freeze = dateStr
       continue
     }
-    m = task.match(/^(\d+\.\d+)\s+(?:RHOAI\s+)?GA$/i)
+    m = task.match(/^(\d+\.\d+)\s+(?:(?:RHOAI|RHAII)\s+)?GA$/i)
     if (m) {
       if (!milestones[m[1]]) milestones[m[1]] = {}
       milestones[m[1]].ga_target = dateStr
@@ -280,25 +281,25 @@ function createSmartsheetClient(config) {
       var dateStr = String(startVal).split('T')[0]
       var m
 
-      m = task.match(/^(\d+\.\d+)\.(EA[12])\s+(?:RHOAI\s+)?Code\s+Freeze/i)
+      m = task.match(/^(\d+\.\d+)[. ](EA[12])\s+(?:(?:RHOAI|RHAII)\s+)?Code\s+Freeze/i)
       if (m) {
         if (!milestones[m[1]]) milestones[m[1]] = {}
         milestones[m[1]][m[2].toLowerCase() + '_freeze'] = dateStr
         continue
       }
-      m = task.match(/^(\d+\.\d+)\.(EA[12])\s+(?:RHOAI\s+)?RELEASE/i)
+      m = task.match(/^(\d+\.\d+)[. ](EA[12])\s+(?:(?:RHOAI|RHAII)\s+)?RELEASE/i)
       if (m) {
         if (!milestones[m[1]]) milestones[m[1]] = {}
         milestones[m[1]][m[2].toLowerCase() + '_target'] = dateStr
         continue
       }
-      m = task.match(/^(\d+\.\d+)\s+(?:RHOAI\s+)?Code\s+Freeze$/i)
+      m = task.match(/^(\d+\.\d+)\s+(?:(?:RHOAI|RHAII)\s+)?Code\s+Freeze$/i)
       if (m) {
         if (!milestones[m[1]]) milestones[m[1]] = {}
         milestones[m[1]].ga_freeze = dateStr
         continue
       }
-      m = task.match(/^(\d+\.\d+)\s+(?:RHOAI\s+)?GA$/i)
+      m = task.match(/^(\d+\.\d+)\s+(?:(?:RHOAI|RHAII)\s+)?GA$/i)
       if (m) {
         if (!milestones[m[1]]) milestones[m[1]] = {}
         milestones[m[1]].ga_target = dateStr
