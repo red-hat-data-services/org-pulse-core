@@ -191,6 +191,8 @@
     />
 
     <BackendConnectivityModal />
+
+    <component v-for="(widget, slug) in floatingWidgets" :key="slug" :is="widget" />
   </div>
 </template>
 
@@ -207,7 +209,7 @@ import LandingPage from './LandingPage.vue'
 import ModuleIframeView from './ModuleIframeView.vue'
 import BackendConnectivityModal from './BackendConnectivityModal.vue'
 import AppMessages from '@shared/client/components/AppMessages.vue'
-import { computed, ref, readonly, provide, onUnmounted, watch } from 'vue'
+import { computed, ref, readonly, provide, onUnmounted, watch, shallowRef } from 'vue'
 import { useAuth } from '@shared/client/composables/useAuth'
 import { useImpersonation } from '@shared/client/composables/useImpersonation'
 import { onRecovery, offRecovery } from '@shared/client/composables/useBackendHealth'
@@ -255,6 +257,7 @@ export default {
     const { modulesData, loadModules, reloadModules, enabledBuiltInSlugs, loadEnabledBuiltInSlugs } = useModules()
     const { mode: themeMode, cycle: cycleTheme } = useTheme()
     const { messages: appMessages, fetchMessages, dismiss: dismissMessage } = useMessages()
+    const floatingWidgets = shallowRef({})
     const titlePrefix = ref('')
 
     watch(titlePrefix, (prefix) => {
@@ -482,6 +485,7 @@ export default {
       themeMode,
       cycleTheme,
       platformAboutTabs,
+      floatingWidgets,
       appMessages,
       fetchMessages,
       dismissMessage
@@ -578,6 +582,20 @@ export default {
       } finally {
         this.isLoading = false
       }
+      // Load floating widgets from any module that exports one
+      Promise.allSettled(
+        this.builtInManifests.map(m => this.ensureModuleClient(m.slug).then(c => [m.slug, c]))
+      ).then(results => {
+        const widgets = {}
+        for (const r of results) {
+          if (r.status === 'fulfilled') {
+            const [slug, client] = r.value
+            if (client?.floatingWidget) widgets[slug] = client.floatingWidget
+          }
+        }
+        if (Object.keys(widgets).length) this.floatingWidgets = widgets
+      })
+
       // Fetch messages independently -- non-blocking, never delays initial render
       this.fetchMessages()
 

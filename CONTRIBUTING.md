@@ -82,6 +82,9 @@ server/
 modules/
   team-tracker/       # Core module (roster, metrics, contributions, sprints)
 
+services/
+  chatbot/            # AI assistant microservice (Python/FastAPI, deployed separately)
+
 deploy/
   core.backend.Dockerfile       # Core backend image
   core.frontend.Dockerfile      # Core frontend image (complete)

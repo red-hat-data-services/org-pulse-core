@@ -10,6 +10,7 @@ import {
   FolderTree,
   Lightbulb,
   Map,
+  MessageSquare,
   Milestone,
   Target,
   UserCog,
@@ -102,8 +103,10 @@ export const ICON_MAP = {
   LayoutDashboard,
   Rocket,
   UserCircle,
+  'message-square': MessageSquare,
   'rocket': Rocket,
   'users': Users,
+  MessageSquare,
   Trophy
 }
 

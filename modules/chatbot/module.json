@@ -1,0 +1,20 @@
+{
+  "name": "AI Assistant",
+  "slug": "chatbot",
+  "description": "Ask questions about your team's engineering data",
+  "icon": "message-square",
+  "order": 50,
+  "defaultEnabled": false,
+  "requires": ["team-tracker"],
+  "client": {
+    "entry": "./client/index.js"
+  },
+  "server": {
+    "entry": "./server/index.js"
+  },
+  "secrets": {
+    "module": [
+      { "key": "CHATBOT_SERVICE_URL", "description": "URL of the chatbot microservice (e.g. http://localhost:8002)", "required": true }
+    ]
+  }
+}

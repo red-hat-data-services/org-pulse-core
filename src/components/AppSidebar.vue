@@ -317,6 +317,7 @@ const navSections = computed(() => {
   // Built-in modules from manifests
   for (const manifest of props.builtInManifests) {
     const navItems = manifest.client?.navItems || []
+    if (navItems.length === 0) continue
     sections.push({
       id: manifest.slug,
       label: '',
