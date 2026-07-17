@@ -47,17 +47,7 @@
           <!-- Empty state -->
           <div v-if="messages.length === 0" class="flex flex-col items-center justify-center h-full text-center">
             <img src="/bot-avatar.png" alt="" class="w-14 h-14 mb-3" />
-            <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">Ask me about your team's data</p>
-            <div class="space-y-1.5 w-full">
-              <button
-                v-for="suggestion in suggestions"
-                :key="suggestion"
-                @click="sendMessage(suggestion)"
-                class="block w-full text-left text-xs px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:border-primary-300 dark:hover:border-primary-600 transition-colors"
-              >
-                {{ suggestion }}
-              </button>
-            </div>
+            <p class="text-sm text-gray-500 dark:text-gray-400">Ask me about your team's data</p>
           </div>
 
           <!-- Message list -->
@@ -204,13 +194,6 @@ const inputEl = ref(null)
 const messagesContainer = ref(null)
 const expandedTraces = ref(new Set())
 const expandedToolCalls = ref(new Set())
-
-const suggestions = [
-  'How many story points did we close?',
-  'Who has the most GitHub contributions and what\'s their role?',
-  'Compare team sizes and cycle times',
-  'Show me the Platform team members',
-]
 
 function renderMarkdown(text) {
   return DOMPurify.sanitize(marked.parse(text, { breaks: true, gfm: true }))

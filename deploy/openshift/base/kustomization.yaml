@@ -11,6 +11,8 @@ resources:
 - api-route.yaml
 - serviceaccount.yaml
 - cronjob-sync-refresh.yaml
+- chatbot-deployment.yaml
+- chatbot-service.yaml
 
 configMapGenerator:
 - literals:
@@ -19,10 +21,15 @@ configMapGenerator:
   - JIRA_HOST=https://redhat.atlassian.net
   - ADMIN_EMAILS=
   - CRON_ADMIN_EMAIL=
+  - CHATBOT_SERVICE_URL=http://chatbot:8002
   name: team-tracker-config
 - files:
   - app.conf.template=nginx-app.conf.template
   name: nginx-config-template
+- literals:
+  - CHATBOT_PORT=8002
+  - ORG_PULSE_API_URL=http://backend:3001
+  name: chatbot-config
 
 images:
 - name: quay.io/org-pulse/org-pulse-core-backend
