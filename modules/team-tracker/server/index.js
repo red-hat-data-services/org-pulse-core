@@ -3560,6 +3560,68 @@ module.exports = async function registerRoutes(router, context) {
 
   /**
    * @openapi
+   * /api/modules/team-tracker/person/metrics/batch:
+   *   post:
+   *     tags: ['TT: Metrics']
+   *     summary: Get metrics for multiple people in a single request
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [names]
+   *             properties:
+   *               names:
+   *                 type: array
+   *                 items:
+   *                   type: string
+   *                 description: List of Jira display names
+   *     responses:
+   *       200:
+   *         description: Batch person metrics results
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 results:
+   *                   type: object
+   *                   description: Map of name to metrics object (null if not found)
+   */
+  router.post('/person/metrics/batch', requireScope('metrics:read'), async function(req, res) {
+    try {
+      const { names } = req.body;
+      if (!Array.isArray(names) || !names.every(n => typeof n === 'string')) {
+        return res.status(400).json({ error: '"names" must be an array of strings' });
+      }
+      if (names.length > 200) {
+        return res.status(400).json({ error: `Too many names (${names.length}). Maximum is 200.` });
+      }
+
+      const results = {};
+      await Promise.all(names.map(async (name) => {
+        const key = sanitizeFilename(name);
+        const cached = await readFromStorage(`people/${key}.json`);
+        if (cached) {
+          if (!cached.jiraAccountId && jiraNameCache[name]?.accountId) {
+            cached.jiraAccountId = jiraNameCache[name].accountId;
+          }
+          results[name] = cached;
+        } else {
+          results[name] = null;
+        }
+      }));
+
+      res.json({ results });
+    } catch (error) {
+      console.error('Batch person metrics error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * @openapi
    * /api/modules/team-tracker/team/{teamKey}/metrics:
    *   get:
    *     tags: ['TT: Metrics']
