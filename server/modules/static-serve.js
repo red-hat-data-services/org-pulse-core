@@ -44,7 +44,7 @@ const PLACEHOLDER_HTML = `<!DOCTYPE html>
 function createModuleStaticMiddleware(storage) {
   const dataDir = storage.DATA_DIR;
 
-  return function moduleStaticMiddleware(req, res, next) {
+  return async function moduleStaticMiddleware(req, res, next) {
     // Parse slug from URL: /slug/path/to/file
     const parts = req.path.split('/').filter(Boolean);
     if (parts.length === 0) {
@@ -54,7 +54,7 @@ function createModuleStaticMiddleware(storage) {
     const slug = parts[0];
 
     // Look up module config
-    const mod = modulesConfig.getModule(storage, slug);
+    const mod = await modulesConfig.getModule(storage, slug);
     if (!mod) {
       return res.status(404).json({ error: `Module "${slug}" not found` });
     }
