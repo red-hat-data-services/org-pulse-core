@@ -74,24 +74,103 @@
         </div>
       </div>
 
-      <!-- Pipeline Breakdown Bar -->
-      <div v-if="pipelineSegments.length > 0" class="mb-6">
-        <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Pipeline Breakdown</h4>
-        <div class="flex h-6 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-700">
-          <div
-            v-for="seg in pipelineSegments"
-            :key="seg.state"
-            :class="seg.color"
-            :style="{ width: seg.pct + '%' }"
-            :title="`${seg.label}: ${seg.count}`"
-            class="transition-all"
-          ></div>
+      <!-- Triage Outcomes + Autofix Progress -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        <!-- Triage Outcomes -->
+        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+              Triage Outcomes
+              <div class="relative group">
+                <svg class="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div class="absolute left-0 top-6 z-20 hidden group-hover:block w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg dark:shadow-gray-900/50 p-3 text-xs text-gray-700 dark:text-gray-300">
+                  <div class="space-y-1">
+                    <div class="flex justify-between"><span class="font-medium">Ready for AI</span><span class="text-gray-400">Qualified for autofix</span></div>
+                    <div class="flex justify-between"><span class="font-medium">Missing Info</span><span class="text-gray-400">Waiting on reporter</span></div>
+                    <div class="flex justify-between"><span class="font-medium">Not AI-Fixable</span><span class="text-gray-400">Not suitable for AI</span></div>
+                    <div class="flex justify-between"><span class="font-medium">External Reporter</span><span class="text-gray-400">Needs RH approval</span></div>
+                    <div class="flex justify-between"><span class="font-medium">Security Review</span><span class="text-gray-400">Needs human review</span></div>
+                    <div class="flex justify-between"><span class="font-medium">Stale</span><span class="text-gray-400">No response 14+ days</span></div>
+                    <div class="flex justify-between"><span class="font-medium">AI Assessing</span><span class="text-gray-400">Bot is evaluating</span></div>
+                  </div>
+                </div>
+              </div>
+            </h3>
+            <span class="text-xs text-gray-400 dark:text-gray-500">{{ triageSegmentTotal }} issues</span>
+          </div>
+          <div class="flex h-6 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-700 mb-4" v-if="triageSegmentTotal > 0">
+            <div
+              v-for="seg in triageSegments"
+              :key="seg.label"
+              class="transition-all duration-500"
+              :class="seg.color"
+              :style="{ width: (seg.count / triageSegmentTotal * 100) + '%' }"
+              :title="`${seg.label}: ${seg.count}`"
+            />
+          </div>
+          <div class="space-y-2.5">
+            <div v-for="seg in triageSegments" :key="seg.label" class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-sm shrink-0" :class="seg.color" />
+                <span class="text-sm text-gray-600 dark:text-gray-300">{{ seg.label }}</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-semibold" :class="seg.textClass">{{ seg.count }}</span>
+                <span class="text-xs text-gray-400 dark:text-gray-500 w-10 text-right">{{ triageSegmentTotal > 0 ? Math.round(seg.count / triageSegmentTotal * 100) : 0 }}%</span>
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-gray-500 dark:text-gray-400">
-          <span v-for="seg in pipelineSegments" :key="seg.state" class="flex items-center gap-1">
-            <span :class="seg.color" class="inline-block w-2.5 h-2.5 rounded-full"></span>
-            {{ seg.label }}: {{ seg.count }}
-          </span>
+
+        <!-- Autofix Progress -->
+        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+              Autofix Progress
+              <div class="relative group">
+                <svg class="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div class="absolute left-0 top-6 z-20 hidden group-hover:block w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg dark:shadow-gray-900/50 p-3 text-xs text-gray-700 dark:text-gray-300">
+                  <div class="space-y-1">
+                    <div class="flex justify-between"><span class="font-medium">AI Fix Merged</span><span class="text-gray-400">Fix landed</span></div>
+                    <div class="flex justify-between"><span class="font-medium">AI Fix Under Review</span><span class="text-gray-400">Human reviewing</span></div>
+                    <div class="flex justify-between"><span class="font-medium">AI Fix CI Failing</span><span class="text-gray-400">CI is red</span></div>
+                    <div class="flex justify-between"><span class="font-medium">AI Working</span><span class="text-gray-400">Generating fix</span></div>
+                    <div class="flex justify-between"><span class="font-medium">Queued for AI</span><span class="text-gray-400">Waiting for bot</span></div>
+                    <div class="flex justify-between"><span class="font-medium">AI Fix Rejected</span><span class="text-gray-400">MR closed</span></div>
+                    <div class="flex justify-between"><span class="font-medium">AI Max Retries</span><span class="text-gray-400">Bot gave up</span></div>
+                    <div class="flex justify-between"><span class="font-medium">AI Blocked</span><span class="text-gray-400">Needs human help</span></div>
+                  </div>
+                </div>
+              </div>
+            </h3>
+            <span class="text-xs text-gray-400 dark:text-gray-500">{{ autofixSegmentTotal }} issues</span>
+          </div>
+          <div class="flex h-6 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-700 mb-4" v-if="autofixSegmentTotal > 0">
+            <div
+              v-for="seg in autofixSegments"
+              :key="seg.label"
+              class="transition-all duration-500"
+              :class="seg.color"
+              :style="{ width: (seg.count / autofixSegmentTotal * 100) + '%' }"
+              :title="`${seg.label}: ${seg.count}`"
+            />
+          </div>
+          <div class="space-y-2.5">
+            <div v-for="seg in autofixSegments" :key="seg.label" class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-sm shrink-0" :class="seg.color" />
+                <span class="text-sm text-gray-600 dark:text-gray-300">{{ seg.label }}</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-semibold" :class="seg.textClass">{{ seg.count }}</span>
+                <span class="text-xs text-gray-400 dark:text-gray-500 w-10 text-right">{{ autofixSegmentTotal > 0 ? Math.round(seg.count / autofixSegmentTotal * 100) : 0 }}%</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -357,7 +436,6 @@ import { useModules } from '../../../../../src/composables/useModules'
 import { fetchAutofixData } from '../../services/autofix-api.js'
 import {
   STATE_OPTIONS,
-  PIPELINE_BAR_SEGMENTS,
   stateLabel,
   stateColorClass,
   effortTierColorClass,
@@ -476,21 +554,38 @@ const successRateTooltip = computed(() => {
   return `${metrics.value.autofixStates.merged} merged / ${metrics.value.terminalTotal} terminal`
 })
 
-const pipelineSegments = computed(() => {
-  const total = teamIssues.value.length
-  if (total === 0) return []
-  const counts = {}
-  for (const issue of teamIssues.value) {
-    counts[issue.pipelineState] = (counts[issue.pipelineState] || 0) + 1
-  }
-  return PIPELINE_BAR_SEGMENTS
-    .map(seg => ({
-      ...seg,
-      count: counts[seg.state] || 0,
-      pct: ((counts[seg.state] || 0) / total * 100)
-    }))
-    .filter(seg => seg.count > 0)
+const triageSegments = computed(() => {
+  if (!metrics.value) return []
+  const v = metrics.value.triageVerdicts
+  return [
+    { label: 'Ready for AI', count: v.ready || 0, color: 'bg-green-500', textClass: 'text-green-600 dark:text-green-400' },
+    { label: 'Missing Info', count: v.missingInfo || 0, color: 'bg-yellow-500', textClass: 'text-yellow-600 dark:text-yellow-400' },
+    { label: 'Not AI-Fixable', count: v.notFixable || 0, color: 'bg-red-500', textClass: 'text-red-600 dark:text-red-400' },
+    { label: 'External Reporter', count: v.external || 0, color: 'bg-purple-500', textClass: 'text-purple-600 dark:text-purple-400' },
+    { label: 'Security Review', count: v.securityReview || 0, color: 'bg-rose-500', textClass: 'text-rose-600 dark:text-rose-400' },
+    { label: 'Stale', count: v.stale || 0, color: 'bg-gray-400', textClass: 'text-gray-500 dark:text-gray-400' },
+    { label: 'AI Assessing', count: v.pending || 0, color: 'bg-gray-300 dark:bg-gray-600', textClass: 'text-gray-500 dark:text-gray-400' }
+  ].filter(s => s.count > 0)
 })
+
+const triageSegmentTotal = computed(() => triageSegments.value.reduce((s, v) => s + v.count, 0))
+
+const autofixSegments = computed(() => {
+  if (!metrics.value) return []
+  const a = metrics.value.autofixStates
+  return [
+    { label: 'AI Fix Merged', count: a.merged || 0, color: 'bg-green-500', textClass: 'text-green-600 dark:text-green-400' },
+    { label: 'AI Fix Under Review', count: a.review || 0, color: 'bg-blue-500', textClass: 'text-blue-600 dark:text-blue-400' },
+    { label: 'AI Fix CI Failing', count: a.ciFailing || 0, color: 'bg-orange-500', textClass: 'text-orange-600 dark:text-orange-400' },
+    { label: 'AI Working', count: a.pending || 0, color: 'bg-indigo-500', textClass: 'text-indigo-600 dark:text-indigo-400' },
+    { label: 'Queued for AI', count: a.ready || 0, color: 'bg-gray-400', textClass: 'text-gray-500 dark:text-gray-400' },
+    { label: 'AI Fix Rejected', count: a.rejected || 0, color: 'bg-red-500', textClass: 'text-red-600 dark:text-red-400' },
+    { label: 'AI Max Retries', count: a.maxRetries || 0, color: 'bg-orange-500', textClass: 'text-orange-600 dark:text-orange-400' },
+    { label: 'AI Blocked', count: a.blocked || 0, color: 'bg-yellow-500', textClass: 'text-yellow-600 dark:text-yellow-400' }
+  ].filter(s => s.count > 0)
+})
+
+const autofixSegmentTotal = computed(() => autofixSegments.value.reduce((s, v) => s + v.count, 0))
 
 const PRIORITY_COLORS = {
   Blocker: { bar: 'bg-red-500', text: 'text-red-600 dark:text-red-400' },
