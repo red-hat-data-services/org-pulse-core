@@ -22,15 +22,6 @@ export const STATE_OPTIONS = [
   { value: 'autofix-blocked', label: 'AI Blocked' }
 ]
 
-export const PIPELINE_BAR_SEGMENTS = [
-  { state: 'autofix-merged', label: 'Merged', color: 'bg-indigo-500' },
-  { state: 'autofix-review', label: 'Review', color: 'bg-blue-500' },
-  { state: 'autofix-pending', label: 'Pending', color: 'bg-gray-400' },
-  { state: 'autofix-ci-failing', label: 'CI Failing', color: 'bg-orange-500' },
-  { state: 'autofix-blocked', label: 'Blocked', color: 'bg-yellow-500' },
-  { state: 'autofix-max-retries', label: 'Max Retries', color: 'bg-red-500' }
-]
-
 export function stateLabel(state) {
   const opt = STATE_OPTIONS.find(o => o.value === state)
   return opt ? opt.label : state
