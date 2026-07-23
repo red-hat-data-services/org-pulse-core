@@ -26,5 +26,5 @@ COPY src/ ./src/
 COPY public/ ./public/
 COPY shared/client/ ./shared/client/
 
-# Core module only
-COPY modules/team-tracker/ ./modules/team-tracker/
+# Copy all core modules
+COPY modules/ ./modules/

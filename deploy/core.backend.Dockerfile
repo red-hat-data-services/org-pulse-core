@@ -1,6 +1,6 @@
 # Org Pulse Core — Backend
 #
-# Contains the platform shell + team-tracker module only.
+# Contains the platform shell and all core modules.
 # Other orgs extend this image to add their own modules:
 #
 #   FROM quay.io/org-pulse/org-pulse-core-backend:v1.x
@@ -65,8 +65,8 @@ COPY server/ ./server/
 COPY shared/server/ ./shared/server/
 COPY package.json ./
 
-# Copy core module only
-COPY modules/team-tracker/ ./modules/team-tracker/
+# Copy all core modules (auto-discovered at startup)
+COPY modules/ ./modules/
 
 # Copy core fixtures (for demo mode)
 COPY fixtures/team-data/ ./fixtures/team-data/

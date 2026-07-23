@@ -6,7 +6,7 @@ on:
     branches: [main]
     paths:
       - 'server/**'
-      - 'modules/team-tracker/**'
+      - 'modules/**'
       - 'shared/**'
       - 'src/**'
       - 'deploy/core.*.Dockerfile'
