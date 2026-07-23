@@ -70,6 +70,7 @@ modules/your-module/
 | `client.settingsComponent` | No | Vue component for the Settings page |
 | `client.sotuWidgets` | No | Array of widget declarations for the SOTU dashboard (see below) |
 | `server.entry` | No | Path to backend entry point |
+| `fixtures` | No | Object mapping fixture filenames to collection names for demo mode seeding (e.g., `{"data.json": "collection-name"}`) |
 
 ### navItem Fields
 
@@ -206,6 +207,7 @@ The authoritative typedef for the context object is in `shared/server/module-con
 
 | Property | Type | Description |
 |----------|------|-------------|
+| `db` | object\|null | Scoped database factory: `db.model(name, schema)` returns a Mongoose model on a `<slug>__<name>` collection. `null` when MongoDB is not configured. |
 | `storage` | object | Storage module (`readFromStorage`, `writeToStorage`, etc.) |
 | `requireAuth` | middleware | Requires authenticated user |
 | `requireAdmin` | middleware | Requires admin role |

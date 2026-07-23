@@ -52,7 +52,19 @@ ADMIN_EMAILS=you@redhat.com
 GITHUB_TOKEN=your-github-classic-pat   # Classic PAT with read:user scope
 ```
 
-### 3. Start dev servers
+### 3. MongoDB (optional)
+
+If `MONGODB_URI` is not set, the app automatically starts an in-memory MongoDB instance via `mongodb-memory-server`. Data is lost on restart but no setup is needed.
+
+For persistent local data, start a MongoDB container:
+
+```bash
+podman-compose up -d   # or: docker compose up -d
+```
+
+Then uncomment `MONGODB_URI` in your `.env`.
+
+### 4. Start dev servers
 
 ```bash
 npm run dev:full
@@ -98,7 +110,8 @@ make test-module MODULE=people-teams  # Run integration tests
 - **Frontend**: Vue 3, Vite 8, Tailwind CSS 3, Chart.js 4
 - **Backend**: Express (single server for local dev and production)
 - **Auth**: OpenShift OAuth proxy (production), no auth (local dev)
-- **Storage**: Local filesystem (`./data/`), PVC in OpenShift
+- **Database**: MongoDB (Mongoose), optional in-memory fallback for local dev
+- **Storage**: Local filesystem (`./data/`), PVC in OpenShift (migrating to MongoDB)
 - **Hosting**: OpenShift with ArgoCD
 - **Testing**: Vitest (unit), Playwright (smoke & integration)
 

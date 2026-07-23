@@ -33,6 +33,7 @@ export default defineConfig({
           name: 'server',
           globals: true,
           environment: 'node',
+          globalSetup: ['shared/__tests__/globalSetup.js'],
           include: [
             'server/**/*.{test,spec}.js',
             'shared/server/**/*.{test,spec}.js',
