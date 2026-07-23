@@ -19,6 +19,8 @@ on:
       - 'index.html'
       - 'tests/smoke/**'
       - 'playwright.config.js'
+      - 'services/chatbot/**'
+      - 'deploy/certs/**'
 
 permissions:
   contents: read
@@ -30,6 +32,7 @@ concurrency:
 env:
   CORE_BACKEND_IMAGE: quay.io/org-pulse/org-pulse-core-backend
   CORE_FRONTEND_IMAGE: quay.io/org-pulse/org-pulse-core-frontend
+  CHATBOT_IMAGE: quay.io/org-pulse/org-pulse-chatbot
 
 jobs:
   test:
@@ -262,6 +265,62 @@ jobs:
             docker push ${{ env.CORE_FRONTEND_IMAGE }}-runtime:${BUILD_VERSION}
           fi
 
+  build-chatbot:
+    name: Build Chatbot
+    needs: [test, version-bump]
+    if: |
+      always() &&
+      needs.test.result == 'success' &&
+      (needs.version-bump.result == 'success' || needs.version-bump.result == 'skipped')
+    runs-on: ubuntu-latest
+    env:
+      BUILD_SHA: ${{ needs.version-bump.outputs.build_sha || github.sha }}
+      BUILD_VERSION: ${{ needs.version-bump.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version-bump.outputs.build_sha || github.sha }}
+
+      - name: Copy internal CA into build context
+        run: cp deploy/certs/internal-root-ca.pem services/chatbot/internal-root-ca.pem
+
+      - name: Build chatbot image
+        run: |
+          docker build \
+            -f services/chatbot/Containerfile \
+            --build-arg GIT_SHA=${BUILD_SHA} \
+            --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+            -t ${{ env.CHATBOT_IMAGE }}:${BUILD_SHA} \
+            services/chatbot
+
+      - name: Smoke test chatbot
+        run: |
+          docker run -d --name chatbot-smoke -p 8002:8002 \
+            -e CHATBOT_LLM_BASE_URL=http://localhost:9999/v1 \
+            -e CHATBOT_LLM_API_KEY=test \
+            ${{ env.CHATBOT_IMAGE }}:${BUILD_SHA}
+          echo "Waiting for chatbot to start..."
+          sleep 5
+          if curl -sf --max-time 5 http://localhost:8002/health > /dev/null 2>&1; then
+            echo "Chatbot smoke test passed"
+          else
+            echo "Chatbot smoke test failed"
+            docker logs chatbot-smoke
+            docker stop chatbot-smoke
+            exit 1
+          fi
+          docker stop chatbot-smoke
+
+      - name: Save image artifact
+        run: docker save ${{ env.CHATBOT_IMAGE }}:${BUILD_SHA} -o /tmp/chatbot.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: chatbot-image
+          path: /tmp/chatbot.tar
+          retention-days: 1
+
   smoke-test-core:
     name: Core Smoke Tests
     needs: [build-core-backend, build-core-frontend, version-bump]
@@ -299,7 +358,7 @@ jobs:
 
   push-core-images:
     name: Push Core Images
-    needs: [smoke-test-core, build-core-backend, build-core-frontend, version-bump]
+    needs: [smoke-test-core, build-core-backend, build-core-frontend, build-chatbot, version-bump]
     if: needs.smoke-test-core.result == 'success'
     runs-on: ubuntu-latest
     env:
@@ -318,10 +377,17 @@ jobs:
           name: core-frontend-image
           path: /tmp
 
+      - name: Download chatbot image
+        uses: actions/download-artifact@v8
+        with:
+          name: chatbot-image
+          path: /tmp
+
       - name: Load images
         run: |
           docker load -i /tmp/core-backend.tar
           docker load -i /tmp/core-frontend.tar
+          docker load -i /tmp/chatbot.tar
 
       - name: Login to Quay.io
         uses: docker/login-action@v4
@@ -348,6 +414,16 @@ jobs:
           if [ -n "${BUILD_VERSION}" ]; then
             docker tag ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA} ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_VERSION}
             docker push ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_VERSION}
+          fi
+
+      - name: Push chatbot image
+        run: |
+          docker tag ${{ env.CHATBOT_IMAGE }}:${BUILD_SHA} ${{ env.CHATBOT_IMAGE }}:latest
+          docker push ${{ env.CHATBOT_IMAGE }}:${BUILD_SHA}
+          docker push ${{ env.CHATBOT_IMAGE }}:latest
+          if [ -n "${BUILD_VERSION}" ]; then
+            docker tag ${{ env.CHATBOT_IMAGE }}:${BUILD_SHA} ${{ env.CHATBOT_IMAGE }}:${BUILD_VERSION}
+            docker push ${{ env.CHATBOT_IMAGE }}:${BUILD_VERSION}
           fi
 
   publish-package:
@@ -417,6 +493,7 @@ jobs:
         run: |
           kustomize edit set image ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA}
           kustomize edit set image ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA}
+          kustomize edit set image ${{ env.CHATBOT_IMAGE }}:${BUILD_SHA}
 
       - name: Validate kustomize build
         run: kustomize build deploy/openshift/base > /dev/null
@@ -428,5 +505,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add deploy/openshift/base/kustomization.yaml
           git diff --cached --quiet && { echo "No changes to commit"; exit 0; }
-          git commit -m "deploy: update backend + frontend image to ${VERSION} (${BUILD_SHA}) [skip ci]"
+          git commit -m "deploy: update backend + frontend + chatbot image to ${VERSION} (${BUILD_SHA}) [skip ci]"
           git push origin main
