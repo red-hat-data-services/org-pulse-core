@@ -239,11 +239,9 @@
 
 <script>
 import { Menu as MenuIcon, RefreshCw, ExternalLink as ExternalLinkIcon, Sun as SunIcon, Moon as MoonIcon, Monitor as MonitorIcon, Info as InfoIcon, User as UserIcon, Pencil as PencilIcon } from 'lucide-vue-next'
-let getViewOwner = () => null
-try {
-  const mod = await import('@platform/view-owners/owners.js')
-  if (mod.getViewOwner) getViewOwner = mod.getViewOwner
-} catch { /* platform extension not installed */ }
+const viewOwnerModules = import.meta.glob('/platform/view-owners/owners.js', { eager: true })
+const viewOwnerMod = viewOwnerModules['/platform/view-owners/owners.js']
+const getViewOwner = viewOwnerMod?.getViewOwner || (() => null)
 import LoadingOverlay from '@shared/client/components/LoadingOverlay.vue'
 import Toast from '@shared/client/components/Toast.vue'
 import RefreshModal from '@shared/client/components/RefreshModal.vue'
@@ -630,7 +628,6 @@ export default {
     openOwnerEditor() {
       const owner = this.currentViewOwner
       this.ownerEditName = typeof owner === 'string' ? owner : (owner?.name || '')
-      this.ownerEditEmail = ''
       this.showOwnerEditor = true
     },
 
