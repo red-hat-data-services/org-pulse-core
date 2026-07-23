@@ -1,6 +1,6 @@
 # Org Pulse Core — Frontend (complete)
 #
-# Builds and serves the core platform with team-tracker module only.
+# Builds and serves the core platform with all core modules.
 # Use this if you don't need to add extra modules. If you do, use
 # core.frontend-builder.Dockerfile + core.frontend-runtime.Dockerfile instead.
 
@@ -19,8 +19,8 @@ COPY src/ ./src/
 COPY public/ ./public/
 COPY shared/client/ ./shared/client/
 
-# Core module only
-COPY modules/team-tracker/ ./modules/team-tracker/
+# Copy all core modules
+COPY modules/ ./modules/
 
 RUN npm run build
 
