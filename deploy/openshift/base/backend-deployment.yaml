@@ -67,6 +67,11 @@ spec:
                   name: proxy-auth-secret
                   key: secret
                   optional: true
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb
+                  key: MONGODB_URI
             # Roster sync secrets (optional — sync won't run without them)
             - name: IPA_BIND_DN
               valueFrom:

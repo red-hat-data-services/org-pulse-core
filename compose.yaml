@@ -1,0 +1,14 @@
+services:
+  mongodb:
+    image: quay.io/mongodb/mongodb-community-server:8.0.10-ubi9
+    container_name: org-pulse-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: mongoadmin
+      MONGO_INITDB_ROOT_PASSWORD: mongopassword
+    volumes:
+      - mongodb-data:/data/db
+
+volumes:
+  mongodb-data:
