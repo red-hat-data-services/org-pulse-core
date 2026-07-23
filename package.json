@@ -1,6 +1,6 @@
 {
   "name": "@org-pulse/core",
-  "version": "2.0.28",
+  "version": "2.0.29",
   "description": "Org Pulse - a modular engineering dashboard platform connecting Jira, GitHub, and GitLab data with a team roster to surface delivery insights.",
   "repository": {
     "type": "git",
