@@ -35,6 +35,6 @@ images:
 - name: quay.io/org-pulse/org-pulse-chatbot
   newTag: 8753aa30d6065cf770f76cb73de111b6526950a6
 - name: quay.io/org-pulse/org-pulse-core-backend
-  newTag: 4b3ef64a62695f478fbda8e485276ed556c7b368
+  newTag: 87432e89f581afcff59995a0a5ef37d5b8dd96f9
 - name: quay.io/org-pulse/org-pulse-core-frontend
-  newTag: 4b3ef64a62695f478fbda8e485276ed556c7b368
+  newTag: 87432e89f581afcff59995a0a5ef37d5b8dd96f9
