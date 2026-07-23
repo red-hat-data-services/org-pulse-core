@@ -59,6 +59,18 @@ oc create secret generic google-sa-key \
   -n team-tracker \
   --from-file=google-sa-key.json=./secrets/google-sa-key.json
 
+# Optional: Chatbot AI assistant secrets (for LLM inference + content gate)
+# The chatbot pod starts without these (all refs are optional), but cannot
+# process chat requests until the LLM credentials are set.
+oc create secret generic chatbot-secrets \
+  -n team-tracker \
+  --from-literal=CHATBOT_LLM_BASE_URL=<llm-endpoint-url> \
+  --from-literal=CHATBOT_LLM_API_KEY=<llm-api-key> \
+  --from-literal=CHATBOT_GATE_BASE_URL=<gate-endpoint-url> \
+  --from-literal=CHATBOT_GATE_API_KEY=<gate-api-key> \
+  --from-literal=CHATBOT_EMBEDDING_BASE_URL=<embedding-endpoint-url> \
+  --from-literal=CHATBOT_EMBEDDING_API_KEY=<embedding-api-key>
+
 # Optional: SmartSheet API token (for releases module -- release discovery)
 # Generate a token at: My Account > Personal Settings > API Access > Generate New Access Token
 oc patch secret team-tracker-secrets \
@@ -205,6 +217,9 @@ oc logs deployment/frontend -n team-tracker -c nginx -f
 
 # OAuth proxy
 oc logs deployment/frontend -n team-tracker -c oauth-proxy -f
+
+# Chatbot (structured JSON logs)
+oc logs deployment/chatbot -n team-tracker -f
 ```
 
 ## Troubleshooting
@@ -263,8 +278,18 @@ oc rollout restart deployment/backend -n team-tracker
 │  ┌──────────────────────────────────────────┐   │
 │  │ Express :3001                             │   │
 │  │ Jira API, GitHub API, Roster Sync, LDAP  │   │
+│  │ Proxies /api/modules/chatbot → chatbot   │   │
 │  └──────────────────────────────────────────┘   │
 │  Volume: /app/data (PVC: team-tracker-data)     │
+└──────────────────┬──────────────────────────────┘
+                   │ /api/modules/chatbot
+┌──────────────────▼──────────────────────────────┐
+│ Chatbot Pod                                      │
+│  ┌──────────────────────────────────────────┐   │
+│  │ FastAPI :8002                             │   │
+│  │ AI assistant (LLM inference + tools)     │   │
+│  │ Calls back to backend :3001 internally   │   │
+│  └──────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────┘
 ```
 

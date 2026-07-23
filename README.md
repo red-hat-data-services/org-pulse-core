@@ -100,6 +100,7 @@ make test-module MODULE=people-teams  # Run integration tests
 - **Auth**: OpenShift OAuth proxy (production), no auth (local dev)
 - **Storage**: Local filesystem (`./data/`), PVC in OpenShift
 - **Hosting**: OpenShift with ArgoCD
+- **AI Assistant**: Python/FastAPI microservice (`services/chatbot/`), deployed as a separate pod
 - **Testing**: Vitest (unit), Playwright (smoke & integration)
 
 ## Deployment

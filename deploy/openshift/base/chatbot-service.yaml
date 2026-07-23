@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: chatbot
+  labels:
+    app: team-tracker
+    component: chatbot
+spec:
+  selector:
+    app: team-tracker
+    component: chatbot
+  ports:
+    - port: 8002
+      targetPort: 8002
+      protocol: TCP

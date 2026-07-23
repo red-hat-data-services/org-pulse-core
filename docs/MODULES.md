@@ -116,6 +116,22 @@ export const routes = {
 
 Use `defineAsyncComponent` for lazy loading.
 
+### Floating Widgets
+
+A module can export a `floatingWidget` component that renders as a floating overlay in the app shell, independent of sidebar navigation. This is useful for always-available features like chat assistants.
+
+```javascript
+import { defineAsyncComponent } from 'vue'
+
+export const routes = {
+  'chat': defineAsyncComponent(() => import('./views/ChatView.vue')),
+}
+
+export const floatingWidget = defineAsyncComponent(() => import('./views/ChatView.vue'))
+```
+
+When `floatingWidget` is exported, the shell renders it as a persistent floating component. The module can omit `navItems` from `module.json` if it doesn't need sidebar navigation — the floating widget will still load when the module is enabled.
+
 ## Navigation API
 
 The shell provides a `moduleNav` object via Vue's `provide/inject`:

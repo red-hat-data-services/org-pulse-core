@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chatbot
+  labels:
+    app: team-tracker
+    component: chatbot
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: team-tracker
+      component: chatbot
+  template:
+    metadata:
+      labels:
+        app: team-tracker
+        component: chatbot
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: chatbot
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          image: quay.io/org-pulse/org-pulse-chatbot:latest
+          ports:
+            - containerPort: 8002
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: chatbot-config
+          env:
+            - name: CHATBOT_LLM_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: chatbot-secrets
+                  key: CHATBOT_LLM_BASE_URL
+                  optional: true
+            - name: CHATBOT_LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: chatbot-secrets
+                  key: CHATBOT_LLM_API_KEY
+                  optional: true
+            - name: CHATBOT_GATE_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: chatbot-secrets
+                  key: CHATBOT_GATE_BASE_URL
+                  optional: true
+            - name: CHATBOT_GATE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: chatbot-secrets
+                  key: CHATBOT_GATE_API_KEY
+                  optional: true
+            - name: CHATBOT_EMBEDDING_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: chatbot-secrets
+                  key: CHATBOT_EMBEDDING_BASE_URL
+                  optional: true
+            - name: CHATBOT_EMBEDDING_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: chatbot-secrets
+                  key: CHATBOT_EMBEDDING_API_KEY
+                  optional: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+      volumes:
+        - name: tmp
+          emptyDir: {}

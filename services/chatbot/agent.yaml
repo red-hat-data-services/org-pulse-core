@@ -1,0 +1,30 @@
+endpoint:
+  model: Qwen/Qwen3-14B
+  base_url: ${CHATBOT_LLM_BASE_URL}
+  api_key: ${CHATBOT_LLM_API_KEY}
+  temperature: 0.3
+  max_tokens: 4096
+  extra_body:
+    chat_template_kwargs:
+      enable_thinking: false
+
+gate:
+  model: ibm-granite/granite-3.3-8b-instruct
+  base_url: ${CHATBOT_GATE_BASE_URL}
+  api_key: ${CHATBOT_GATE_API_KEY}
+  temperature: 0.0
+  confidence_threshold: 0.05
+
+# tool_selector:
+#   model: nomic-ai/nomic-embed-text-v1.5
+#   base_url: ${CHATBOT_EMBEDDING_BASE_URL}
+#   api_key: ${CHATBOT_EMBEDDING_API_KEY}
+#   top_k_ratio: 0.3
+#   min_tools: 3
+#   confidence_threshold: 0.55
+
+pipeline:
+  max_tool_rounds: 8
+  max_history_messages: 3
+  max_history_tokens: 2000
+  timeout: 300
