@@ -12,7 +12,20 @@ async function connectDatabase(options = {}) {
     return mongoose.connection
   }
 
-  // No URI provided — start an in-memory MongoDB instance
+  // No URI provided. The in-memory fallback is strictly for local dev and
+  // tests — never start it in production, where it would create an ephemeral
+  // database that silently loses all data on the next redeploy. Refuse
+  // explicitly so a misconfigured deployment fails loudly (and the caller
+  // falls back to file storage) instead of appearing healthy on a throwaway DB.
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'MONGODB_URI is not set in production. Refusing to start an in-memory ' +
+      'database (its data is lost on redeploy). Set MONGODB_URI to a managed ' +
+      'MongoDB instance.'
+    )
+  }
+
+  // No URI provided — start an in-memory MongoDB instance (dev/test only)
   let MongoMemoryServer
   try {
     ;({ MongoMemoryServer } = require('mongodb-memory-server'))
