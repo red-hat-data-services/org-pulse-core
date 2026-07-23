@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - 'services/chatbot/**'
+      - 'deploy/certs/**'
 
 permissions:
   contents: read
@@ -29,6 +30,9 @@ jobs:
       - name: Get version from package.json
         id: version
         run: echo "version=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Copy internal CA into build context
+        run: cp deploy/certs/internal-root-ca.pem services/chatbot/internal-root-ca.pem
 
       - name: Build chatbot image
         run: |

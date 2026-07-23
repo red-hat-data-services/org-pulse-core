@@ -8,6 +8,12 @@ LABEL org.opencontainers.image.revision="${GIT_SHA}" \
 
 WORKDIR /app
 
+# Trust internal CA so Python/httpx can reach internal model endpoints
+COPY internal-root-ca.pem /usr/local/share/ca-certificates/internal-root-ca.crt
+RUN update-ca-certificates
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
