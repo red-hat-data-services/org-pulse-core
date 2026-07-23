@@ -43,6 +43,19 @@ async function startServer(options = {}) {
   // Demo mode: use fixtures instead of data directory
   const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
+  // ─── Database Connection ───
+  const { connectDatabase, disconnectDatabase } = require('../shared/server/database');
+  let dbConnection = null;
+  try {
+    dbConnection = await connectDatabase();
+  } catch (err) {
+    console.error(`[database] Failed to connect: ${err.message}`);
+    if (process.env.MONGODB_URI) {
+      throw err;
+    }
+    console.warn('[database] Continuing without MongoDB — context.db will be null');
+  }
+
   // Initialize storage with configured paths BEFORE loading any consumer modules
   const storageModule = DEMO_MODE ? require('../shared/server/demo-storage') : require('../shared/server/storage');
 
@@ -184,6 +197,8 @@ async function startServer(options = {}) {
 
   if (DEMO_MODE) {
     console.log('Running in DEMO MODE - using fixture data, Jira/GitHub APIs disabled');
+    const { seedFixtures } = require('../shared/server/fixture-seeder');
+    await seedFixtures(dbConnection, builtInModules, fixturesDirs);
   }
 
   // ─── Registries ───
@@ -421,7 +436,7 @@ async function startServer(options = {}) {
 
   // ─── Module State ───
 
-  const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, roleRegistry, scopeRegistry, secretRegistry, allocationStrategy };
+  const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, roleRegistry, scopeRegistry, secretRegistry, allocationStrategy, dbConnection };
   const registries = { diagnostics: diagnosticsRegistry, messages: messageRegistry, refresh: refreshRegistry, exports: exportRegistry };
 
   const persistedState = await loadModuleState(storageModule);
@@ -551,6 +566,17 @@ async function startServer(options = {}) {
       console.log(`\nPeople & Teams dev server running at http://localhost:${PORT}`);
       console.log(`Jira host: ${process.env.JIRA_HOST || 'https://redhat.atlassian.net'}`);
       console.log(`Local storage: ${dataDir}\n`);
+
+      function shutdown() {
+        console.log('\nShutting down...');
+        server.close(async function() {
+          await disconnectDatabase();
+          process.exit(0);
+        });
+      }
+      process.on('SIGTERM', shutdown);
+      process.on('SIGINT', shutdown);
+
       resolve(server);
     });
   });
