@@ -239,7 +239,11 @@
 
 <script>
 import { Menu as MenuIcon, RefreshCw, ExternalLink as ExternalLinkIcon, Sun as SunIcon, Moon as MoonIcon, Monitor as MonitorIcon, Info as InfoIcon, User as UserIcon, Pencil as PencilIcon } from 'lucide-vue-next'
-import { getViewOwner } from '@platform/view-owners/owners.js'
+let getViewOwner = () => null
+try {
+  const mod = await import('@platform/view-owners/owners.js')
+  if (mod.getViewOwner) getViewOwner = mod.getViewOwner
+} catch { /* platform extension not installed */ }
 import LoadingOverlay from '@shared/client/components/LoadingOverlay.vue'
 import Toast from '@shared/client/components/Toast.vue'
 import RefreshModal from '@shared/client/components/RefreshModal.vue'
@@ -550,8 +554,7 @@ export default {
       toasts: [],
       viewOwnerOverrides: {},
       showOwnerEditor: false,
-      ownerEditName: '',
-      ownerEditEmail: ''
+      ownerEditName: ''
     }
   },
   computed: {
@@ -645,8 +648,8 @@ export default {
         })
         await this.loadViewOwnerOverrides()
         this.showOwnerEditor = false
-      } catch (err) {
-        console.error('Failed to save owner override:', err)
+      } catch {
+        this.showToast('Failed to save owner override', 'error')
       }
     },
 
@@ -659,8 +662,8 @@ export default {
         })
         await this.loadViewOwnerOverrides()
         this.showOwnerEditor = false
-      } catch (err) {
-        console.error('Failed to clear owner override:', err)
+      } catch {
+        this.showToast('Failed to clear owner override', 'error')
       }
     },
 

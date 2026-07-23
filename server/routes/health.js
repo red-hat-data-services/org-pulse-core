@@ -10,7 +10,6 @@
  */
 
 const auditLog = require('../../shared/server/audit-log');
-const { spawn } = require('child_process');
 
 /** Validate a domain name per RFC 1123 */
 function isValidDomain(domain) {
@@ -464,17 +463,17 @@ function registerPostAuthRoutes(app, context) {
       if (DEMO_MODE) {
         return res.json({ status: 'skipped', message: 'View owner changes disabled in demo mode' });
       }
-      var key = req.params.moduleSlug + '/' + req.params.viewId;
+      let key = req.params.moduleSlug + '/' + req.params.viewId;
       if (req.params.tab) {
         key += '/' + req.params.tab;
       }
-      var name = req.body.name;
+      const name = req.body.name;
 
       if (name !== undefined && typeof name !== 'string') {
         return res.status(400).json({ error: 'name must be a string' });
       }
 
-      var overrides = (await readFromStorage('view-owner-overrides.json')) || {};
+      const overrides = (await readFromStorage('view-owner-overrides.json')) || {};
 
       if (!name || !name.trim()) {
         delete overrides[key];
@@ -484,16 +483,6 @@ function registerPostAuthRoutes(app, context) {
 
       await writeToStorage('view-owner-overrides.json', overrides);
       res.json({ status: 'saved', key: key, owner: overrides[key] || null });
-
-      var scriptPath = require('path').join(process.cwd(), 'scripts', 'update-view-owners.js');
-      if (require('fs').existsSync(scriptPath)) {
-        var child = spawn('node', [scriptPath], {
-          cwd: process.cwd(),
-          stdio: 'ignore',
-          detached: true
-        });
-        child.unref();
-      }
     } catch (error) {
       console.error('Save view-owner override error:', error);
       res.status(500).json({ error: error.message });
