@@ -11,6 +11,7 @@ resources:
 - api-route.yaml
 - serviceaccount.yaml
 - cronjob-sync-refresh.yaml
+- db-service.yaml
 
 configMapGenerator:
 - literals:
@@ -19,6 +20,7 @@ configMapGenerator:
   - JIRA_HOST=https://redhat.atlassian.net
   - ADMIN_EMAILS=
   - CRON_ADMIN_EMAIL=
+  - DB_NAME=org-pulse
   name: team-tracker-config
 - files:
   - app.conf.template=nginx-app.conf.template
