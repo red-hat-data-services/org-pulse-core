@@ -360,6 +360,134 @@ function registerPostAuthRoutes(app, context) {
 
     res.status(204).end();
   });
+
+  /**
+   * @openapi
+   * /api/view-owners:
+   *   get:
+   *     tags: [Config]
+   *     summary: Get admin overrides for view owners
+   *     responses:
+   *       200:
+   *         description: Admin-set owner overrides (keyed by moduleSlug/viewId)
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               additionalProperties:
+   *                 type: string
+   *                 description: Owner display name
+   */
+  app.get('/api/view-owners', async function(req, res) {
+    try {
+      const overrides = (await readFromStorage('view-owner-overrides.json')) || {};
+      res.json(overrides);
+    } catch (error) {
+      console.error('Get view-owner overrides error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * @openapi
+   * /api/view-owners/{moduleSlug}/{viewId}:
+   *   put:
+   *     tags: [Config]
+   *     summary: Set or clear the owner override for a view (admin only)
+   *     parameters:
+   *       - in: path
+   *         name: moduleSlug
+   *         required: true
+   *         schema:
+   *           type: string
+   *       - in: path
+   *         name: viewId
+   *         required: true
+   *         schema:
+   *           type: string
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               name:
+   *                 type: string
+   *                 description: Owner display name (omit or empty to clear override)
+   *     responses:
+   *       200:
+   *         description: Override saved or cleared
+   */
+  app.put('/api/view-owners/:moduleSlug/:viewId', requireAdmin, requireScope('admin:manage'), handleViewOwnerPut);
+
+  /**
+   * @openapi
+   * /api/view-owners/{moduleSlug}/{viewId}/{tab}:
+   *   put:
+   *     tags: [Config]
+   *     summary: Set or clear the owner override for a view sub-tab (admin only)
+   *     parameters:
+   *       - in: path
+   *         name: moduleSlug
+   *         required: true
+   *         schema:
+   *           type: string
+   *       - in: path
+   *         name: viewId
+   *         required: true
+   *         schema:
+   *           type: string
+   *       - in: path
+   *         name: tab
+   *         required: true
+   *         schema:
+   *           type: string
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               name:
+   *                 type: string
+   *     responses:
+   *       200:
+   *         description: Override saved or cleared
+   */
+  app.put('/api/view-owners/:moduleSlug/:viewId/:tab', requireAdmin, requireScope('admin:manage'), handleViewOwnerPut);
+
+  async function handleViewOwnerPut(req, res) {
+    try {
+      if (DEMO_MODE) {
+        return res.json({ status: 'skipped', message: 'View owner changes disabled in demo mode' });
+      }
+      let key = req.params.moduleSlug + '/' + req.params.viewId;
+      if (req.params.tab) {
+        key += '/' + req.params.tab;
+      }
+      const name = req.body.name;
+
+      if (name !== undefined && typeof name !== 'string') {
+        return res.status(400).json({ error: 'name must be a string' });
+      }
+
+      const overrides = (await readFromStorage('view-owner-overrides.json')) || {};
+
+      if (!name || !name.trim()) {
+        delete overrides[key];
+      } else {
+        overrides[key] = name.trim();
+      }
+
+      await writeToStorage('view-owner-overrides.json', overrides);
+      res.json({ status: 'saved', key: key, owner: overrides[key] || null });
+    } catch (error) {
+      console.error('Save view-owner override error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
 }
 
 module.exports = { registerPreAuthRoutes, registerPostAuthRoutes, isValidDomain };

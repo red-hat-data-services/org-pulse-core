@@ -97,6 +97,49 @@
                 <span class="hidden sm:inline">{{ isRefreshing ? 'Refreshing...' : 'Refresh' }}</span>
               </button>
             </template>
+            <!-- View owner badge -->
+            <div v-if="currentViewOwner" class="relative hidden sm:block">
+              <span
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-full"
+                :title="'View owner: ' + currentViewOwner"
+              >
+                <UserIcon :size="12" />
+                {{ currentViewOwner }}
+                <button
+                  v-if="authIsAdmin"
+                  @click="openOwnerEditor"
+                  class="ml-0.5 p-0.5 hover:text-gray-700 dark:hover:text-gray-200 rounded"
+                  title="Edit view owner"
+                >
+                  <PencilIcon :size="10" />
+                </button>
+              </span>
+              <div
+                v-if="showOwnerEditor"
+                class="absolute right-0 top-full mt-2 w-72 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-4 z-30"
+              >
+                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Owner name</label>
+                <input
+                  v-model="ownerEditName"
+                  class="w-full px-2.5 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none"
+                  placeholder="First Last"
+                />
+                <div class="flex gap-2 mt-3">
+                  <button
+                    @click="saveOwnerOverride"
+                    class="px-3 py-1.5 text-xs font-medium bg-primary-600 hover:bg-primary-700 text-white rounded-md transition-colors"
+                  >Save</button>
+                  <button
+                    @click="clearOwnerOverride"
+                    class="px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 border border-red-300 dark:border-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md transition-colors"
+                  >Clear</button>
+                  <button
+                    @click="showOwnerEditor = false"
+                    class="px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                  >Cancel</button>
+                </div>
+              </div>
+            </div>
             <!-- Theme toggle -->
             <button
               @click="cycleTheme"
@@ -197,7 +240,10 @@
 </template>
 
 <script>
-import { Menu as MenuIcon, RefreshCw, ExternalLink as ExternalLinkIcon, Sun as SunIcon, Moon as MoonIcon, Monitor as MonitorIcon, Info as InfoIcon } from 'lucide-vue-next'
+import { Menu as MenuIcon, RefreshCw, ExternalLink as ExternalLinkIcon, Sun as SunIcon, Moon as MoonIcon, Monitor as MonitorIcon, Info as InfoIcon, User as UserIcon, Pencil as PencilIcon } from 'lucide-vue-next'
+const viewOwnerModules = import.meta.glob('/platform/view-owners/owners.js', { eager: true })
+const viewOwnerMod = viewOwnerModules['/platform/view-owners/owners.js']
+const getViewOwner = viewOwnerMod?.getViewOwner || (() => null)
 import LoadingOverlay from '@shared/client/components/LoadingOverlay.vue'
 import Toast from '@shared/client/components/Toast.vue'
 import RefreshModal from '@shared/client/components/RefreshModal.vue'
@@ -235,6 +281,8 @@ export default {
     MoonIcon,
     MonitorIcon,
     InfoIcon,
+    UserIcon,
+    PencilIcon,
     LoadingOverlay,
     Toast,
     SettingsView,
@@ -505,7 +553,10 @@ export default {
       mobileMenuOpen: false,
       settingsInitialTab: null,
       aboutInitialTab: null,
-      toasts: []
+      toasts: [],
+      viewOwnerOverrides: {},
+      showOwnerEditor: false,
+      ownerEditName: ''
     }
   },
   computed: {
@@ -516,6 +567,13 @@ export default {
     activeModuleConfig() {
       if (!this.activeModuleSlug || !this.gitStaticModules) return null
       return this.gitStaticModules.find(m => m.slug === this.activeModuleSlug) || null
+    },
+    activeSubView() {
+      return this.routeParams?.tab || this.routeParams?.report || null
+    },
+    currentViewOwner() {
+      if (!this.activeModule || !this.activeViewId) return null
+      return getViewOwner(this.activeModule, this.activeViewId, this.viewOwnerOverrides, this.activeSubView)
     },
     currentPageTitle() {
       if (this.activeModule === 'home') {
@@ -546,6 +604,7 @@ export default {
     window.addEventListener('popstate', this.onPopState)
     window.addEventListener('keydown', this.onKeyDown)
     await this.loadBuiltInManifestsFromApi()
+    this.loadViewOwnerOverrides()
     if (this.authUser) {
       await this.loadInitialData()
     }
@@ -560,6 +619,52 @@ export default {
       if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
         e.preventDefault()
         this.sidebarCollapsed = !this.sidebarCollapsed
+      }
+    },
+
+    async loadViewOwnerOverrides() {
+      try {
+        const data = await apiRequest('/view-owners')
+        this.viewOwnerOverrides = data || {}
+      } catch { /* non-critical */ }
+    },
+
+    openOwnerEditor() {
+      const owner = this.currentViewOwner
+      this.ownerEditName = typeof owner === 'string' ? owner : (owner?.name || '')
+      this.showOwnerEditor = true
+    },
+
+    ownerOverrideUrl() {
+      const base = `/view-owners/${this.activeModule}/${this.activeViewId}`
+      return this.activeSubView ? `${base}/${this.activeSubView}` : base
+    },
+
+    async saveOwnerOverride() {
+      try {
+        await apiRequest(this.ownerOverrideUrl(), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: this.ownerEditName })
+        })
+        await this.loadViewOwnerOverrides()
+        this.showOwnerEditor = false
+      } catch {
+        this.showToast('Failed to save owner override', 'error')
+      }
+    },
+
+    async clearOwnerOverride() {
+      try {
+        await apiRequest(this.ownerOverrideUrl(), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: '' })
+        })
+        await this.loadViewOwnerOverrides()
+        this.showOwnerEditor = false
+      } catch {
+        this.showToast('Failed to clear owner override', 'error')
       }
     },
 
