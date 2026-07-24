@@ -14,7 +14,8 @@
   },
   "secrets": {
     "module": [
-      { "key": "CHATBOT_SERVICE_URL", "description": "URL of the chatbot microservice (e.g. http://localhost:8002)", "required": true }
+      { "key": "CHATBOT_SERVICE_URL", "description": "URL of the chatbot microservice (e.g. http://localhost:8002)", "required": true },
+      { "key": "PROXY_AUTH_SECRET", "description": "Shared secret for internal service-to-service auth (must match backend)", "required": false }
     ]
   }
 }

@@ -12,6 +12,18 @@ module.exports = function registerRoutes(router, context) {
     return (secrets.CHATBOT_SERVICE_URL || '').replace(/\/$/, '')
   }
 
+  function buildProxyHeaders(req) {
+    const headers = { 'Content-Type': 'application/json' }
+    const proxySecret = secrets.PROXY_AUTH_SECRET
+    if (proxySecret) {
+      headers['X-Proxy-Secret'] = proxySecret
+    }
+    if (req.userEmail) {
+      headers['X-Forwarded-Email'] = req.userEmail
+    }
+    return headers
+  }
+
   function validateChatBody(body) {
     if (!body || typeof body.message !== 'string' || !body.message.trim()) {
       return 'message is required and must be a non-empty string'
@@ -70,7 +82,7 @@ module.exports = function registerRoutes(router, context) {
     try {
       const response = await fetch(`${serviceUrl}/agent/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: buildProxyHeaders(req),
         body: JSON.stringify(pickChatFields(req.body)),
       })
 
@@ -129,7 +141,7 @@ module.exports = function registerRoutes(router, context) {
     try {
       const response = await fetch(`${serviceUrl}/agent/chat/stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: buildProxyHeaders(req),
         body: JSON.stringify(pickChatFields(req.body)),
       })
 

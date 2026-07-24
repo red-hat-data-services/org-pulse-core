@@ -70,6 +70,12 @@ spec:
                   name: chatbot-secrets
                   key: CHATBOT_EMBEDDING_API_KEY
                   optional: true
+            - name: PROXY_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: proxy-auth-secret
+                  key: secret
+                  optional: false
           readinessProbe:
             httpGet:
               path: /health
