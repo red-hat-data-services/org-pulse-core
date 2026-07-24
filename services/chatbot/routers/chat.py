@@ -1,9 +1,11 @@
 """Chat endpoints with SSE streaming support."""
 
 import asyncio
+import hmac
 import json
 import logging
 import math
+import os
 import time
 import uuid
 
@@ -57,11 +59,16 @@ _AUTH_MISSING_MESSAGE = (
 )
 
 
+_EXPECTED_PROXY_SECRET = os.environ.get("PROXY_AUTH_SECRET", "")
+
+
 def _extract_auth(http_request: Request) -> tuple[str, str] | None:
     """Extract and validate proxy auth headers. Returns (proxy_secret, user_email) or None."""
     proxy_secret = http_request.headers.get("x-proxy-secret", "").strip()
     user_email = http_request.headers.get("x-forwarded-email", "").strip()
     if not proxy_secret or not user_email:
+        return None
+    if _EXPECTED_PROXY_SECRET and not hmac.compare_digest(proxy_secret, _EXPECTED_PROXY_SECRET):
         return None
     return proxy_secret, user_email
 
