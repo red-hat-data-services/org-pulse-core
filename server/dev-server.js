@@ -332,6 +332,8 @@ async function startServer(options = {}) {
   const { createExportRegistry } = require('../shared/server/export-registry');
   const refreshRegistry = await createRefreshRegistry(storageModule);
   const exportRegistry = createExportRegistry();
+  const { createSearchIndexRegistry } = require('../shared/server/search-index-registry');
+  const searchIndexRegistry = createSearchIndexRegistry();
 
   // Rate limiter for expensive export endpoints
   const EXPORT_RATE_MAX = 5;
@@ -410,6 +412,38 @@ async function startServer(options = {}) {
   registerTokenRoutes(app, routeContext);
   registerRoleRoutes(app, routeContext);
 
+  // ─── Routes: Search Index ───
+
+  let searchIndexCache = null;
+  let searchIndexCacheTime = 0;
+  const SEARCH_INDEX_TTL = 5 * 60 * 1000;
+
+  /**
+   * @openapi
+   * /api/search-index:
+   *   get:
+   *     summary: Aggregated search index from all modules
+   *     description: Returns searchable items from modules with searchIndex declarations or custom handlers. Cached for 5 minutes.
+   *     responses:
+   *       200:
+   *         description: Array of searchable items
+   */
+  app.get('/api/search-index', async function (_req, res) {
+    try {
+      const now = Date.now();
+      if (searchIndexCache && (now - searchIndexCacheTime) < SEARCH_INDEX_TTL) {
+        return res.json(searchIndexCache);
+      }
+      const items = await searchIndexRegistry.collect(storageModule);
+      searchIndexCache = items;
+      searchIndexCacheTime = now;
+      res.json(items);
+    } catch (err) {
+      console.error('[search-index] Failed to collect:', err.message);
+      res.status(500).json({ error: 'Failed to collect search index' });
+    }
+  });
+
   // ─── Platform extension loading ───
 
   const allocationStrategy = loadAllocationStrategy(platformPaths);
@@ -422,7 +456,7 @@ async function startServer(options = {}) {
   // ─── Module State ───
 
   const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, roleRegistry, scopeRegistry, secretRegistry, allocationStrategy };
-  const registries = { diagnostics: diagnosticsRegistry, messages: messageRegistry, refresh: refreshRegistry, exports: exportRegistry };
+  const registries = { diagnostics: diagnosticsRegistry, messages: messageRegistry, refresh: refreshRegistry, exports: exportRegistry, searchIndex: searchIndexRegistry };
 
   const persistedState = await loadModuleState(storageModule);
   const startupState = Object.assign({}, persistedState);

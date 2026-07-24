@@ -58,7 +58,7 @@ function buildRegistryAndConfig(orgRootUid, orgDisplayName, teams) {
 /**
  * Register the org-teams routes and capture the GET /org-teams handler.
  */
-function setupRoutes(storage) {
+function setupRoutes(storage, opts = {}) {
   const handlers = {}
   const mockRouter = {
     get(path, ...args) { handlers[`GET ${path}`] = args[args.length - 1] },
@@ -67,10 +67,15 @@ function setupRoutes(storage) {
     delete(path, ...args) { handlers[`DELETE ${path}`] = args[args.length - 1] }
   }
 
+  const registeredSearchHandler = { fn: null }
+
   const context = {
     storage,
     requireAdmin: (req, res, next) => next(),
-    requireScope: () => (req, res, next) => next()
+    requireScope: () => (req, res, next) => next(),
+    registerSearchIndex: opts.captureSearchIndex
+      ? (fn) => { registeredSearchHandler.fn = fn }
+      : undefined
   }
 
   // Clear config cache before registering
@@ -78,6 +83,10 @@ function setupRoutes(storage) {
 
   const registerOrgTeamsRoutes = require('../../server/routes/org-teams')
   registerOrgTeamsRoutes(mockRouter, context)
+
+  if (opts.captureSearchIndex) {
+    handlers._searchIndexHandler = registeredSearchHandler.fn
+  }
 
   return handlers
 }
@@ -349,5 +358,70 @@ describe('buildEnrichedTeams board cascade', () => {
     // When structure team has no boards array, should keep metadata boards
     expect(team.boards).toHaveLength(1)
     expect(team.boards[0].url).toBe('https://meta-board.example.com')
+  })
+})
+
+describe('search index handler', () => {
+  it('registers a search index handler and returns teams as searchable items', async () => {
+    const storageData = {
+      ...buildRegistryAndConfig('org1', 'Org One', ['Platform', 'Data Pipeline']),
+      'org-roster/teams-metadata.json': { teams: [], boardNames: {} },
+      'org-roster/components.json': { components: { 'Platform Core': ['Platform'] } },
+      'team-data/teams.json': { teams: {} },
+      'audit-log.json': { entries: [] }
+    }
+
+    const storage = makeStorage(storageData)
+    const handlers = setupRoutes(storage, { captureSearchIndex: true })
+
+    expect(handlers._searchIndexHandler).toBeTypeOf('function')
+
+    const items = await handlers._searchIndexHandler(storage)
+    expect(items).toHaveLength(2)
+
+    const platform = items.find(i => i.label === 'Platform')
+    expect(platform).toBeDefined()
+    expect(platform.context).toBe('Team')
+    expect(platform.viewId).toBe('home')
+    expect(platform.params).toEqual({ search: 'Platform' })
+    expect(platform.keywords).toContain('Platform Core')
+
+    const pipeline = items.find(i => i.label === 'Data Pipeline')
+    expect(pipeline).toBeDefined()
+    expect(pipeline.viewId).toBe('home')
+    expect(pipeline.params).toEqual({ search: 'Data Pipeline' })
+  })
+
+  it('includes eng leads and PMs as keywords', async () => {
+    const people = {}
+    people.person_0 = {
+      uid: 'person_0', name: 'Alice Engineer', status: 'active',
+      orgRoot: 'org1', _teamGrouping: 'ML Team', title: 'Software Engineer',
+      engineeringLead: 'Lead Smith', productManager: 'PM Jones'
+    }
+
+    const storageData = {
+      'team-data/registry.json': {
+        meta: { generatedAt: '2026-01-01', provider: 'test', orgRoots: ['org1'] },
+        people
+      },
+      'team-data/config.json': {
+        orgRoots: [{ uid: 'org1', displayName: 'Org One' }]
+      },
+      'team-data/field-definitions.json': { personFields: [], teamFields: [] },
+      'org-roster/teams-metadata.json': { teams: [], boardNames: {} },
+      'org-roster/components.json': { components: {} },
+      'team-data/teams.json': { teams: {} },
+      'audit-log.json': { entries: [] }
+    }
+
+    const storage = makeStorage(storageData)
+    const handlers = setupRoutes(storage, { captureSearchIndex: true })
+    const items = await handlers._searchIndexHandler(storage)
+
+    const mlTeam = items.find(i => i.label === 'ML Team')
+    expect(mlTeam).toBeDefined()
+    expect(mlTeam.keywords).toContain('Lead Smith')
+    expect(mlTeam.keywords).toContain('PM Jones')
   })
 })

@@ -46,6 +46,7 @@
  * @property {Function} registerMessageProvider - Register a message provider (id, fn)
  * @property {Function} registerRefresh - Register a refresh handler (id, config)
  * @property {Function} registerExport - Register a data export hook (fn)
+ * @property {Function} registerSearchIndex - Register a search index provider (fn returning searchable items)
  * @property {Function} registerRole - Register a module role (id, config)
  * @property {Function} registerScopes - Register module scopes (configs[])
  * @property {Function} isRefreshRunning - Check if a global refresh-all is in progress
@@ -63,6 +64,7 @@
  * @property {object} [messages]     - Message registry with registerProvider method
  * @property {object} [refresh]      - Refresh registry with register method
  * @property {object} [exports]      - Export registry with register method
+ * @property {object} [searchIndex]  - Search index registry with register method
  */
 
 /**
@@ -74,7 +76,7 @@
  * @returns {ModuleContext}
  */
 function buildModuleContext(coreServices, slug, registries = {}) {
-  const { diagnostics, messages, refresh, exports: exportRegistry } = registries
+  const { diagnostics, messages, refresh, exports: exportRegistry, searchIndex } = registries
   const roleRegistry = coreServices.roleRegistry || null
   const scopeRegistry = coreServices.scopeRegistry || null
   const secretRegistry = coreServices.secretRegistry || null
@@ -121,6 +123,10 @@ function buildModuleContext(coreServices, slug, registries = {}) {
 
     registerExport: exportRegistry
       ? function (fn) { exportRegistry.register(slug, fn) }
+      : function () {},
+
+    registerSearchIndex: searchIndex
+      ? function (fn) { searchIndex.register(slug, fn) }
       : function () {},
 
     isRefreshRunning: refresh
@@ -205,6 +211,7 @@ function createTestContext(overrides = {}) {
     registerMessageProvider: noop,
     registerRefresh: noop,
     registerExport: noop,
+    registerSearchIndex: noop,
     registerRole: noop,
     registerScopes: noop,
     isRefreshRunning: function () { return false },

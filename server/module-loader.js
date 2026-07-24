@@ -220,6 +220,9 @@ function createModuleRouters(modules, coreServices, enabledSlugs, registries) {
       const moduleCtx = buildModuleContext(coreServices, mod.slug, registries)
       exported(router, moduleCtx)
       routers[mod.slug] = router
+      if (mod.searchIndex && registries.searchIndex) {
+        registries.searchIndex.registerDeclarative(mod.slug, mod.searchIndex)
+      }
       _mountedAtStartup.add(mod.slug)
       console.log(`[module-loader] Created router for "${mod.slug}"`)
     } catch (err) {

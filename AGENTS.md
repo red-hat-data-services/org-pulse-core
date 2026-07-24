@@ -20,6 +20,7 @@ via ArgoCD. Organizations extend this core by adding custom modules.
 - **Storage**: Local filesystem (`./data/`), mounted as PVC in OpenShift
 - **Shared code**: `shared/client/` and `shared/server/`, importable via `@shared` alias
 - **Platform extensions**: `platform/` holds deployment-specific core UI customizations (e.g., About page tabs), importable via `@platform` alias. Separate from modules — see `docs/PLATFORM.md`
+- **Command palette**: Global search (`/` key) with module-scoped search via glass chip breadcrumbs in the search bar. Modules declare `search.views` in `module.json` to register searchable views. See `docs/MODULES.md` § Module Search.
 
 See `docs/MODULES.md` for the module development guide.
 

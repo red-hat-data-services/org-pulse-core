@@ -731,6 +731,117 @@ The `org-pulse/no-module-process-env` ESLint rule prevents `process.env` access 
 - `POST /api/admin/secrets/validate` — runs registered validators
 - Must-gather bundle includes `bundle.secrets` with full status
 
+## Search Index
+
+Modules contribute searchable items to the command palette (`/` key), allowing module-specific data (feature keys, repo names, releases) to appear in global search alongside page navigation and quick actions.
+
+### Declarative (preferred)
+
+Add a `searchIndex` array to `module.json`. The system auto-generates search entries from your data files — no code needed:
+
+```json
+{
+  "searchIndex": [
+    {
+      "source": "my-module/items.json",
+      "items": "records",
+      "label": "name",
+      "context": "My Module → Items",
+      "viewId": "detail",
+      "params": { "id": "$id" },
+      "filter": { "status": "active" },
+      "keywords": ["category", "description"]
+    }
+  ]
+}
+```
+
+#### Declaration Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `source` | Yes | Storage key of the data file to read |
+| `items` | Yes | Dot-path to the array (or object) within the JSON (e.g. `"features"`, `"data.repos"`) |
+| `label` | Yes | Field name to use as the display label. Use `"$key"` when `items` is an object to use object keys as labels |
+| `fallbackLabel` | No | Field name to use if `label` field is empty |
+| `context` | Yes | Breadcrumb text shown in suggestions (e.g. "Releases → Schedule") |
+| `viewId` | Yes | View ID from the module's `routes` export |
+| `params` | No | Query parameters object. Values starting with `$` are field references (e.g. `{ "key": "$key" }` substitutes from each item) |
+| `filter` | No | Object with field=value conditions. Only matching items are indexed |
+| `keywords` | No | Array of field names whose values become extra search terms |
+
+When `items` points to an object (not an array), each key-value pair becomes an entry with `$key` available as a field reference.
+
+### Custom Handler (advanced)
+
+For complex logic that can't be expressed declaratively, use `context.registerSearchIndex(fn)`:
+
+```javascript
+module.exports = function registerRoutes(router, context) {
+  context.registerSearchIndex(async function(storage) {
+    return [{ label: 'Item', context: 'My Module', viewId: 'view', params: { id: '1' } }]
+  })
+}
+```
+
+Both modes can coexist — declarative entries from `module.json` and custom handlers are merged.
+
+### How It Works
+
+- Items are served at `GET /api/search-index` with a 5-minute server-side cache
+- The command palette fetches the index on first open and merges results with page navigation and quick actions
+- Fuzzy matching applies to `label`, `context`, and `keywords`
+- Routes are built automatically as `#/<module-slug>/<viewId>?<params>`
+- Errors in one module's handler don't affect others
+
+## Module Search (Scoped Search)
+
+Modules can declare searchable views that appear in the command palette's scoped search. When a user selects a searchable view, the palette shows a pill (e.g., "People & Teams → Team Directory") and a text input. Typing a query and pressing Enter navigates to the module's view with the search term as a URL param — the module's own search engine handles the query.
+
+This is separate from [Search Index](#search-index): the search index contributes individual data items to global search, while module search declares individual views as scoped search targets.
+
+### Declaration
+
+Add a `search` object to `module.json` with a `views` array. Each entry registers one searchable view. View labels are auto-discovered from `navItems` — no hardcoded display names:
+
+```json
+{
+  "search": {
+    "enabled": true,
+    "keywords": ["person", "member", "engineer", "team", "manager"],
+    "views": [
+      { "viewId": "home", "paramName": "search", "placeholder": "Search teams, orgs..." },
+      { "viewId": "people", "paramName": "q", "placeholder": "Search people..." }
+    ]
+  }
+}
+```
+
+### Fields
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `enabled` | Yes | — | Opt-in flag. Only `true` modules appear as scoped search targets |
+| `views` | Yes | — | Array of searchable views (see below) |
+| `keywords` | No | `[]` | Extra terms that boost this module in regular (non-slash) search |
+
+Each entry in `views`:
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `viewId` | Yes | — | View ID that receives the search param (must match a navItem id or hiddenRoute) |
+| `paramName` | No | `"q"` | URL param name for the search term |
+| `placeholder` | No | `"Search in <name>..."` | Hint text shown in the scoped search input |
+
+### How It Works
+
+- **Suggestion Mode**: User types a search term → matching views appear as suggestions with a "Module" badge. Matches are ranked by relevance (more field matches score higher).
+- **Scoped Mode**: Selecting a view shows a glass chip breadcrumb in the search bar (e.g., "People & Teams › Team Directory"). The user types a query and sees a single "Go to results" row. Pressing Enter navigates to `#/<slug>/<viewId>?<paramName>=<term>` and closes the palette.
+- **History**: Each scope (main search vs. each module view) maintains its own separate search history, accessible via ↑↓ arrow keys.
+- **Exit**: Pressing Escape or Backspace on an empty input exits scoped mode (returns to portal search). A second Escape closes the palette.
+- **Search Execution**: The target view reads the param via `inject('moduleNav').params.value.<paramName>` and executes its own search.
+- **Validation**: `npm run validate:modules` enforces `search.views` is an array with valid `viewId` values.
+
 ## PR Checklist
 
 - [ ] `module.json` has all required fields

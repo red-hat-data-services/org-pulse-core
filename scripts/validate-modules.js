@@ -255,6 +255,88 @@ function validate() {
       }
     }
 
+    // Search index validation
+    if (manifest.searchIndex !== undefined) {
+      if (!Array.isArray(manifest.searchIndex)) {
+        error(`searchIndex must be an array`)
+      } else {
+        const requiredStringFields = ['source', 'items', 'label', 'context', 'viewId']
+        for (let i = 0; i < manifest.searchIndex.length; i++) {
+          const entry = manifest.searchIndex[i]
+          const prefix = `searchIndex[${i}]`
+          for (const field of requiredStringFields) {
+            if (!entry[field] || typeof entry[field] !== 'string') {
+              error(`${prefix} missing required string field "${field}"`)
+            }
+          }
+          if (entry.fallbackLabel !== undefined && typeof entry.fallbackLabel !== 'string') {
+            error(`${prefix} "fallbackLabel" must be a string`)
+          }
+          if (entry.params !== undefined && (typeof entry.params !== 'object' || Array.isArray(entry.params))) {
+            error(`${prefix} "params" must be an object`)
+          }
+          if (entry.filter !== undefined && (typeof entry.filter !== 'object' || Array.isArray(entry.filter))) {
+            error(`${prefix} "filter" must be an object`)
+          }
+          if (entry.keywords !== undefined) {
+            if (!Array.isArray(entry.keywords)) {
+              error(`${prefix} "keywords" must be an array of strings`)
+            } else {
+              for (const kw of entry.keywords) {
+                if (typeof kw !== 'string') {
+                  error(`${prefix} "keywords" entries must be strings`)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Search capability validation
+    if (manifest.search !== undefined) {
+      if (typeof manifest.search !== 'object' || Array.isArray(manifest.search) || manifest.search === null) {
+        error(`"search" must be an object`)
+      } else {
+        const s = manifest.search
+        if (typeof s.enabled !== 'boolean') {
+          error(`search.enabled must be a boolean`)
+        }
+        const navIds = (manifest.client?.navItems || []).map(n => n.id)
+        const hiddenIds = Object.keys(manifest.client?.hiddenRoutes || {})
+        if (!Array.isArray(s.views)) {
+          error(`search.views is required and must be an array`)
+        } else {
+          for (let i = 0; i < s.views.length; i++) {
+            const v = s.views[i]
+            const prefix = `search.views[${i}]`
+            if (!v.viewId || typeof v.viewId !== 'string') {
+              error(`${prefix}.viewId is required and must be a string`)
+            } else if (!navIds.includes(v.viewId) && !hiddenIds.includes(v.viewId)) {
+              error(`${prefix}.viewId "${v.viewId}" must match a navItem id or hiddenRoute`)
+            }
+            if (v.paramName !== undefined && typeof v.paramName !== 'string') {
+              error(`${prefix}.paramName must be a string`)
+            }
+            if (v.placeholder !== undefined && typeof v.placeholder !== 'string') {
+              error(`${prefix}.placeholder must be a string`)
+            }
+          }
+        }
+        if (s.keywords !== undefined) {
+          if (!Array.isArray(s.keywords)) {
+            error(`search.keywords must be an array of strings`)
+          } else {
+            for (const kw of s.keywords) {
+              if (typeof kw !== 'string') {
+                error(`search.keywords entries must be strings`)
+              }
+            }
+          }
+        }
+      }
+    }
+
     // Export field validation
     if (manifest.export) {
       if (manifest.export.files !== undefined && !Array.isArray(manifest.export.files)) {

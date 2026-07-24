@@ -81,6 +81,7 @@ npm run dev:full       # Starts Vite (5173) + Express (3001)
 - Hash routing: `#/<module-slug>/<view-id>?key=value`.
 - Backend routes mounted at `/api/modules/<slug>/`.
 - Navigation: `inject('moduleNav')` → `navigateTo(viewId, params)`, `goBack()`.
+- **Module search**: Modules declare `search` in `module.json` with a `views` array of `{ viewId, paramName, placeholder }` to register searchable views. The palette shows a scoped search mode: selecting a module view displays a glass chip (breadcrumb) in the search bar, then the user types their query and presses Enter to navigate to `#/<slug>/<viewId>?<paramName>=<term>`. Search history is kept separate per scope (main vs. each module view). See `docs/MODULES.md` § Module Search.
 
 ### Caching
 - Frontend: localStorage stale-while-revalidate (prefix `tt_cache:`).

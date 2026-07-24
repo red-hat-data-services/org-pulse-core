@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, inject } from 'vue'
+import { ref, computed, onMounted, watch, inject } from 'vue'
 import { apiRequest } from '@shared/client/services/api.js'
 import { useFieldDefinitions } from '@shared/client/composables/useFieldDefinitions'
 import { useFieldFilters } from '../composables/useFieldFilters'
@@ -268,7 +268,16 @@ function exportCsv() {
   URL.revokeObjectURL(url)
 }
 
-onMounted(loadData)
+onMounted(async () => {
+  await loadData()
+  if (nav.params.value?.q) {
+    search.value = nav.params.value.q
+  }
+})
+
+watch(() => nav.params.value?.q, (val) => {
+  if (val) search.value = val
+})
 </script>
 
 <template>
