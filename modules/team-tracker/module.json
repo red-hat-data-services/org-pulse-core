@@ -58,6 +58,14 @@
   "server": {
     "entry": "./server/index.js"
   },
+  "search": {
+    "enabled": true,
+    "keywords": ["person", "member", "engineer", "team", "manager", "org"],
+    "views": [
+      { "viewId": "home", "paramName": "search", "placeholder": "Search teams, orgs..." },
+      { "viewId": "people", "paramName": "q", "placeholder": "Search people..." }
+    ]
+  },
   "defaultEnabled": true,
   "requires": [],
   "secrets": {

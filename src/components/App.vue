@@ -47,8 +47,8 @@
       </div>
 
       <!-- Top bar -->
-      <header class="sticky top-0 z-10 bg-white/80 dark:bg-gray-800/80 backdrop-blur-xl border-b border-gray-200/60 dark:border-gray-700/60">
-        <div class="flex items-center justify-between px-6 lg:px-8 h-16">
+      <header class="relative sticky top-0 z-10 bg-white/80 dark:bg-gray-800/80 backdrop-blur-xl border-b border-gray-200/60 dark:border-gray-700/60">
+        <div class="relative flex items-center justify-between px-6 lg:px-8 h-16">
           <div class="flex items-center gap-4">
             <!-- Mobile menu button -->
             <button
@@ -67,6 +67,20 @@
               </div>
             </div>
           </div>
+          <button
+            v-if="!showCommandPalette"
+            @click="showCommandPalette = true; usedThisSession = true; fetchSearchIndex()"
+            :class="[
+              'absolute left-1/2 -translate-x-1/2 hidden sm:flex items-center gap-2 px-4 py-1.5 text-sm rounded-md cursor-pointer transition-all duration-200',
+              !usedThisSession
+                ? 'search-hint-breathe scope-chip-btn'
+                : 'scope-chip-btn'
+            ]"
+          >
+            <span class="font-medium tracking-wide">press</span>
+            <kbd class="px-2 py-0.5 text-xs font-bold rounded-md border shadow-sm bg-white/90 dark:bg-orange-900/50" style="color: #93480a; border-color: rgba(236, 122, 8, 0.35);">/</kbd>
+            <span class="font-medium tracking-wide">to explore</span>
+          </button>
           <div class="flex items-center gap-3">
             <!-- Open in new tab for git-static modules -->
             <a
@@ -193,6 +207,20 @@
     <BackendConnectivityModal />
 
     <component v-for="(widget, slug) in floatingWidgets" :key="slug" :is="widget" />
+
+    <CommandPalette
+      v-if="showCommandPalette"
+      :manifests="builtInManifests"
+      :is-admin="authIsAdmin"
+      :is-team-admin="authIsTeamAdmin"
+      :is-manager="authIsManager"
+      :roles="authRoles"
+      :team-data-source="rosterData?.teamDataSource || ''"
+      :search-index-items="searchIndexItems"
+      @navigate="handlePaletteNavigate"
+      @action="handlePaletteAction"
+      @close="showCommandPalette = false"
+    />
   </div>
 </template>
 
@@ -208,6 +236,7 @@ import AppSidebar from './AppSidebar.vue'
 import LandingPage from './LandingPage.vue'
 import ModuleIframeView from './ModuleIframeView.vue'
 import BackendConnectivityModal from './BackendConnectivityModal.vue'
+import CommandPalette from './CommandPalette.vue'
 import AppMessages from '@shared/client/components/AppMessages.vue'
 import { computed, ref, readonly, provide, onUnmounted, watch, shallowRef } from 'vue'
 import { useAuth } from '@shared/client/composables/useAuth'
@@ -245,6 +274,7 @@ export default {
     LandingPage,
     ModuleIframeView,
     BackendConnectivityModal,
+    CommandPalette,
     AppMessages
   },
   setup() {
@@ -503,6 +533,9 @@ export default {
       showRefreshModal: false,
       sidebarCollapsed: false,
       mobileMenuOpen: false,
+      showCommandPalette: false,
+      usedThisSession: false,
+      searchIndexItems: [],
       settingsInitialTab: null,
       aboutInitialTab: null,
       toasts: []
@@ -561,6 +594,46 @@ export default {
         e.preventDefault()
         this.sidebarCollapsed = !this.sidebarCollapsed
       }
+      if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const el = document.activeElement
+        if (el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.isContentEditable) return
+        if (this.showCommandPalette) return
+        e.preventDefault()
+        this.showCommandPalette = true
+        this.usedThisSession = true
+        this.fetchSearchIndex()
+      }
+    },
+
+    handlePaletteNavigate(slug, viewId, params) {
+      this.showCommandPalette = false
+      let hash = '#/' + slug + '/' + viewId
+      if (params) {
+        const qs = new URLSearchParams(params).toString()
+        if (qs) hash += '?' + qs
+      }
+      window.location.hash = hash
+    },
+
+    handlePaletteAction(actionId) {
+      this.showCommandPalette = false
+      if (actionId === 'toggle-theme') this.cycleTheme()
+      else if (actionId === 'toggle-sidebar') this.sidebarCollapsed = !this.sidebarCollapsed
+      else if (actionId === 'go-settings') window.location.hash = '#/settings'
+      else if (actionId === 'go-about') window.location.hash = '#/about'
+      else if (actionId === 'go-home') window.location.hash = '#/'
+    },
+
+    async fetchSearchIndex() {
+      if (this.searchIndexItems.length > 0) return
+      try {
+        const res = await fetch('/api/search-index')
+        if (res.ok) {
+          this.searchIndexItems = await res.json()
+        }
+      } catch {
+        // search index is optional
+      }
     },
 
     async loadInitialData() {
@@ -615,9 +688,9 @@ export default {
       const parts = pathPart.split('/').map(decodeURIComponent).filter(Boolean)
       const params = {}
       if (queryPart) {
-        for (const pair of queryPart.split('&')) {
-          const [k, v] = pair.split('=').map(decodeURIComponent)
-          if (k) params[k] = v || ''
+        const decoded = new URLSearchParams(queryPart)
+        for (const [k, v] of decoded) {
+          params[k] = v
         }
       }
       return { parts, params }

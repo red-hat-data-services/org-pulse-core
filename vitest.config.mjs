@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
+import navDiscovery from './build/vite-plugin-nav-discovery.js'
 import path from 'path'
 
 const sharedExclude = [
@@ -11,7 +12,7 @@ const sharedExclude = [
 ]
 
 const sharedConfig = {
-  plugins: [vue()],
+  plugins: [vue(), navDiscovery()],
   resolve: {
     alias: {
       '@/': path.resolve(__dirname, 'src') + '/',
@@ -38,6 +39,7 @@ export default defineConfig({
             'shared/server/**/*.{test,spec}.js',
             'modules/*/server/**/*.{test,spec}.js',
             'modules/*/__tests__/server/**/*.{test,spec}.js',
+            'build/**/*.{test,spec}.js',
           ],
         },
       },
@@ -54,6 +56,7 @@ export default defineConfig({
             'shared/server/**',
             'modules/*/server/**',
             'modules/*/__tests__/server/**',
+            'build/**',
           ],
         },
       },
