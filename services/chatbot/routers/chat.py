@@ -8,6 +8,7 @@ import time
 import uuid
 
 from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse
 
 from pydantic_ai.messages import (
@@ -31,6 +32,7 @@ from agent import (
 )
 from models import ChatRequest, ChatResponse
 from prompts.system import SYSTEM_PROMPT
+from services.org_pulse_client import PerRequestClient
 from structured_logging import log_event
 from tools import ALL_TOOLS, retry_events
 
@@ -49,6 +51,19 @@ _NOT_CONFIGURED_MESSAGE = (
     "The AI assistant is not available yet — LLM credentials have not been configured. "
     "Please contact an administrator."
 )
+
+_AUTH_MISSING_MESSAGE = (
+    "Authentication headers missing. The chatbot must be accessed through the main application."
+)
+
+
+def _extract_auth(http_request: Request) -> tuple[str, str] | None:
+    """Extract and validate proxy auth headers. Returns (proxy_secret, user_email) or None."""
+    proxy_secret = http_request.headers.get("x-proxy-secret", "").strip()
+    user_email = http_request.headers.get("x-forwarded-email", "").strip()
+    if not proxy_secret or not user_email:
+        return None
+    return proxy_secret, user_email
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +330,11 @@ def _llm_error_message(exc: Exception) -> str:
 async def chat(request: ChatRequest, http_request: Request):
     request_id = uuid.uuid4().hex[:12]
 
+    auth = _extract_auth(http_request)
+    if not auth:
+        return JSONResponse(status_code=401, content={"error": _AUTH_MISSING_MESSAGE})
+    proxy_secret, user_email = auth
+
     agent = http_request.app.state.agent
     if not agent:
         return ChatResponse(message=_NOT_CONFIGURED_MESSAGE, trace={"request_id": request_id})
@@ -322,8 +342,8 @@ async def chat(request: ChatRequest, http_request: Request):
     retries: list[dict] = []
     retry_events.set(retries)
 
-    org_pulse_client = http_request.app.state.org_pulse_client
-    org_pulse_client.clear_cache()
+    shared_client = http_request.app.state.org_pulse_client
+    org_pulse_client = PerRequestClient(shared_client, proxy_secret, user_email)
     message_history = _convert_history(request.history)
     turn = _count_turns(request.history) + 1
 
@@ -455,6 +475,11 @@ _SENTINEL = object()
 async def chat_stream(request: ChatRequest, http_request: Request):
     request_id = uuid.uuid4().hex[:12]
 
+    auth = _extract_auth(http_request)
+    if not auth:
+        return JSONResponse(status_code=401, content={"error": _AUTH_MISSING_MESSAGE})
+    proxy_secret, user_email = auth
+
     agent = http_request.app.state.agent
     if not agent:
         async def _not_configured():
@@ -515,8 +540,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
     else:
         run_toolsets, tool_selection, selector_ms = await selector_coro
 
-    org_pulse_client = http_request.app.state.org_pulse_client
-    org_pulse_client.clear_cache()
+    shared_client = http_request.app.state.org_pulse_client
+    org_pulse_client = PerRequestClient(shared_client, proxy_secret, user_email)
     message_history = _convert_history(request.history)
     turn = _count_turns(request.history) + 1
 

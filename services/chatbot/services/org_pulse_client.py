@@ -42,9 +42,9 @@ class OrgPulseClient:
     async def close(self):
         await self._client.aclose()
 
-    async def _get(self, path: str, params: dict | None = None) -> dict | list | None:
+    async def _get(self, path: str, params: dict | None = None, extra_headers: dict | None = None) -> dict | list | None:
         try:
-            resp = await self._client.get(path, params=params)
+            resp = await self._client.get(path, params=params, headers=extra_headers)
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPStatusError as exc:
@@ -53,6 +53,53 @@ class OrgPulseClient:
         except httpx.RequestError as exc:
             logger.error("API request failed for %s: %s", path, exc)
             return None
+
+    async def get_roster(self) -> dict | None:
+        if "roster" in self._cache:
+            return self._cache["roster"]
+        data = await self._get("/api/modules/team-tracker/roster")
+        if data is not None:
+            self._cache["roster"] = data
+        return data
+
+    async def get_teams(self) -> list | None:
+        return await self._get("/api/modules/team-tracker/structure/teams")
+
+    async def get_person_metrics(self, name: str) -> dict | None:
+        return await self._get(f"/api/modules/team-tracker/person/{quote(name, safe='')}/metrics")
+
+    async def get_snapshots(self, team_key: str) -> list | None:
+        return await self._get(f"/api/modules/team-tracker/snapshots/{quote(team_key, safe='')}")
+
+    async def get_github_contributions(self) -> dict | None:
+        return await self._get("/api/modules/team-tracker/github/contributions")
+
+    async def get_gitlab_contributions(self) -> dict | None:
+        return await self._get("/api/modules/team-tracker/gitlab/contributions")
+
+
+class PerRequestClient:
+    """Lightweight wrapper that adds per-request auth headers to a shared OrgPulseClient.
+
+    Uses the shared httpx.AsyncClient for connection pooling but injects
+    X-Proxy-Secret and X-Forwarded-Email on every request. Maintains its own
+    independent cache so concurrent requests with different user identities
+    don't cross-contaminate.
+    """
+
+    def __init__(self, shared_client: OrgPulseClient, proxy_secret: str, user_email: str):
+        self._shared = shared_client
+        self._extra_headers = {
+            "X-Proxy-Secret": proxy_secret,
+            "X-Forwarded-Email": user_email,
+        }
+        self._cache: dict = {}
+
+    def clear_cache(self):
+        self._cache = {}
+
+    async def _get(self, path: str, params: dict | None = None) -> dict | list | None:
+        return await self._shared._get(path, params=params, extra_headers=self._extra_headers)
 
     async def get_roster(self) -> dict | None:
         if "roster" in self._cache:
