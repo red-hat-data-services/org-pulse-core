@@ -94,5 +94,8 @@
   },
   "lint-staged": {
     "*.{js,mjs,cjs,vue}": "eslint --fix"
+  },
+  "overrides": {
+    "brace-expansion": "^5.0.8"
   }
 }
