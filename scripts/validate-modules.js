@@ -255,6 +255,19 @@ function validate() {
       }
     }
 
+    // Fixtures field validation
+    if (manifest.fixtures !== undefined) {
+      if (typeof manifest.fixtures !== 'object' || Array.isArray(manifest.fixtures)) {
+        error(`fixtures must be an object mapping fixture filenames to collection names`)
+      } else {
+        for (const [file, collection] of Object.entries(manifest.fixtures)) {
+          if (typeof collection !== 'string' || !collection) {
+            error(`fixtures["${file}"] must be a non-empty string (collection name)`)
+          }
+        }
+      }
+    }
+
     // Export field validation
     if (manifest.export) {
       if (manifest.export.files !== undefined && !Array.isArray(manifest.export.files)) {

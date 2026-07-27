@@ -68,6 +68,18 @@
       "description": "Per-instance GitLab tokens configured via Settings UI (gitlabInstances)"
     }
   },
+  "fixtures": {
+    "team-data/registry.json": "registry",
+    "team-data/teams.json": "teams",
+    "team-data/field-definitions.json": "field-definitions",
+    "team-data/field-exceptions.json": "field-exceptions",
+    "team-data/config.json": "config",
+    "github-contributions.json": "github-contributions",
+    "github-history.json": "github-history",
+    "gitlab-contributions.json": "gitlab-contributions",
+    "gitlab-history.json": "gitlab-history",
+    "jira-name-map.json": "jira-name-map"
+  },
   "export": {
     "files": [
       { "path": "team-data/registry.json", "notes": "People registry (lifecycle, identities, enrichment)" },

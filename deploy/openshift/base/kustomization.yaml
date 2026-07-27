@@ -13,6 +13,7 @@ resources:
 - cronjob-sync-refresh.yaml
 - chatbot-deployment.yaml
 - chatbot-service.yaml
+- db-service.yaml
 
 configMapGenerator:
 - literals:
@@ -22,6 +23,7 @@ configMapGenerator:
   - ADMIN_EMAILS=
   - CRON_ADMIN_EMAIL=
   - CHATBOT_SERVICE_URL=http://chatbot:8002
+  - DB_NAME=org-pulse
   name: team-tracker-config
 - files:
   - app.conf.template=nginx-app.conf.template

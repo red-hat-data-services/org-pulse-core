@@ -18,6 +18,7 @@
  * @property {object} [roleRegistry]   - Role registry for registerRole
  * @property {object} [scopeRegistry]  - Scope registry for registerScopes
  * @property {object} [secretRegistry] - Secret registry for module secrets
+ * @property {object} [dbConnection]   - Mongoose connection for scoped DB access
  */
 
 /**
@@ -53,6 +54,7 @@
  * @property {Function} resolveSecret - Dynamic secret lookup: resolveSecret(envVarName) => string|undefined. Warning: v1 does not enforce module isolation — any module can resolve any env var. Logs a warning for undeclared access.
  * @property {Function} registerSecretValidator - Register an async validator for a secret key
  * @property {Function} RefreshSkip - Constructor: new RefreshSkip(reason) — return from a refresh handler to signal a skip without consuming cadence
+ * @property {object|null} db - Scoped database factory: db.model(name, schema) returns a Mongoose model on a namespaced collection. Null when MongoDB is not configured.
  */
 
 /**
@@ -78,6 +80,7 @@ function buildModuleContext(coreServices, slug, registries = {}) {
   const roleRegistry = coreServices.roleRegistry || null
   const scopeRegistry = coreServices.scopeRegistry || null
   const secretRegistry = coreServices.secretRegistry || null
+  const dbConnection = coreServices.dbConnection || null
   const githubAppToken = require('./github-app-token')
   const { RefreshSkip } = require('./refresh-registry')
 
@@ -162,6 +165,10 @@ function buildModuleContext(coreServices, slug, registries = {}) {
       ? function (key, fn) { secretRegistry.registerValidator(key, fn) }
       : function () {},
 
+    db: dbConnection
+      ? require('./scoped-db').createScopedDb(dbConnection, slug)
+      : null,
+
     allocationStrategy: coreServices.allocationStrategy || null,
 
     RefreshSkip
@@ -211,6 +218,7 @@ function createTestContext(overrides = {}) {
     secrets: {},
     resolveSecret: function () { return undefined },
     registerSecretValidator: noop,
+    db: null,
     allocationStrategy: null
   }
 
