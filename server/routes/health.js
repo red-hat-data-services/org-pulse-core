@@ -71,7 +71,8 @@ function registerPreAuthRoutes(app, context) {
           order: mod.order,
           client: mod.client ? JSON.parse(JSON.stringify(mod.client)) : undefined,
           requires: mod.requires || [],
-          defaultEnabled: mod.defaultEnabled
+          defaultEnabled: mod.defaultEnabled,
+          search: mod.search || undefined
         };
 
         // Merge navItems from module-views platform extensions targeting this module

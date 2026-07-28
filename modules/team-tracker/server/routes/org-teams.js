@@ -738,6 +738,32 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
     triggerOrgSync();
   });
 
+  // ─── Search Index ───
+
+  if (context.registerSearchIndex) {
+    context.registerSearchIndex(async function () {
+      try {
+        const { teams } = await buildEnrichedTeams();
+        return teams.map(function (t) {
+          var keywords = [];
+          if (t.components) keywords.push.apply(keywords, t.components);
+          if (t.engLeads) keywords.push.apply(keywords, t.engLeads);
+          if (t.productManagers) keywords.push.apply(keywords, t.productManagers);
+          return {
+            label: t.name,
+            context: 'Team',
+            viewId: 'home',
+            params: { search: t.name },
+            keywords: keywords
+          };
+        });
+      } catch (err) {
+        console.error('[team-tracker] Search index handler failed:', err.message);
+        return [];
+      }
+    });
+  }
+
   // ─── Schedule org sync ───
 
   if (!DEMO_MODE) {

@@ -107,7 +107,7 @@ make test-module MODULE=people-teams  # Run integration tests
 
 ## Tech Stack
 
-- **Frontend**: Vue 3, Vite 8, Tailwind CSS 3, Chart.js 4
+- **Frontend**: Vue 3, Vite 8, Tailwind CSS 3, Chart.js 4, Command Palette (`/` key)
 - **Backend**: Express (single server for local dev and production)
 - **Auth**: OpenShift OAuth proxy (production), no auth (local dev)
 - **Database**: MongoDB (Mongoose), optional in-memory fallback for local dev
