@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import navDiscovery from './build/vite-plugin-nav-discovery.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -22,7 +23,8 @@ export function createViteConfig(options = {}) {
   return defineConfig({
     root: projectRoot,
     plugins: [
-      vue()
+      vue(),
+      navDiscovery()
     ],
     resolve: {
       alias: {

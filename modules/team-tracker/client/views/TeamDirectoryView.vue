@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, inject } from 'vue'
+import { ref, computed, onMounted, watch, inject } from 'vue'
 import { useOrgRoster } from '../composables/useOrgRoster'
 import { useRoster } from '@shared/client/composables/useRoster'
 import { usePermissions } from '@shared/client/composables/usePermissions'
@@ -53,6 +53,13 @@ onMounted(async () => {
   if (nav.params.value?.org) {
     selectedOrg.value = nav.params.value.org
   }
+  if (nav.params.value?.search) {
+    searchQuery.value = nav.params.value.search
+  }
+})
+
+watch(() => nav.params.value?.search, (val) => {
+  if (val) searchQuery.value = val
 })
 </script>
 
