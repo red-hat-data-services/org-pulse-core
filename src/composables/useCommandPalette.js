@@ -250,12 +250,19 @@ export function useCommandPalette({ manifests, isAdmin, roles, isTeamAdmin, isMa
       })
 
     const results = []
+    const seenIds = new Set()
+    let primaryCount = 0
     let kwOnlyCount = 0
     for (const entry of scored) {
+      if (seenIds.has(entry.item.id)) continue
       if (entry.keywordOnly) {
-        if (kwOnlyCount >= MAX_KEYWORD_ONLY) continue
+        const kwCap = primaryCount >= 3 ? 0 : primaryCount >= 1 ? 1 : MAX_KEYWORD_ONLY
+        if (kwOnlyCount >= kwCap) continue
         kwOnlyCount++
+      } else {
+        primaryCount++
       }
+      seenIds.add(entry.item.id)
       results.push(entry.matchedKeyword ? { ...entry.item, matchedKeyword: entry.matchedKeyword } : entry.item)
       if (results.length >= MAX_RESULTS) break
     }

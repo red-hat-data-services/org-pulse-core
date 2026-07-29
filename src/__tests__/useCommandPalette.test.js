@@ -300,17 +300,46 @@ describe('useCommandPalette', () => {
   })
 
   describe('keyword-only match scoring', () => {
-    it('caps keyword-only results to prevent tag flooding', () => {
+    it('shows keyword-only results up to cap when no primary matches', () => {
       const items = Array.from({ length: 10 }, (_, i) => ({
-        module: 'releases', label: 'Feature ' + i, context: 'Releases',
-        viewId: 'execute', params: { feature: 'TEST-' + i }, keywords: ['Conforma']
+        module: 'test', label: 'Feature ' + i, context: 'Test',
+        viewId: 'v', params: { feature: 'TEST-' + i }, keywords: ['zzuniquekw']
       }))
-      const { searchQuery, filteredResults } = createPalette({ searchIndexItems: items })
-      searchQuery.value = 'conforma'
-      const labels = filteredResults.value.map(r => r.label)
-      expect(labels).toContain('Conforma Insights')
+      const { searchQuery, filteredResults } = createPalette({
+        manifests: [{ slug: 'test', name: 'Test', client: { navItems: [] } }],
+        searchIndexItems: items
+      })
+      searchQuery.value = 'zzuniquekw'
       const kwOnlyItems = filteredResults.value.filter(r => r.label.startsWith('Feature '))
       expect(kwOnlyItems.length).toBeLessThanOrEqual(3)
+      expect(kwOnlyItems.length).toBeGreaterThan(0)
+    })
+
+    it('suppresses keyword-only results when 3+ primary matches exist', () => {
+      const { searchQuery, filteredResults } = createPalette({
+        searchIndexItems: [
+          { module: 'test', label: 'DevOps Alpha', context: 'Team', viewId: 'home', params: { search: 'DevOps Alpha' }, keywords: [] },
+          { module: 'test', label: 'DevOps Beta', context: 'Team', viewId: 'home', params: { search: 'DevOps Beta' }, keywords: [] },
+          { module: 'test', label: 'DevOps Gamma', context: 'Team', viewId: 'home', params: { search: 'DevOps Gamma' }, keywords: [] },
+          { module: 'test', label: 'Spreadsheet Import', context: 'Customer Insights', viewId: 'import', params: {}, keywords: ['DevOps'] },
+        ]
+      })
+      searchQuery.value = 'devops'
+      const importResult = filteredResults.value.find(r => r.label === 'Spreadsheet Import')
+      expect(importResult).toBeUndefined()
+    })
+
+    it('allows 1 keyword-only result when 1-2 primary matches exist', () => {
+      const { searchQuery, filteredResults } = createPalette({
+        searchIndexItems: [
+          { module: 'test', label: 'DevOps Alpha', context: 'Team', viewId: 'home', params: { search: 'DevOps Alpha' }, keywords: [] },
+          { module: 'test', label: 'Unrelated A', context: 'Other', viewId: 'v', params: { id: '1' }, keywords: ['DevOps'] },
+          { module: 'test', label: 'Unrelated B', context: 'Other', viewId: 'v', params: { id: '2' }, keywords: ['DevOps'] },
+        ]
+      })
+      searchQuery.value = 'devops'
+      const kwOnly = filteredResults.value.filter(r => r.label.startsWith('Unrelated'))
+      expect(kwOnly.length).toBe(1)
     })
 
     it('label match ranks above keyword-only match', () => {
@@ -357,6 +386,70 @@ describe('useCommandPalette', () => {
       const ids = allItems.value.map(r => r.id)
       const dupes = ids.filter((id, i) => ids.indexOf(id) !== i)
       expect(dupes).toEqual([])
+    })
+  })
+
+  describe('duplicate ID deduplication in filteredResults', () => {
+    it('collapses truly identical data items (same ID) into one result', () => {
+      const { searchQuery, filteredResults } = createPalette({
+        searchIndexItems: [
+          { module: 'team-tracker', label: 'DevOps & InfraOps', context: 'Team', viewId: 'home', params: { search: 'DevOps & InfraOps' }, keywords: [] },
+          { module: 'team-tracker', label: 'DevOps & InfraOps', context: 'Team', viewId: 'home', params: { search: 'DevOps & InfraOps' }, keywords: [] },
+        ]
+      })
+      searchQuery.value = 'devops'
+      const devopsResults = filteredResults.value.filter(r => r.label === 'DevOps & InfraOps')
+      expect(devopsResults.length).toBe(1)
+    })
+
+    it('keeps items with same label but different params (distinct destinations)', () => {
+      const { searchQuery, filteredResults } = createPalette({
+        searchIndexItems: [
+          { module: 'team-tracker', label: 'DevOps & InfraOps', context: 'Team — Org A', viewId: 'home', params: { search: 'DevOps & InfraOps', org: 'Org A' }, keywords: [] },
+          { module: 'team-tracker', label: 'DevOps & InfraOps', context: 'Team — Org B', viewId: 'home', params: { search: 'DevOps & InfraOps', org: 'Org B' }, keywords: [] },
+          { module: 'team-tracker', label: 'DevOps & InfraOps', context: 'Team — Org C', viewId: 'home', params: { search: 'DevOps & InfraOps', org: 'Org C' }, keywords: [] },
+        ]
+      })
+      searchQuery.value = 'devops'
+      const devopsResults = filteredResults.value.filter(r => r.label === 'DevOps & InfraOps')
+      expect(devopsResults.length).toBe(3)
+      const sublabels = devopsResults.map(r => r.sublabel)
+      expect(sublabels).toContain('Team — Org A')
+      expect(sublabels).toContain('Team — Org B')
+      expect(sublabels).toContain('Team — Org C')
+    })
+
+    it('all filteredResults have unique IDs for v-for key stability', () => {
+      const { searchQuery, filteredResults } = createPalette({
+        searchIndexItems: [
+          { module: 'team-tracker', label: 'DevOps & InfraOps', context: 'Team — Org A', viewId: 'home', params: { search: 'DevOps & InfraOps', org: 'Org A' }, keywords: [] },
+          { module: 'team-tracker', label: 'DevOps & InfraOps', context: 'Team — Org B', viewId: 'home', params: { search: 'DevOps & InfraOps', org: 'Org B' }, keywords: [] },
+          { module: 'team-tracker', label: 'General', context: 'Team', viewId: 'home', params: { search: 'General' }, keywords: ['DevOps'] },
+        ]
+      })
+      searchQuery.value = 'devops'
+      const ids = filteredResults.value.map(r => r.id)
+      const dupes = ids.filter((id, i) => ids.indexOf(id) !== i)
+      expect(dupes).toEqual([])
+    })
+
+    it('keyboard navigation covers all results when same-label items have distinct params', () => {
+      const { searchQuery, filteredResults, selectedIndex, selectNext } = createPalette({
+        searchIndexItems: [
+          { module: 'team-tracker', label: 'DevOps & InfraOps', context: 'Team — Org A', viewId: 'home', params: { search: 'DevOps & InfraOps', org: 'Org A' }, keywords: [] },
+          { module: 'team-tracker', label: 'DevOps & InfraOps', context: 'Team — Org B', viewId: 'home', params: { search: 'DevOps & InfraOps', org: 'Org B' }, keywords: [] },
+          { module: 'team-tracker', label: 'General', context: 'Team', viewId: 'home', params: { search: 'General' }, keywords: ['AI Platform DevOps'] },
+        ]
+      })
+      searchQuery.value = 'devops'
+      const resultCount = filteredResults.value.length
+      expect(resultCount).toBe(3)
+      const visited = new Set()
+      for (let i = 0; i < resultCount; i++) {
+        visited.add(selectedIndex.value)
+        selectNext()
+      }
+      expect(visited.size).toBe(resultCount)
     })
   })
 
