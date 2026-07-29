@@ -15,6 +15,7 @@
     "./tailwind": "./tailwind.config.mjs",
     "./eslint": "./eslint.config.mjs",
     "./postcss": "./postcss.config.mjs",
+    "./build/*": "./build/*",
     "./scripts/*": "./scripts/*",
     "./package.json": "./package.json"
   },
