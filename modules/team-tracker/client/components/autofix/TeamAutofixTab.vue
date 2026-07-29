@@ -490,7 +490,9 @@ const timeWindows = [
   { value: 'week', label: 'Week' },
   { value: 'lastWeek', label: 'Last Week' },
   { value: 'month', label: 'Month' },
-  { value: '3months', label: '3 Months' }
+  { value: '3months', label: '3 Months' },
+  { value: '6months', label: '6 Months' },
+  { value: 'all', label: 'All Time' }
 ]
 
 const aiImpactEnabled = computed(() => {
@@ -531,9 +533,13 @@ const bugsMerged = computed(() => {
     windowStart = bounds.start
     windowEnd = bounds.end
   } else {
-    const days = timeWindow.value === 'week' ? 7 : timeWindow.value === 'month' ? 30 : 90
     windowEnd = Date.now()
-    windowStart = windowEnd - days * 24 * 60 * 60 * 1000
+    if (timeWindow.value === 'all') {
+      windowStart = 0
+    } else {
+      const days = timeWindow.value === 'week' ? 7 : timeWindow.value === 'month' ? 30 : timeWindow.value === '6months' ? 180 : 90
+      windowStart = windowEnd - days * 24 * 60 * 60 * 1000
+    }
   }
   return teamIssues.value.filter(i => {
     const ts = issueTimestamp(i, isLW)
@@ -631,9 +637,13 @@ const timeFilteredIssues = computed(() => {
     windowStart = bounds.start
     windowEnd = bounds.end
   } else {
-    const days = timeWindow.value === 'week' ? 7 : timeWindow.value === 'month' ? 30 : 90
     windowEnd = Date.now()
-    windowStart = windowEnd - days * 24 * 60 * 60 * 1000
+    if (timeWindow.value === 'all') {
+      windowStart = 0
+    } else {
+      const days = timeWindow.value === 'week' ? 7 : timeWindow.value === 'month' ? 30 : timeWindow.value === '6months' ? 180 : 90
+      windowStart = windowEnd - days * 24 * 60 * 60 * 1000
+    }
   }
   return teamIssues.value.filter(i => {
     const ts = issueTimestamp(i, isLW)
