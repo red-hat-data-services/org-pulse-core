@@ -77,9 +77,13 @@ export function computeTeamMetrics(issues, timeWindow) {
     windowStart = bounds.start
     windowEnd = bounds.end
   } else {
-    const days = timeWindow === 'week' ? 7 : timeWindow === 'month' ? 30 : 90
     windowEnd = Date.now()
-    windowStart = windowEnd - days * 24 * 60 * 60 * 1000
+    if (timeWindow === 'all') {
+      windowStart = 0
+    } else {
+      const days = timeWindow === 'week' ? 7 : timeWindow === 'month' ? 30 : timeWindow === '6months' ? 180 : 90
+      windowStart = windowEnd - days * 24 * 60 * 60 * 1000
+    }
   }
 
   const windowIssues = issues.filter(i => {
@@ -152,7 +156,7 @@ export function computeTeamMetrics(issues, timeWindow) {
  */
 export function buildTeamTrendData(issues, timeWindow) {
   const isLW = timeWindow === 'lastWeek'
-  const weekCounts = (timeWindow === 'week' || isLW) ? 4 : timeWindow === 'month' ? 8 : 13
+  const weekCounts = (timeWindow === 'week' || isLW) ? 4 : timeWindow === 'month' ? 8 : timeWindow === '6months' ? 26 : timeWindow === 'all' ? 52 : 13
   const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000
   let anchor
   if (isLW) {
