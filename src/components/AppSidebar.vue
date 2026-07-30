@@ -14,8 +14,10 @@
 
     <div class="flex flex-col h-full m-2.5 bg-white/80 dark:bg-gray-800/80 backdrop-blur-xl border border-gray-200/60 dark:border-gray-700/60 rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.03)] overflow-hidden">
       <!-- Header -->
-      <div
-        class="flex items-center py-5 border-b border-gray-100 dark:border-gray-700 transition-all duration-300"
+      <a
+        href="#/"
+        @click.prevent="$emit('navigate', 'home')"
+        class="flex items-center py-5 border-b border-gray-100 dark:border-gray-700 transition-all duration-300 no-underline cursor-pointer"
         :class="collapsed ? 'justify-center px-0' : 'gap-3 px-4'"
       >
         <img src="/redhat-logo.svg" alt="Red Hat" class="h-8 w-8 flex-shrink-0" />
@@ -25,7 +27,7 @@
             <p v-if="titlePrefix" class="text-xs text-gray-400 dark:text-gray-500">{{ titlePrefix }}</p>
           </div>
         </transition>
-      </div>
+      </a>
 
       <!-- Navigation -->
       <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
