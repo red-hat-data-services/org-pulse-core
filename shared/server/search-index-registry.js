@@ -132,7 +132,17 @@ function createSearchIndexRegistry() {
       }
     }
 
-    return results
+    var seen = new Set()
+    var deduped = []
+    for (var k = 0; k < results.length; k++) {
+      var r = results[k]
+      var key = (r.module || '') + '\0' + (r.label || '') + '\0' + (r.viewId || '') + '\0' + JSON.stringify(r.params || {})
+      if (!seen.has(key)) {
+        seen.add(key)
+        deduped.push(r)
+      }
+    }
+    return deduped
   }
 
   return { register, registerDeclarative, collect }

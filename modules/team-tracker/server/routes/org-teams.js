@@ -744,16 +744,21 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
     context.registerSearchIndex(async function () {
       try {
         const { teams } = await buildEnrichedTeams();
+        const nameCount = {};
+        for (const t of teams) {
+          nameCount[t.name] = (nameCount[t.name] || 0) + 1;
+        }
         return teams.map(function (t) {
           var keywords = [];
           if (t.components) keywords.push.apply(keywords, t.components);
           if (t.engLeads) keywords.push.apply(keywords, t.engLeads);
           if (t.productManagers) keywords.push.apply(keywords, t.productManagers);
+          var needsOrg = nameCount[t.name] > 1;
           return {
             label: t.name,
-            context: 'Team',
+            context: needsOrg ? 'Team — ' + t.org : 'Team',
             viewId: 'home',
-            params: { search: t.name },
+            params: needsOrg ? { search: t.name, org: t.org } : { search: t.name },
             keywords: keywords
           };
         });

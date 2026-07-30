@@ -368,5 +368,52 @@ describe('search-index-registry', () => {
       const results = await registry.collect(makeStorage())
       expect(results[0].module).toBe('my-slug')
     })
+
+    it('deduplicates entries with identical module + label + viewId + params', async () => {
+      const registry = createSearchIndexRegistry()
+      registry.register('mod', async () => [
+        { label: 'Team Alpha', viewId: 'home', params: { search: 'Team Alpha' } },
+        { label: 'Team Alpha', viewId: 'home', params: { search: 'Team Alpha' } },
+        { label: 'Team Alpha', viewId: 'home', params: { search: 'Team Alpha' } },
+      ])
+      const results = await registry.collect(makeStorage())
+      expect(results.length).toBe(1)
+      expect(results[0].label).toBe('Team Alpha')
+    })
+
+    it('keeps entries with same label but different params', async () => {
+      const registry = createSearchIndexRegistry()
+      registry.register('mod', async () => [
+        { label: 'Team Alpha', viewId: 'home', params: { search: 'Team Alpha', org: 'Org A' } },
+        { label: 'Team Alpha', viewId: 'home', params: { search: 'Team Alpha', org: 'Org B' } },
+      ])
+      const results = await registry.collect(makeStorage())
+      expect(results.length).toBe(2)
+    })
+
+    it('keeps entries with same label but different viewId', async () => {
+      const registry = createSearchIndexRegistry()
+      registry.register('mod', async () => [
+        { label: 'Overview', viewId: 'dashboard', params: {} },
+        { label: 'Overview', viewId: 'reports', params: {} },
+      ])
+      const results = await registry.collect(makeStorage())
+      expect(results.length).toBe(2)
+    })
+
+    it('deduplicates across declarative and handler sources', async () => {
+      const registry = createSearchIndexRegistry()
+      const storage = makeStorage({
+        'items.json': [{ name: 'Duplicate' }]
+      })
+      registry.registerDeclarative('mod', [{
+        source: 'items.json', label: 'name', viewId: 'v'
+      }])
+      registry.register('mod', async () => [
+        { label: 'Duplicate', viewId: 'v' }
+      ])
+      const results = await registry.collect(storage)
+      expect(results.length).toBe(1)
+    })
   })
 })
