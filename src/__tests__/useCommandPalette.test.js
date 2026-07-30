@@ -710,43 +710,14 @@ describe('useCommandPalette', () => {
       expect(searchHistory.value).toEqual([])
     })
 
-    it('historyPrev cycles through history', () => {
-      const { saveQuery, searchQuery, historyPrev } = createPalette()
-      saveQuery('first')
-      saveQuery('second')
-      historyPrev()
-      expect(searchQuery.value).toBe('second')
-      historyPrev()
-      expect(searchQuery.value).toBe('first')
-    })
-
-    it('historyPrev returns false when no history', () => {
-      const { historyPrev } = createPalette()
-      expect(historyPrev()).toBe(false)
-    })
-
-    it('historyNext returns to pending query', () => {
-      const { saveQuery, searchQuery, historyPrev, historyNext } = createPalette()
-      saveQuery('old')
-      searchQuery.value = 'current'
-      historyPrev()
-      expect(searchQuery.value).toBe('old')
-      historyNext()
-      expect(searchQuery.value).toBe('current')
-    })
-
-    it('historyNext returns false when not browsing', () => {
-      const { historyNext } = createPalette()
-      expect(historyNext()).toBe(false)
-    })
-
-    it('resetSelection resets history browsing state', () => {
-      const { saveQuery, historyPrev, historyIndex, resetSelection } = createPalette()
+    it('resetSelection clears searchQuery and selectedIndex', () => {
+      const { saveQuery, searchQuery, selectedIndex, resetSelection } = createPalette()
       saveQuery('test')
-      historyPrev()
-      expect(historyIndex.value).toBe(0)
+      searchQuery.value = 'test'
+      selectedIndex.value = 2
       resetSelection()
-      expect(historyIndex.value).toBe(-1)
+      expect(searchQuery.value).toBe('')
+      expect(selectedIndex.value).toBe(0)
     })
 
     it('persists history to localStorage', () => {
@@ -765,13 +736,6 @@ describe('useCommandPalette', () => {
       expect(searchHistory.value[0]).toBe('query-24')
     })
 
-    it('historyPrev stops at end of history', () => {
-      const { saveQuery, historyPrev } = createPalette()
-      saveQuery('only')
-      expect(historyPrev()).toBe(true)
-      expect(historyPrev()).toBe(false)
-    })
-
     it('loadHistory handles corrupted localStorage gracefully', () => {
       localStorage.setItem('orgpulse_search_history', '{invalid json')
       const { searchHistory } = createPalette()
@@ -784,6 +748,83 @@ describe('useCommandPalette', () => {
       const { saveQuery } = createPalette()
       expect(() => saveQuery('test')).not.toThrow()
       localStorage.setItem = original
+    })
+
+    it('filteredResults returns history items when query is empty', () => {
+      const { saveQuery, filteredResults } = createPalette()
+      saveQuery('alpha')
+      saveQuery('beta')
+      expect(filteredResults.value.length).toBe(2)
+      expect(filteredResults.value[0].type).toBe('history')
+      expect(filteredResults.value[0].label).toBe('beta')
+      expect(filteredResults.value[1].label).toBe('alpha')
+    })
+
+    it('filteredResults returns at most 8 history items', () => {
+      const { saveQuery, filteredResults } = createPalette()
+      for (let i = 0; i < 12; i++) {
+        saveQuery('query-' + i)
+      }
+      expect(filteredResults.value.length).toBe(8)
+    })
+
+    it('filteredResults returns empty when no history and query is empty', () => {
+      const { filteredResults } = createPalette()
+      expect(filteredResults.value).toEqual([])
+    })
+
+    it('filteredResults returns search results (not history) when query is non-empty', () => {
+      const { saveQuery, searchQuery, filteredResults } = createPalette()
+      saveQuery('people')
+      searchQuery.value = 'people'
+      const types = filteredResults.value.map(r => r.type)
+      expect(types).not.toContain('history')
+    })
+
+    it('history items have correct structure', () => {
+      const { saveQuery, filteredResults } = createPalette()
+      saveQuery('conforma')
+      const item = filteredResults.value[0]
+      expect(item.type).toBe('history')
+      expect(item.id).toBe('history::0::conforma')
+      expect(item.label).toBe('conforma')
+      expect(item.sublabel).toBe('Recent search')
+      expect(item.historyQuery).toBe('conforma')
+    })
+
+    it('removeHistoryEntry removes the specified entry', () => {
+      const { saveQuery, removeHistoryEntry, searchHistory } = createPalette()
+      saveQuery('alpha')
+      saveQuery('beta')
+      saveQuery('gamma')
+      removeHistoryEntry('beta')
+      expect(searchHistory.value).toEqual(['gamma', 'alpha'])
+    })
+
+    it('removeHistoryEntry persists updated history to localStorage', () => {
+      const { saveQuery, removeHistoryEntry } = createPalette()
+      saveQuery('alpha')
+      saveQuery('beta')
+      removeHistoryEntry('alpha')
+      const stored = JSON.parse(localStorage.getItem('orgpulse_search_history'))
+      expect(stored).toEqual(['beta'])
+    })
+
+    it('removeHistoryEntry clamps selectedIndex when last item removed', () => {
+      const { saveQuery, removeHistoryEntry, selectedIndex, filteredResults } = createPalette()
+      saveQuery('alpha')
+      saveQuery('beta')
+      selectedIndex.value = 1
+      removeHistoryEntry('alpha')
+      expect(filteredResults.value.length).toBe(1)
+      expect(selectedIndex.value).toBe(0)
+    })
+
+    it('removeHistoryEntry is no-op for non-existent entry', () => {
+      const { saveQuery, removeHistoryEntry, searchHistory } = createPalette()
+      saveQuery('alpha')
+      removeHistoryEntry('nonexistent')
+      expect(searchHistory.value).toEqual(['alpha'])
     })
   })
 
@@ -984,7 +1025,22 @@ describe('useCommandPalette', () => {
       expect(results[0].params).toEqual({ search: 'platform' })
     })
 
-    it('filteredResults returns empty when scoped with no query', () => {
+    it('filteredResults returns scoped history items when scoped with no query', () => {
+      const { enterScope, saveQuery, filteredResults } = createScopedPalette()
+      enterScope({
+        slug: 'team-tracker', moduleName: 'People & Teams',
+        viewId: 'home', viewLabel: 'Team Directory',
+        paramName: 'search', placeholder: 'Search teams...'
+      })
+      saveQuery('platform')
+      const results = filteredResults.value
+      expect(results.length).toBe(1)
+      expect(results[0].type).toBe('history')
+      expect(results[0].label).toBe('platform')
+    })
+
+    it('filteredResults returns empty when scoped with no query and no history', () => {
+      localStorage.removeItem('orgpulse_search_history::team-tracker::home')
       const { enterScope, filteredResults } = createScopedPalette()
       enterScope({
         slug: 'team-tracker', moduleName: 'People & Teams',

@@ -839,7 +839,7 @@ Each entry in `views`:
 
 - **Suggestion Mode**: User types a search term → matching views appear as suggestions with a "Module" badge. Matches are ranked by relevance (more field matches score higher).
 - **Scoped Mode**: Selecting a view shows a glass chip breadcrumb in the search bar (e.g., "People & Teams › Team Directory"). The user types a query and sees a single "Go to results" row. Pressing Enter navigates to `#/<slug>/<viewId>?<paramName>=<term>` and closes the palette.
-- **History**: Each scope (main search vs. each module view) maintains its own separate search history, accessible via ↑↓ arrow keys.
+- **History**: Each scope (main search vs. each module view) maintains its own separate search history. When the search input is empty, recent searches appear as selectable items in the dropdown with a clock icon. Selecting a history item populates the input and shows results for that query. Individual history items can be removed via the ✕ button or Delete key.
 - **Exit**: Pressing Escape or Backspace on an empty input exits scoped mode (returns to portal search). A second Escape closes the palette.
 - **Search Execution**: The target view reads the param via `inject('moduleNav').params.value.<paramName>` and executes its own search.
 - **Validation**: `npm run validate:modules` enforces `search.views` is an array with valid `viewId` values.
