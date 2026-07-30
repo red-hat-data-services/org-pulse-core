@@ -13,6 +13,7 @@ const MAX_RESULTS = 50
 const MIN_SCORE = 50
 const HISTORY_KEY = 'orgpulse_search_history'
 const MAX_HISTORY = 20
+const MAX_HISTORY_SHOWN = 8
 
 function fuzzyScore(query, text) {
   if (!text) return 0
@@ -89,8 +90,6 @@ export function useCommandPalette({ manifests, isAdmin, roles, isTeamAdmin, isMa
   const searchQuery = ref('')
   const selectedIndex = ref(0)
   const searchHistory = ref(loadHistory())
-  const historyIndex = ref(-1)
-  let pendingQuery = ''
   const scopedModule = ref(null)
 
   const pageItems = computed(() => {
@@ -217,10 +216,20 @@ export function useCommandPalette({ manifests, isAdmin, roles, isTeamAdmin, isMa
       .map(r => buildModuleSearchItem(r.view, query))
   }
 
+  function buildHistoryItems(history) {
+    return history.slice(0, MAX_HISTORY_SHOWN).map((entry, i) => ({
+      type: 'history',
+      id: 'history::' + i + '::' + entry,
+      label: entry,
+      sublabel: 'Recent search',
+      historyQuery: entry
+    }))
+  }
+
   const filteredResults = computed(() => {
     if (scopedModule.value) {
       const q = searchQuery.value.trim()
-      if (!q) return []
+      if (!q) return buildHistoryItems(searchHistory.value)
       return [{
         type: 'scoped-go',
         id: 'scoped-go',
@@ -233,7 +242,7 @@ export function useCommandPalette({ manifests, isAdmin, roles, isTeamAdmin, isMa
 
     const q = searchQuery.value.trim()
     if (!q) {
-      return []
+      return buildHistoryItems(searchHistory.value)
     }
 
     const searchQ = q
@@ -297,33 +306,15 @@ export function useCommandPalette({ manifests, isAdmin, roles, isTeamAdmin, isMa
     persistHistory(h, scopedModule.value)
   }
 
-  function historyPrev() {
-    if (searchHistory.value.length === 0) return false
-    if (historyIndex.value === -1) pendingQuery = searchQuery.value
-    if (historyIndex.value < searchHistory.value.length - 1) {
-      historyIndex.value++
-      searchQuery.value = searchHistory.value[historyIndex.value]
-      return true
-    }
-    return false
-  }
-
-  function historyNext() {
-    if (historyIndex.value <= -1) return false
-    historyIndex.value--
-    if (historyIndex.value === -1) {
-      searchQuery.value = pendingQuery
-    } else {
-      searchQuery.value = searchHistory.value[historyIndex.value]
-    }
-    return true
+  function removeHistoryEntry(query) {
+    const h = searchHistory.value.filter(item => item !== query)
+    searchHistory.value = h
+    persistHistory(h, scopedModule.value)
   }
 
   function resetSelection() {
     selectedIndex.value = 0
     searchQuery.value = ''
-    historyIndex.value = -1
-    pendingQuery = ''
     scopedModule.value = null
     searchHistory.value = loadHistory(null)
   }
@@ -338,8 +329,6 @@ export function useCommandPalette({ manifests, isAdmin, roles, isTeamAdmin, isMa
       placeholder: viewConfig.placeholder
     }
     searchHistory.value = loadHistory(scopedModule.value)
-    historyIndex.value = -1
-    pendingQuery = ''
     searchQuery.value = initialQuery || ''
     selectedIndex.value = 0
   }
@@ -347,8 +336,6 @@ export function useCommandPalette({ manifests, isAdmin, roles, isTeamAdmin, isMa
   function exitScope() {
     scopedModule.value = null
     searchHistory.value = loadHistory(null)
-    historyIndex.value = -1
-    pendingQuery = ''
     searchQuery.value = ''
     selectedIndex.value = 0
   }
@@ -359,14 +346,12 @@ export function useCommandPalette({ manifests, isAdmin, roles, isTeamAdmin, isMa
     filteredResults,
     allItems,
     searchHistory,
-    historyIndex,
     scopedModule,
     selectNext,
     selectPrev,
     resetSelection,
     saveQuery,
-    historyPrev,
-    historyNext,
+    removeHistoryEntry,
     enterScope,
     exitScope
   }

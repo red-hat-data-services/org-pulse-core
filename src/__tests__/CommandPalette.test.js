@@ -25,21 +25,18 @@ const mockSelectNext = vi.fn()
 const mockSelectPrev = vi.fn()
 const mockResetSelection = vi.fn()
 const mockSaveQuery = vi.fn()
-const mockHistoryPrev = vi.fn()
-const mockHistoryNext = vi.fn()
+const mockRemoveHistoryEntry = vi.fn()
 const mockEnterScope = vi.fn()
 const mockExitScope = vi.fn()
 
 let mockSearchQuery
 let mockSelectedIndex
-let mockHistoryIndex
 let mockFilteredResults
 let mockScopedModule
 
 function resetMocks() {
   mockSearchQuery = ref('test')
   mockSelectedIndex = ref(0)
-  mockHistoryIndex = ref(-1)
   mockScopedModule = ref(null)
   mockFilteredResults = computed(() => [
     { id: 'team-tracker::home', label: 'Team Directory', sublabel: 'People & Teams', type: 'page', slug: 'team-tracker', viewId: 'home' },
@@ -50,8 +47,7 @@ function resetMocks() {
   mockSelectPrev.mockClear()
   mockResetSelection.mockClear()
   mockSaveQuery.mockClear()
-  mockHistoryPrev.mockClear()
-  mockHistoryNext.mockClear()
+  mockRemoveHistoryEntry.mockClear()
   mockEnterScope.mockClear()
   mockExitScope.mockClear()
 }
@@ -61,15 +57,13 @@ vi.mock('../composables/useCommandPalette', () => ({
     searchQuery: mockSearchQuery,
     selectedIndex: mockSelectedIndex,
     filteredResults: mockFilteredResults,
-    historyIndex: mockHistoryIndex,
     searchHistory: ref([]),
     scopedModule: mockScopedModule,
     selectNext: mockSelectNext,
     selectPrev: mockSelectPrev,
     resetSelection: mockResetSelection,
     saveQuery: mockSaveQuery,
-    historyPrev: mockHistoryPrev,
-    historyNext: mockHistoryNext,
+    removeHistoryEntry: mockRemoveHistoryEntry,
     enterScope: mockEnterScope,
     exitScope: mockExitScope
   })
@@ -179,43 +173,34 @@ describe('CommandPalette keyboard events', () => {
     wrapper.unmount()
   })
 
-  it('ArrowDown calls selectNext when not browsing history', async () => {
+  it('ArrowDown calls selectNext', async () => {
     const wrapper = mountPalette()
     await wrapper.find('.fixed').trigger('keydown', { key: 'ArrowDown' })
     expect(mockSelectNext).toHaveBeenCalledOnce()
     wrapper.unmount()
   })
 
-  it('ArrowDown calls historyNext when browsing history', async () => {
-    mockHistoryIndex.value = 1
-    const wrapper = mountPalette()
-    await wrapper.find('.fixed').trigger('keydown', { key: 'ArrowDown' })
-    expect(mockHistoryNext).toHaveBeenCalledOnce()
-    expect(mockSelectNext).not.toHaveBeenCalled()
-    wrapper.unmount()
-  })
-
-  it('ArrowUp calls selectPrev when results exist and not browsing history', async () => {
+  it('ArrowUp calls selectPrev', async () => {
     const wrapper = mountPalette()
     await wrapper.find('.fixed').trigger('keydown', { key: 'ArrowUp' })
     expect(mockSelectPrev).toHaveBeenCalledOnce()
     wrapper.unmount()
   })
 
-  it('ArrowUp calls historyPrev when browsing history', async () => {
-    mockHistoryIndex.value = 0
+  it('Delete key on history item calls removeHistoryEntry', async () => {
+    mockFilteredResults = computed(() => [
+      { id: 'history::0::conforma', label: 'conforma', sublabel: 'Recent search', type: 'history', historyQuery: 'conforma' }
+    ])
     const wrapper = mountPalette()
-    await wrapper.find('.fixed').trigger('keydown', { key: 'ArrowUp' })
-    expect(mockHistoryPrev).toHaveBeenCalledOnce()
-    expect(mockSelectPrev).not.toHaveBeenCalled()
+    await wrapper.find('.fixed').trigger('keydown', { key: 'Delete' })
+    expect(mockRemoveHistoryEntry).toHaveBeenCalledWith('conforma')
     wrapper.unmount()
   })
 
-  it('ArrowUp calls historyPrev when no results', async () => {
-    mockFilteredResults = computed(() => [])
+  it('Delete key on non-history item does nothing', async () => {
     const wrapper = mountPalette()
-    await wrapper.find('.fixed').trigger('keydown', { key: 'ArrowUp' })
-    expect(mockHistoryPrev).toHaveBeenCalledOnce()
+    await wrapper.find('.fixed').trigger('keydown', { key: 'Delete' })
+    expect(mockRemoveHistoryEntry).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -541,6 +526,75 @@ describe('CommandPalette scoped mode', () => {
     const wrapper = mountPalette()
     const input = wrapper.find('input')
     expect(input.attributes('placeholder')).toBe('Search teams...')
+    wrapper.unmount()
+  })
+})
+
+describe('CommandPalette history items', () => {
+  it('history items render with clock icon SVG', () => {
+    mockFilteredResults = computed(() => [
+      { id: 'history::0::conforma', label: 'conforma', sublabel: 'Recent search', type: 'history', historyQuery: 'conforma' }
+    ])
+    const wrapper = mountPalette()
+    const rows = wrapper.findAll('.command-palette-suggestions > div')
+    expect(rows.length).toBe(1)
+    const svg = rows[0].find('.text-gray-500 svg')
+    expect(svg.exists()).toBe(true)
+    expect(svg.find('circle').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('Enter on history item sets searchQuery without emitting navigate', async () => {
+    mockFilteredResults = computed(() => [
+      { id: 'history::0::conforma', label: 'conforma', sublabel: 'Recent search', type: 'history', historyQuery: 'conforma' }
+    ])
+    const wrapper = mountPalette()
+    await wrapper.find('.fixed').trigger('keydown', { key: 'Enter' })
+    expect(mockSearchQuery.value).toBe('conforma')
+    expect(wrapper.emitted('navigate')).toBeFalsy()
+    expect(mockSaveQuery).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('click on history item sets searchQuery without emitting navigate', async () => {
+    mockFilteredResults = computed(() => [
+      { id: 'history::0::conforma', label: 'conforma', sublabel: 'Recent search', type: 'history', historyQuery: 'conforma' }
+    ])
+    const wrapper = mountPalette()
+    const rows = wrapper.findAll('.command-palette-suggestions > div')
+    await rows[0].trigger('click')
+    expect(mockSearchQuery.value).toBe('conforma')
+    expect(wrapper.emitted('navigate')).toBeFalsy()
+    expect(mockSaveQuery).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('history item X button calls removeHistoryEntry', async () => {
+    mockFilteredResults = computed(() => [
+      { id: 'history::0::conforma', label: 'conforma', sublabel: 'Recent search', type: 'history', historyQuery: 'conforma' }
+    ])
+    const wrapper = mountPalette()
+    const removeBtn = wrapper.find('button[title="Remove from history"]')
+    expect(removeBtn.exists()).toBe(true)
+    await removeBtn.trigger('click')
+    expect(mockRemoveHistoryEntry).toHaveBeenCalledWith('conforma')
+    expect(wrapper.emitted('navigate')).toBeFalsy()
+    wrapper.unmount()
+  })
+
+  it('history items show X button instead of Enter/TAB kbd', () => {
+    mockFilteredResults = computed(() => [
+      { id: 'history::0::conforma', label: 'conforma', sublabel: 'Recent search', type: 'history', historyQuery: 'conforma' },
+      { id: 'team-tracker::home', label: 'Team Directory', sublabel: 'People & Teams', type: 'page', slug: 'team-tracker', viewId: 'home' }
+    ])
+    const wrapper = mountPalette()
+    const rows = wrapper.findAll('.command-palette-suggestions > div')
+    const historyRow = rows[0]
+    const pageRow = rows[1]
+    expect(historyRow.find('button[title="Remove from history"]').exists()).toBe(true)
+    expect(historyRow.find('kbd').exists()).toBe(false)
+    expect(pageRow.find('button[title="Remove from history"]').exists()).toBe(false)
+    expect(pageRow.find('kbd').exists()).toBe(true)
     wrapper.unmount()
   })
 })

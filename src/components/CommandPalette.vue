@@ -21,24 +21,6 @@
         >
           {{ scopedModule.moduleName }} <span class="mx-0.5" style="color: #d98a30;">›</span> {{ scopedModule.viewLabel }}
         </span>
-        <span
-          v-if="searchHistory.length > 0"
-          class="hidden sm:inline-flex items-center gap-2 flex-shrink-0"
-        >
-          <span class="inline-flex flex-col items-center" title="↑↓ search history">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="-mb-0.5 transition-colors duration-100"
-              :class="pressedArrow === 'up' ? 'text-gray-700' : 'text-gray-300'"
-            >
-              <path d="M6 14l6-6 6 6" />
-            </svg>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="-mt-0.5 transition-colors duration-100"
-              :class="pressedArrow === 'down' ? 'text-gray-700' : 'text-gray-300'"
-            >
-              <path d="M6 10l6 6 6-6" />
-            </svg>
-          </span>
-          <span class="w-px h-5 bg-gray-300/40" />
-        </span>
         <input
           ref="inputRef"
           v-model="searchQuery"
@@ -61,7 +43,7 @@
           v-for="(item, i) in filteredResults"
           :key="item.id"
           :ref="el => setItemRef(el, i)"
-          class="flex items-center gap-4 px-5 h-11 cursor-pointer rounded-md"
+          class="group flex items-center gap-4 px-5 h-11 cursor-pointer rounded-md"
           :class="i === selectedIndex
             ? 'bg-gray-100 text-gray-900'
             : 'hover:bg-gray-50'"
@@ -69,7 +51,13 @@
           @mousemove="selectedIndex !== i && (selectedIndex = i)"
         >
           <span class="flex-1 min-w-0 text-sm font-light tracking-wide truncate">
-            <span v-if="item.type === 'scoped-go'" class="text-gray-700">{{ item.label }}</span>
+            <span v-if="item.type === 'history'" class="text-gray-500 inline-flex items-center">
+              <svg class="w-3.5 h-3.5 mr-2 opacity-40 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" />
+              </svg>
+              {{ item.label }}
+            </span>
+            <span v-else-if="item.type === 'scoped-go'" class="text-gray-700">{{ item.label }}</span>
             <span v-else-if="item.type === 'module-search'" class="text-gray-700">
               <span v-html="highlightMatch(formatLabel(item))" />
               <span class="scope-chip-btn inline-flex items-center px-1.5 py-0.5 ml-1.5 text-[10px] font-medium rounded-md align-middle leading-none">Module</span>
@@ -77,8 +65,19 @@
             <span v-else class="text-gray-700" v-html="highlightMatch(formatLabel(item))" />
             <span v-if="item.matchedKeyword" class="text-gray-400 text-xs ml-1.5" v-html="'— ' + highlightMatch(truncateAroundMatch(item.matchedKeyword))" />
           </span>
+          <button
+            v-if="item.type === 'history'"
+            class="p-1 text-gray-400 hover:text-gray-600 rounded transition-opacity flex-shrink-0"
+            :class="i === selectedIndex ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
+            title="Remove from history"
+            @click.stop="removeHistoryEntry(item.historyQuery)"
+          >
+            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 6L6 18" /><path d="M6 6l12 12" />
+            </svg>
+          </button>
           <kbd
-            v-if="i === selectedIndex"
+            v-else-if="i === selectedIndex"
             class="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium text-gray-400 bg-gray-200/50 rounded border border-gray-300/50 flex-shrink-0 ml-1"
           >
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="opacity-70">
@@ -125,7 +124,6 @@ const emit = defineEmits(['navigate', 'action', 'close'])
 
 const inputRef = ref(null)
 const windowWidth = ref(window.innerWidth)
-const pressedArrow = ref(null)
 const itemRefs = {}
 
 function setItemRef(el, index) {
@@ -136,15 +134,12 @@ const {
   searchQuery,
   selectedIndex,
   filteredResults,
-  historyIndex,
-  searchHistory,
   scopedModule,
   selectNext,
   selectPrev,
   resetSelection,
   saveQuery,
-  historyPrev,
-  historyNext,
+  removeHistoryEntry,
   enterScope,
   exitScope
 } = useCommandPalette({
@@ -206,6 +201,10 @@ function formatLabel(item) {
 }
 
 function selectItem(item) {
+  if (item.type === 'history') {
+    searchQuery.value = item.historyQuery
+    return
+  }
   saveQuery(searchQuery.value)
   if (item.type === 'module-search') {
     enterScope(item)
@@ -240,32 +239,21 @@ function onKeydown(e) {
     else selectNext()
   } else if (e.key === 'ArrowDown') {
     e.preventDefault()
-    flashArrow('down')
-    if (historyIndex.value >= 0) {
-      historyNext()
-    } else {
-      selectNext()
-    }
+    selectNext()
   } else if (e.key === 'ArrowUp') {
     e.preventDefault()
-    flashArrow('up')
-    if (filteredResults.value.length === 0 || historyIndex.value >= 0) {
-      historyPrev()
-    } else {
-      selectPrev()
+    selectPrev()
+  } else if (e.key === 'Delete') {
+    const item = filteredResults.value[selectedIndex.value]
+    if (item && item.type === 'history') {
+      e.preventDefault()
+      removeHistoryEntry(item.historyQuery)
     }
   } else if (e.key === 'Enter') {
     e.preventDefault()
     const item = filteredResults.value[selectedIndex.value]
     if (item) selectItem(item)
   }
-}
-
-let arrowTimer = null
-function flashArrow(dir) {
-  pressedArrow.value = dir
-  clearTimeout(arrowTimer)
-  arrowTimer = setTimeout(() => { pressedArrow.value = null }, 150)
 }
 
 function onResize() { windowWidth.value = window.innerWidth }
