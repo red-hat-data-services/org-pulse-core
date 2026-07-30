@@ -310,6 +310,10 @@ export function useCommandPalette({ manifests, isAdmin, roles, isTeamAdmin, isMa
     const h = searchHistory.value.filter(item => item !== query)
     searchHistory.value = h
     persistHistory(h, scopedModule.value)
+    const len = filteredResults.value.length
+    if (selectedIndex.value >= len) {
+      selectedIndex.value = Math.max(0, len - 1)
+    }
   }
 
   function resetSelection() {

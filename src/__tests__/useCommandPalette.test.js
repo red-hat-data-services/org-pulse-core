@@ -810,6 +810,16 @@ describe('useCommandPalette', () => {
       expect(stored).toEqual(['beta'])
     })
 
+    it('removeHistoryEntry clamps selectedIndex when last item removed', () => {
+      const { saveQuery, removeHistoryEntry, selectedIndex, filteredResults } = createPalette()
+      saveQuery('alpha')
+      saveQuery('beta')
+      selectedIndex.value = 1
+      removeHistoryEntry('alpha')
+      expect(filteredResults.value.length).toBe(1)
+      expect(selectedIndex.value).toBe(0)
+    })
+
     it('removeHistoryEntry is no-op for non-existent entry', () => {
       const { saveQuery, removeHistoryEntry, searchHistory } = createPalette()
       saveQuery('alpha')
