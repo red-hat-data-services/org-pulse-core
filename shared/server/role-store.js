@@ -1,6 +1,6 @@
 /**
  * Role storage and management for RBAC.
- * Manages roles.json with admin and team-admin role assignments.
+ * Supports both MongoDB (via Mongoose model) and file-based storage.
  */
 
 const auditLog = require('./audit-log');
@@ -28,13 +28,17 @@ function normalizeEmail(email, authDomain) {
 }
 
 function createRoleStore(readFromStorage, writeToStorage, options = {}) {
-  const { Mutex } = require('async-mutex');
-  const rolesMutex = new Mutex();
-
   const getAuthDomain = typeof options.getAuthDomain === 'function'
     ? options.getAuthDomain
     : () => null;
   const roleRegistry = options.roleRegistry || null;
+  const RoleModel = options.model || null;
+
+  // Mutex for file-based path only — MongoDB uses atomic operations
+  const filesMutex = RoleModel ? null : (() => {
+    const { Mutex } = require('async-mutex');
+    return new Mutex();
+  })();
 
   // Cache for getAuthDomain result (30s TTL)
   let _cachedDomain = undefined;
@@ -55,20 +59,30 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
     _cachedAt = 0;
   }
 
-  async function readRoles() {
+  // ─── File-based fallback (used when no model is provided) ───
+
+  async function readRolesFile() {
     return (await readFromStorage(ROLES_FILE)) || { version: 1, assignments: {} };
   }
 
-  async function writeRoles(data) {
+  async function writeRolesFile(data) {
     await writeToStorage(ROLES_FILE, data);
   }
+
+  // ─── Core operations ───
 
   async function getRoles(email) {
     if (!email) return [];
     const authDomain = await getCachedAuthDomain();
     const key = normalizeEmail(email, authDomain);
     if (!isSafeKey(key)) return [];
-    const data = await readRoles();
+
+    if (RoleModel) {
+      const doc = await RoleModel.findOne({ email: key }).lean();
+      return doc ? doc.roles : [];
+    }
+
+    const data = await readRolesFile();
     const entry = data.assignments[key];
     return entry ? entry.roles : [];
   }
@@ -87,12 +101,65 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
       return { demo: true, message: 'Demo mode -- changes are not saved' };
     }
 
-    const release = await rolesMutex.acquire();
-    try {
-      const authDomain = await getCachedAuthDomain();
-      const normalized = normalizeEmail(email, authDomain);
-      if (!isSafeKey(normalized)) throw new Error('Invalid email');
-      const data = await readRoles();
+    const authDomain = await getCachedAuthDomain();
+    const normalized = normalizeEmail(email, authDomain);
+    if (!isSafeKey(normalized)) throw new Error('Invalid email');
+
+    if (RoleModel) {
+      const before = await RoleModel.findOne({ email: normalized }).lean();
+      if (before && before.roles.includes(role)) {
+        return { email: normalized, roles: before.roles };
+      }
+
+      const assignUpdate = {
+        $addToSet: { roles: role },
+        $set: { assignedBy: actor, assignedAt: new Date().toISOString() }
+      };
+      let doc;
+      try {
+        doc = await RoleModel.findOneAndUpdate(
+          { email: normalized },
+          assignUpdate,
+          { upsert: true, returnDocument: 'after', lean: true }
+        );
+      } catch (err) {
+        // Concurrent upsert race on the unique email index: another assignRole
+        // inserted this email first. Surface nothing to the caller — instead
+        // re-check idempotently, matching the serialized file-based path.
+        if (err && err.code === 11000) {
+          // If the winner already added this exact role, it's a no-op: return
+          // without overwriting assignment metadata or logging a duplicate audit.
+          const raced = await RoleModel.findOne({ email: normalized }).lean();
+          if (raced && raced.roles.includes(role)) {
+            return { email: normalized, roles: raced.roles };
+          }
+          // The email exists but without this role — add it (no insert -> no
+          // conflict). Metadata update + audit below are correct for a new role.
+          doc = await RoleModel.findOneAndUpdate(
+            { email: normalized },
+            assignUpdate,
+            { returnDocument: 'after', lean: true }
+          );
+        } else {
+          throw err;
+        }
+      }
+
+      await auditLog.appendAuditEntry({ readFromStorage, writeToStorage }, {
+        action: 'role.assign',
+        actor,
+        entityType: 'user',
+        entityId: normalized,
+        newValue: role,
+        detail: `Assigned role "${role}" to ${normalized}`
+      });
+
+      return { email: normalized, roles: doc.roles };
+    }
+
+    // File-based path (mutex-protected)
+    return filesMutex.runExclusive(async () => {
+      const data = await readRolesFile();
 
       if (!Object.hasOwn(data.assignments, normalized)) {
         data.assignments[normalized] = {
@@ -107,7 +174,7 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
         entry.roles.push(role);
         entry.assignedBy = actor;
         entry.assignedAt = new Date().toISOString();
-        await writeRoles(data);
+        await writeRolesFile(data);
 
         await auditLog.appendAuditEntry({ readFromStorage, writeToStorage }, {
           action: 'role.assign',
@@ -120,9 +187,7 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
       }
 
       return { email: normalized, roles: entry.roles };
-    } finally {
-      release();
-    }
+    });
   }
 
   async function revokeRole(email, role, actor) {
@@ -135,19 +200,96 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
       return { demo: true, message: 'Demo mode -- changes are not saved' };
     }
 
-    const release = await rolesMutex.acquire();
-    try {
-      const authDomain = await getCachedAuthDomain();
-      const normalized = normalizeEmail(email, authDomain);
-      if (!isSafeKey(normalized)) throw new Error('Invalid email');
-      const data = await readRoles();
+    const authDomain = await getCachedAuthDomain();
+    const normalized = normalizeEmail(email, authDomain);
+    if (!isSafeKey(normalized)) throw new Error('Invalid email');
+
+    if (RoleModel) {
+      const existing = await RoleModel.findOne({ email: normalized }).lean();
+      if (!existing || !existing.roles.includes(role)) {
+        throw new Error(`User ${normalized} does not have role "${role}"`);
+      }
+
+      if (role === 'admin') {
+        // Optimistic last-admin guard (not a single atomic op): check the admin
+        // count, pull the role, then re-check. If two concurrent revocations
+        // both passed the count check and drove admins to zero, the post-pull
+        // re-check below rolls this one back so at least one admin always remains.
+        const adminCount = await RoleModel.countDocuments({ roles: 'admin' });
+        if (adminCount <= 1) {
+          throw new Error('Cannot remove the last admin');
+        }
+        const guarded = await RoleModel.findOneAndUpdate(
+          { email: normalized, roles: role },
+          { $pull: { roles: role } },
+          { returnDocument: 'after', lean: true }
+        );
+        if (!guarded) {
+          // The filter no longer matched: a concurrent revoke already pulled this
+          // role between our existence check and the $pull. Report the accurate
+          // reason (role gone), not a spurious last-admin error.
+          throw new Error(`User ${normalized} does not have role "${role}"`);
+        }
+        // Re-check: if we just created a zero-admin state, roll back
+        const postCount = await RoleModel.countDocuments({ roles: 'admin' });
+        if (postCount === 0) {
+          await RoleModel.updateOne({ email: normalized }, { $addToSet: { roles: 'admin' } });
+          throw new Error('Cannot remove the last admin');
+        }
+        if (guarded.roles.length === 0) {
+          await RoleModel.deleteOne({ email: normalized });
+        }
+
+        await auditLog.appendAuditEntry({ readFromStorage, writeToStorage }, {
+          action: 'role.revoke',
+          actor,
+          entityType: 'user',
+          entityId: normalized,
+          oldValue: role,
+          detail: `Revoked role "${role}" from ${normalized}`
+        });
+
+        return { email: normalized, roles: guarded.roles };
+      }
+
+      const updated = await RoleModel.findOneAndUpdate(
+        { email: normalized, roles: role },
+        { $pull: { roles: role } },
+        { returnDocument: 'after', lean: true }
+      );
+
+      // A concurrent revoke removed the role between our existence check and
+      // this $pull, so nothing matched. Match the serialized file path, which
+      // throws when the role is absent — don't log a revoke that didn't happen.
+      if (!updated) {
+        throw new Error(`User ${normalized} does not have role "${role}"`);
+      }
+
+      if (updated.roles.length === 0) {
+        await RoleModel.deleteOne({ email: normalized });
+      }
+
+      await auditLog.appendAuditEntry({ readFromStorage, writeToStorage }, {
+        action: 'role.revoke',
+        actor,
+        entityType: 'user',
+        entityId: normalized,
+        oldValue: role,
+        detail: `Revoked role "${role}" from ${normalized}`
+      });
+
+      return { email: normalized, roles: updated.roles };
+    }
+
+    // File-based path (mutex-protected)
+    return filesMutex.runExclusive(async () => {
+      const data = await readRolesFile();
       const entry = Object.hasOwn(data.assignments, normalized) ? data.assignments[normalized] : null;
 
       if (!entry || !entry.roles.includes(role)) {
         throw new Error(`User ${normalized} does not have role "${role}"`);
       }
 
-      // Guard: cannot remove the last admin
       if (role === 'admin') {
         const adminEmails = await getAdminEmails();
         if (adminEmails.length <= 1 && adminEmails.includes(normalized)) {
@@ -157,12 +299,11 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
 
       entry.roles = entry.roles.filter(r => r !== role);
 
-      // Clean up entry if no roles remain
       if (entry.roles.length === 0) {
         delete data.assignments[normalized];
       }
 
-      await writeRoles(data);
+      await writeRolesFile(data);
 
       await auditLog.appendAuditEntry({ readFromStorage, writeToStorage }, {
         action: 'role.revoke',
@@ -174,37 +315,89 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
       });
 
       return { email: normalized, roles: entry.roles || [] };
-    } finally {
-      release();
-    }
+    });
   }
 
   async function listAssignments() {
-    const data = await readRoles();
+    if (RoleModel) {
+      const docs = await RoleModel.find().lean();
+      const assignments = {};
+      for (const doc of docs) {
+        assignments[doc.email] = {
+          roles: doc.roles,
+          assignedBy: doc.assignedBy,
+          assignedAt: doc.assignedAt
+        };
+      }
+      return assignments;
+    }
+
+    const data = await readRolesFile();
     return data.assignments;
   }
 
   async function getAdminEmails() {
-    const data = await readRoles();
+    if (RoleModel) {
+      const docs = await RoleModel.find({ roles: 'admin' }, { email: 1 }).lean();
+      return docs.map(d => d.email);
+    }
+
+    const data = await readRolesFile();
     return Object.entries(data.assignments)
       .filter(([, entry]) => entry.roles.includes('admin'))
       .map(([email]) => email);
   }
 
   async function migrateFromAllowlist() {
-    const release = await rolesMutex.acquire();
-    try {
-      const rolesData = await readRoles();
+    if (RoleModel) {
+      const count = await RoleModel.countDocuments();
+      if (count > 0) return false;
+
+      const allowlist = await readFromStorage(ALLOWLIST_FILE);
+      if (!allowlist || !allowlist.emails || allowlist.emails.length === 0) {
+        return false;
+      }
+
+      const authDomain = await getCachedAuthDomain();
+      const ops = [];
+      for (const email of allowlist.emails) {
+        const normalized = normalizeEmail(email, authDomain);
+        if (!isSafeKey(normalized)) continue;
+        ops.push({
+          updateOne: {
+            filter: { email: normalized },
+            update: {
+              $addToSet: { roles: 'admin' },
+              $set: { assignedBy: 'migration', assignedAt: new Date().toISOString() }
+            },
+            upsert: true
+          }
+        });
+      }
+      if (ops.length > 0) await RoleModel.bulkWrite(ops);
+
+      await writeToStorage(ALLOWLIST_FILE, {
+        _migrated: 'roles',
+        _migratedAt: new Date().toISOString(),
+        emails: allowlist.emails
+      });
+
+      console.log(`Roles: migrated ${allowlist.emails.length} admin(s) from allowlist.json`);
+      return true;
+    }
+
+    // File-based path (mutex-protected)
+    return filesMutex.runExclusive(async () => {
+      const rolesData = await readRolesFile();
       if (Object.keys(rolesData.assignments).length > 0) {
-        return false; // Already has data, skip migration
+        return false;
       }
 
       const allowlist = await readFromStorage(ALLOWLIST_FILE);
       if (!allowlist || !allowlist.emails || allowlist.emails.length === 0) {
-        return false; // Nothing to migrate
+        return false;
       }
 
-      // Inline the role assignment logic to avoid deadlock with assignRole's mutex
       const authDomain = await getCachedAuthDomain();
       for (const email of allowlist.emails) {
         const normalized = normalizeEmail(email, authDomain);
@@ -224,9 +417,8 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
           entry.assignedAt = new Date().toISOString();
         }
       }
-      await writeRoles(rolesData);
+      await writeRolesFile(rolesData);
 
-      // Mark allowlist as migrated
       const now = new Date().toISOString();
       await writeToStorage(ALLOWLIST_FILE, {
         _migrated: 'roles.json',
@@ -236,24 +428,57 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
 
       console.log(`Roles: migrated ${allowlist.emails.length} admin(s) from allowlist.json to roles.json`);
       return true;
-    } finally {
-      release();
-    }
+    });
   }
 
   async function migrateEmailDomains() {
     const authDomain = await getAuthDomain();
     if (!authDomain) return 0;
 
-    const release = await rolesMutex.acquire();
-    try {
-      const data = await readRoles();
+    if (RoleModel) {
+      const docs = await RoleModel.find().lean();
+      const needsMigration = docs.some(d => normalizeEmail(d.email, authDomain) !== d.email);
+      if (!needsMigration) return 0;
+
+      let migrated = 0;
+      for (const doc of docs) {
+        const newEmail = normalizeEmail(doc.email, authDomain);
+        if (newEmail === doc.email) continue;
+
+        const existing = await RoleModel.findOne({ email: newEmail }).lean();
+        if (existing) {
+          const mergedRoles = [...new Set([...existing.roles, ...doc.roles])];
+          const update = { roles: mergedRoles };
+          // Keep the newer entry's assignment metadata, matching the file path.
+          if (doc.assignedAt > existing.assignedAt) {
+            update.assignedBy = doc.assignedBy;
+            update.assignedAt = doc.assignedAt;
+          }
+          await RoleModel.updateOne({ email: newEmail }, { $set: update });
+        } else {
+          await RoleModel.updateOne({ email: doc.email }, { $set: { email: newEmail } });
+          migrated++;
+          continue;
+        }
+
+        await RoleModel.deleteOne({ email: doc.email });
+        migrated++;
+      }
+
+      if (migrated > 0) {
+        console.log(`Roles: migrated ${migrated} email(s) to @${authDomain}`);
+      }
+      return migrated;
+    }
+
+    // File-based path (mutex-protected)
+    return filesMutex.runExclusive(async () => {
+      const data = await readRolesFile();
       const oldKeys = Object.keys(data.assignments);
       const needsMigration = oldKeys.some(email => normalizeEmail(email, authDomain) !== email);
 
       if (!needsMigration) return 0;
 
-      // Backup before migration
       const backupKey = `roles-backup-${Date.now()}.json`;
       await writeToStorage(backupKey, JSON.parse(JSON.stringify(data)));
       console.log(`Roles: backup saved to ${backupKey}`);
@@ -268,10 +493,8 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
         const existingEntry = data.assignments[newEmail];
 
         if (existingEntry) {
-          // Merge roles from both entries
           const mergedRoles = [...new Set([...existingEntry.roles, ...oldEntry.roles])];
           existingEntry.roles = mergedRoles;
-          // Keep the newer assignedAt
           if (oldEntry.assignedAt > existingEntry.assignedAt) {
             existingEntry.assignedBy = oldEntry.assignedBy;
             existingEntry.assignedAt = oldEntry.assignedAt;
@@ -285,14 +508,12 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
       }
 
       if (migrated > 0) {
-        await writeRoles(data);
+        await writeRolesFile(data);
         console.log(`Roles: migrated ${migrated} email(s) to @${authDomain} (backup: ${backupKey})`);
       }
 
       return migrated;
-    } finally {
-      release();
-    }
+    });
   }
 
   return {

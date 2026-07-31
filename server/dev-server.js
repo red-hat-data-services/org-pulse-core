@@ -311,7 +311,7 @@ async function startServer(options = {}) {
 
   // ─── Auth ───
 
-  const roleStore = createRoleStore(readFromStorage, writeToStorage, {
+  const roleStoreOpts = {
     getAuthDomain: async () => {
       if (process.env.AUTH_EMAIL_DOMAIN) {
         return process.env.AUTH_EMAIL_DOMAIN.trim().toLowerCase();
@@ -320,7 +320,12 @@ async function startServer(options = {}) {
       return config?.authEmailDomain || null;
     },
     roleRegistry
-  });
+  };
+  if (dbConnection) {
+    const { roleAssignmentSchema } = require('../shared/server/models/role');
+    roleStoreOpts.model = dbConnection.model('core__roles', roleAssignmentSchema, 'core__roles');
+  }
+  const roleStore = createRoleStore(readFromStorage, writeToStorage, roleStoreOpts);
   const { authMiddleware, requireAuth, requireAdmin, requireTeamAdmin, requireRole, requireScope, seedRoles } = createAuthMiddleware(readFromStorage, writeToStorage, {
     tokenValidator: apiTokens,
     roleStore,
