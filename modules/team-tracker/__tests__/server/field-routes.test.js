@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest'
  * Tests field-related API route handler logic by calling field-store
  * and team-store functions with mock storage, verifying response shapes.
  */
-const fieldStore = require('../../../../shared/server/field-store')
+const { createFieldStore } = require('../../../../shared/server/field-store')
 const teamStore = require('../../../../shared/server/team-store')
 
 function makeStorage(initial = {}) {
@@ -60,7 +60,8 @@ describe('field routes (handler-level)', () => {
   describe('field definition CRUD', () => {
     it('creates a field with multiValue', async () => {
       const storage = makeFullStorage()
-      const field = await fieldStore.createFieldDefinition(storage, 'person', {
+      const fieldStore = createFieldStore(storage)
+      const field = await fieldStore.createFieldDefinition('person', {
         label: 'Skills', type: 'constrained', multiValue: true, allowedValues: ['Go', 'Rust']
       }, 'admin@test.com')
 
@@ -70,7 +71,8 @@ describe('field routes (handler-level)', () => {
 
     it('updates a field via PATCH', async () => {
       const storage = makeFullStorage()
-      const result = await fieldStore.updateFieldDefinition(storage, 'person', 'field_c1', {
+      const fieldStore = createFieldStore(storage)
+      const result = await fieldStore.updateFieldDefinition('person', 'field_c1', {
         label: 'Updated Component', multiValue: true
       }, 'admin@test.com')
 
@@ -80,13 +82,15 @@ describe('field routes (handler-level)', () => {
 
     it('soft-deletes a field', async () => {
       const storage = makeFullStorage()
-      const result = await fieldStore.softDeleteField(storage, 'person', 'field_c1', 'admin@test.com')
+      const fieldStore = createFieldStore(storage)
+      const result = await fieldStore.softDeleteField('person', 'field_c1', 'admin@test.com')
       expect(result.deleted).toBe(true)
     })
 
     it('reads all field definitions', async () => {
       const storage = makeFullStorage()
-      const defs = await fieldStore.readFieldDefinitions(storage)
+      const fieldStore = createFieldStore(storage)
+      const defs = await fieldStore.readFieldDefinitions()
       expect(defs.personFields).toHaveLength(2)
       expect(defs.teamFields).toHaveLength(1)
     })
@@ -95,14 +99,15 @@ describe('field routes (handler-level)', () => {
   describe('person field value PATCH with validation', () => {
     it('validates and returns result with _warnings for required fields', async () => {
       const storage = makeFullStorage()
+      const fieldStore = createFieldStore(storage)
       const existingValues = {}
 
       const { validated, warnings, errors } = await fieldStore.validateFieldValues(
-        storage, 'person', { field_c1: 'Platform' }, existingValues
+        'person', { field_c1: 'Platform' }, existingValues
       )
       expect(errors).toHaveLength(0)
 
-      const result = await fieldStore.updatePersonFields(storage, 'achen', validated, 'admin@test.com')
+      const result = await fieldStore.updatePersonFields('achen', validated, 'admin@test.com')
       expect(result.field_c1).toBe('Platform')
 
       // Check required warning
@@ -111,19 +116,21 @@ describe('field routes (handler-level)', () => {
 
     it('returns 400-level errors for unknown fields', async () => {
       const storage = makeFullStorage()
+      const fieldStore = createFieldStore(storage)
       const { errors } = await fieldStore.validateFieldValues(
-        storage, 'person', { field_unknown: 'x' }, {}
+        'person', { field_unknown: 'x' }, {}
       )
       expect(errors.length).toBeGreaterThan(0)
     })
 
     it('coerces values for constrained multi-value fields', async () => {
       const storage = makeFullStorage()
+      const fieldStore = createFieldStore(storage)
       // First make field_c1 multiValue
-      await fieldStore.updateFieldDefinition(storage, 'person', 'field_c1', { multiValue: true }, 'admin@test.com')
+      await fieldStore.updateFieldDefinition('person', 'field_c1', { multiValue: true }, 'admin@test.com')
 
       const { validated } = await fieldStore.validateFieldValues(
-        storage, 'person', { field_c1: 'Platform' }, {}
+        'person', { field_c1: 'Platform' }, {}
       )
       expect(validated.field_c1).toEqual(['Platform'])
     })
@@ -132,9 +139,10 @@ describe('field routes (handler-level)', () => {
   describe('team field value PATCH returns flat metadata', () => {
     it('returns team.metadata (not full team object)', async () => {
       const storage = makeFullStorage()
+      const fieldStore = createFieldStore(storage)
 
       const { validated, warnings } = await fieldStore.validateFieldValues(
-        storage, 'team', { field_tf1: 'Active' }, {}
+        'team', { field_tf1: 'Active' }, {}
       )
 
       const result = await teamStore.updateTeamFields(storage, 'team_abc', validated, 'admin@test.com')

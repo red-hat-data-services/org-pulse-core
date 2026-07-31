@@ -300,7 +300,7 @@ async function deriveTeamsFromPeople(storage) {
  * Does NOT sync people (those come from team-tracker's roster-sync via shared/server/roster.js).
  * sheetId may be null — in that case, teams are derived from people data.
  */
-async function runSync(storage, sheetId, config, secrets) {
+async function runSync(storage, sheetId, config, secrets, fieldStore) {
   const teamBoardsTab = config?.teamBoardsTab || null;
   const componentsTab = config?.componentsTab || null;
   const orgNameMapping = config?.orgNameMapping || {};
@@ -354,8 +354,7 @@ async function runSync(storage, sheetId, config, secrets) {
 
   // 3. Fetch and parse component mapping, filtered to kept teams
   // Skip component sheet sync when in-app component data exists (field options migrated)
-  const fieldStore = require('../../../shared/server/field-store');
-  const fieldDefs = await fieldStore.readFieldDefinitions(storage);
+  const fieldDefs = await fieldStore.readFieldDefinitions();
   const hasInAppComponents = (fieldDefs.teamFields || []).some(
     f => !f.deleted && f.optionsRef === 'component'
   );

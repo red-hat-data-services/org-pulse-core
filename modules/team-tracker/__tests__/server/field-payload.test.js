@@ -48,43 +48,39 @@ describe('field-payload utility', () => {
 
   describe('resolveFieldDefinitions', () => {
     it('resolves optionsRef to allowedValues', async () => {
-      const storage = {};
-      const mockFieldStore = require('../../../../shared/server/field-store');
-      vi.spyOn(mockFieldStore, 'readFieldDefinitions').mockResolvedValue({
-        personFields: [
-          { id: 'f1', label: 'Component', type: 'constrained', optionsRef: 'component', deleted: false }
-        ],
-        teamFields: [
-          { id: 'f2', label: 'Status', type: 'free-text', deleted: false }
-        ]
-      });
+      const mockFieldStore = {
+        readFieldDefinitions: vi.fn().mockResolvedValue({
+          personFields: [
+            { id: 'f1', label: 'Component', type: 'constrained', optionsRef: 'component', deleted: false }
+          ],
+          teamFields: [
+            { id: 'f2', label: 'Status', type: 'free-text', deleted: false }
+          ]
+        })
+      };
 
       const resolver = async (ref) => ref === 'component' ? ['a', 'b', 'c'] : null;
-      const { personFieldDefs, teamFieldDefs } = await resolveFieldDefinitions(storage, resolver);
+      const { personFieldDefs, teamFieldDefs } = await resolveFieldDefinitions(mockFieldStore, resolver);
 
       expect(personFieldDefs[0].allowedValues).toEqual(['a', 'b', 'c']);
       expect(personFieldDefs[0]._resolvedFromOptions).toBe(true);
       expect(teamFieldDefs).toHaveLength(1);
-
-      mockFieldStore.readFieldDefinitions.mockRestore();
     });
 
     it('filters out deleted fields', async () => {
-      const storage = {};
-      const mockFieldStore = require('../../../../shared/server/field-store');
-      vi.spyOn(mockFieldStore, 'readFieldDefinitions').mockResolvedValue({
+      const mockFieldStore = {
+        readFieldDefinitions: vi.fn().mockResolvedValue({
         personFields: [
           { id: 'f1', label: 'Active', deleted: false },
           { id: 'f2', label: 'Deleted', deleted: true }
         ],
         teamFields: []
-      });
+        })
+      };
 
-      const { personFieldDefs } = await resolveFieldDefinitions(storage, async () => null);
+      const { personFieldDefs } = await resolveFieldDefinitions(mockFieldStore, async () => null);
       expect(personFieldDefs).toHaveLength(1);
       expect(personFieldDefs[0].id).toBe('f1');
-
-      mockFieldStore.readFieldDefinitions.mockRestore();
     });
   });
 

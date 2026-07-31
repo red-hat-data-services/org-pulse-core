@@ -23,7 +23,7 @@ function isOrgSyncInProgress() {
 }
 
 module.exports = function registerOrgTeamsRoutes(router, context) {
-  const { storage, requireAdmin, requireScope } = context;
+  const { storage, requireAdmin, requireScope, fieldStore } = context;
   const { readFromStorage, writeToStorage } = storage;
   const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
@@ -75,8 +75,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
     const boardNames = metaData?.boardNames || {};
 
     // Resolve component field from team field definitions via optionsRef
-    const fieldStore = require('../../../../shared/server/field-store');
-    const fieldDefs = await fieldStore.readFieldDefinitions(storage);
+    const fieldDefs = await fieldStore.readFieldDefinitions();
     const componentFieldDef = (fieldDefs.teamFields || []).find(
       f => !f.deleted && f.optionsRef === 'component'
     );
@@ -691,7 +690,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
     const config = await getOrgConfig();
 
     try {
-      await runSync(storage, sheetId, config, context.secrets);
+      await runSync(storage, sheetId, config, context.secrets, fieldStore);
       try {
         const { teams } = await buildEnrichedTeams();
         const allComponents = [...new Set(teams.flatMap(t => t.components || []))];

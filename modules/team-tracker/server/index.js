@@ -1,5 +1,5 @@
 module.exports = async function registerRoutes(router, context) {
-  const { storage, requireAdmin, requireTeamAdmin, requireScope } = context;
+  const { storage, requireAdmin, requireTeamAdmin, requireScope, fieldStore: contextFieldStore } = context;
   const { readFromStorage, writeToStorage, listStorageFiles, deleteStorageDirectory } = storage;
 
   // Register module scopes
@@ -131,7 +131,7 @@ module.exports = async function registerRoutes(router, context) {
 
     // In-app mode: load teams and field definitions
     const teamsData = teamDataSource === 'in-app' ? await teamStore.readTeams(storage) : null;
-    const fieldDefs = teamDataSource === 'in-app' ? await fieldStore.readFieldDefinitions(storage) : null;
+    const fieldDefs = teamDataSource === 'in-app' ? await contextFieldStore.readFieldDefinitions() : null;
     const personFieldDefs = fieldDefs ? fieldDefs.personFields.filter(f => !f.deleted) : [];
 
     // Build team ID -> team name lookup for in-app mode
@@ -616,7 +616,7 @@ module.exports = async function registerRoutes(router, context) {
     const { enrichPerson, resolveFieldDefinitions, buildReferencedPeopleMap, buildAllPeopleList } = require('./field-payload');
     const teamsData = await teamStore.readTeams(storage);
     const optionsResolver = async (ref) => await fieldOptionsStore.getValues(storage, ref);
-    const { personFieldDefs, teamFieldDefs } = await resolveFieldDefinitions(storage, optionsResolver);
+    const { personFieldDefs, teamFieldDefs } = await resolveFieldDefinitions(contextFieldStore, optionsResolver);
 
     const includeIndirect = req.query?.includeIndirect === 'true';
     const purview = getManagerPurview(req.userUid, registry, teamsData, { includeIndirect });
@@ -730,7 +730,7 @@ module.exports = async function registerRoutes(router, context) {
 
     const teamsData = await teamStoreLocal.readTeams(storage);
     const localOptionsResolver = async (ref) => await fieldOptionsStoreLocal.getValues(storage, ref);
-    const { personFieldDefs, teamFieldDefs } = await resolveFieldDefs(storage, localOptionsResolver);
+    const { personFieldDefs, teamFieldDefs } = await resolveFieldDefs(contextFieldStore, localOptionsResolver);
 
     // Build enriched people list (active engineering people only — excludes auxiliary)
     const people = Object.values(registry.people)
@@ -784,7 +784,6 @@ module.exports = async function registerRoutes(router, context) {
   // ─── Routes: Team Structure Management ───
 
   const teamStore = require('../../../shared/server/team-store');
-  const fieldStore = require('../../../shared/server/field-store');
   const auditLog = require('../../../shared/server/audit-log');
   const fieldOptionsStore = require('./field-options-store');
   const { migrateToInApp, previewMigration } = require('../../../shared/server/team-migration');
@@ -890,7 +889,7 @@ module.exports = async function registerRoutes(router, context) {
       : [];
 
     // Resolve field definitions for label lookup
-    const fieldDefs = await fieldStore.readFieldDefinitions(storage);
+    const fieldDefs = await contextFieldStore.readFieldDefinitions();
     const teamFields = (fieldDefs.teamFields || []).filter(f => !f.deleted);
 
     // Parse and resolve filters
@@ -1000,7 +999,7 @@ module.exports = async function registerRoutes(router, context) {
       return res.status(400).json({ error: 'Provide a "field" (field ID) or "label" (field label) query parameter' });
     }
 
-    const fieldDefs = await fieldStore.readFieldDefinitions(storage);
+    const fieldDefs = await contextFieldStore.readFieldDefinitions();
     const teamFields = (fieldDefs.teamFields || []).filter(f => !f.deleted);
 
     let resolvedField;
@@ -1309,7 +1308,7 @@ module.exports = async function registerRoutes(router, context) {
    *         description: Person and team field definitions
    */
   router.get('/structure/field-definitions', requireScope('team-tracker:read'), async function(req, res) {
-    const defs = await fieldStore.readFieldDefinitions(storage);
+    const defs = await contextFieldStore.readFieldDefinitions();
     // Filter out soft-deleted fields for non-admin/team-admin users
     if (!req.isAdmin && !req.isTeamAdmin) {
       defs.personFields = defs.personFields.filter(f => !f.deleted);
@@ -1350,7 +1349,7 @@ module.exports = async function registerRoutes(router, context) {
     if (typeof label !== 'string' || label.length > 100) return res.status(400).json({ error: 'label must be a string of 100 characters or fewer' });
     if (type && !VALID_FIELD_TYPES.includes(type)) return res.status(400).json({ error: `Invalid type. Must be one of: ${VALID_FIELD_TYPES.join(', ')}` });
     try {
-      const field = await fieldStore.createFieldDefinition(storage, 'person', {
+      const field = await contextFieldStore.createFieldDefinition('person', {
         label: label.trim(), type, required, visible, primaryDisplay, allowedValues, multiValue, optionsRef
       }, req.auditActor);
       res.status(201).json(field);
@@ -1380,7 +1379,7 @@ module.exports = async function registerRoutes(router, context) {
     const guard = demoWriteGuard(res);
     if (guard) return;
     try {
-      const result = await fieldStore.updateFieldDefinition(storage, 'person', req.params.fieldId, req.body, req.auditActor);
+      const result = await contextFieldStore.updateFieldDefinition('person', req.params.fieldId, req.body, req.auditActor);
       if (!result) return res.status(404).json({ error: 'Field not found' });
       res.json(result);
     } catch (err) {
@@ -1408,7 +1407,7 @@ module.exports = async function registerRoutes(router, context) {
   router.delete('/structure/field-definitions/person/:fieldId', requireTeamAdmin, requireScope('team-tracker:write'), async function(req, res) {
     const guard = demoWriteGuard(res);
     if (guard) return;
-    const result = await fieldStore.softDeleteField(storage, 'person', req.params.fieldId, req.auditActor);
+    const result = await contextFieldStore.softDeleteField('person', req.params.fieldId, req.auditActor);
     if (!result) return res.status(404).json({ error: 'Field not found' });
     res.json(result);
   });
@@ -1428,7 +1427,7 @@ module.exports = async function registerRoutes(router, context) {
     if (guard) return;
     const { orderedIds } = req.body;
     if (!Array.isArray(orderedIds)) return res.status(400).json({ error: 'orderedIds array is required' });
-    await fieldStore.reorderFields(storage, 'person', orderedIds, req.auditActor);
+    await contextFieldStore.reorderFields('person', orderedIds, req.auditActor);
     res.json({ ok: true });
   });
 
@@ -1452,7 +1451,7 @@ module.exports = async function registerRoutes(router, context) {
     if (typeof label !== 'string' || label.length > 100) return res.status(400).json({ error: 'label must be a string of 100 characters or fewer' });
     if (type && !VALID_FIELD_TYPES.includes(type)) return res.status(400).json({ error: `Invalid type. Must be one of: ${VALID_FIELD_TYPES.join(', ')}` });
     try {
-      const field = await fieldStore.createFieldDefinition(storage, 'team', {
+      const field = await contextFieldStore.createFieldDefinition('team', {
         label: label.trim(), type, required, visible, primaryDisplay, allowedValues, multiValue, optionsRef
       }, req.auditActor);
       res.status(201).json(field);
@@ -1482,7 +1481,7 @@ module.exports = async function registerRoutes(router, context) {
     const guard = demoWriteGuard(res);
     if (guard) return;
     try {
-      const result = await fieldStore.updateFieldDefinition(storage, 'team', req.params.fieldId, req.body, req.auditActor);
+      const result = await contextFieldStore.updateFieldDefinition('team', req.params.fieldId, req.body, req.auditActor);
       if (!result) return res.status(404).json({ error: 'Field not found' });
       res.json(result);
     } catch (err) {
@@ -1510,7 +1509,7 @@ module.exports = async function registerRoutes(router, context) {
   router.delete('/structure/field-definitions/team/:fieldId', requireTeamAdmin, requireScope('team-tracker:write'), async function(req, res) {
     const guard = demoWriteGuard(res);
     if (guard) return;
-    const result = await fieldStore.softDeleteField(storage, 'team', req.params.fieldId, req.auditActor);
+    const result = await contextFieldStore.softDeleteField('team', req.params.fieldId, req.auditActor);
     if (!result) return res.status(404).json({ error: 'Field not found' });
     res.json(result);
   });
@@ -1530,7 +1529,7 @@ module.exports = async function registerRoutes(router, context) {
     if (guard) return;
     const { orderedIds } = req.body;
     if (!Array.isArray(orderedIds)) return res.status(400).json({ error: 'orderedIds array is required' });
-    await fieldStore.reorderFields(storage, 'team', orderedIds, req.auditActor);
+    await contextFieldStore.reorderFields('team', orderedIds, req.auditActor);
     res.json({ ok: true });
   });
 
@@ -1799,10 +1798,10 @@ module.exports = async function registerRoutes(router, context) {
       const person = registry && registry.people && registry.people[req.params.uid];
       const existingValues = person && person._appFields ? person._appFields : {};
 
-      const { validated, warnings, errors } = await fieldStore.validateFieldValues(storage, 'person', req.body, existingValues, { optionsResolver });
+      const { validated, warnings, errors } = await contextFieldStore.validateFieldValues('person', req.body, existingValues, { optionsResolver });
       if (errors.length > 0) return res.status(400).json({ error: errors.join('; ') });
 
-      const result = await fieldStore.updatePersonFields(storage, req.params.uid, validated, req.auditActor);
+      const result = await contextFieldStore.updatePersonFields(req.params.uid, validated, req.auditActor);
       if (!result) return res.status(404).json({ error: 'Person not found' });
       if (warnings.length > 0) result._warnings = warnings;
       res.json(result);
@@ -1840,7 +1839,7 @@ module.exports = async function registerRoutes(router, context) {
     const team = teamsData.teams && teamsData.teams[req.params.teamId];
     const existingValues = team && team.metadata ? team.metadata : {};
 
-    const { validated, warnings, errors } = await fieldStore.validateFieldValues(storage, 'team', req.body, existingValues, { optionsResolver });
+    const { validated, warnings, errors } = await contextFieldStore.validateFieldValues('team', req.body, existingValues, { optionsResolver });
     if (errors.length > 0) return res.status(400).json({ error: errors.join('; ') });
 
     const result = await teamStore.updateTeamFields(storage, req.params.teamId, validated, req.auditActor);
@@ -5326,10 +5325,9 @@ module.exports = async function registerRoutes(router, context) {
       const directReportSet = permissions.getDirectReports(user.uid, registry);
       if (directReportSet.size === 0) return [];
 
-      const fieldStore = require('../../../shared/server/field-store');
       const teamStore = require('../../../shared/server/team-store');
       const fieldExceptionsStore = require('./field-exceptions-store');
-      const fieldDefs = await fieldStore.readFieldDefinitions(storage);
+      const fieldDefs = await contextFieldStore.readFieldDefinitions();
       if (!fieldDefs) return [];
 
       const personFields = fieldDefs.personFields.filter(f => !f.deleted && f.visible);

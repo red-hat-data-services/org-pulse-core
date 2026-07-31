@@ -6,7 +6,7 @@
 const fieldExceptionsStore = require('../field-exceptions-store');
 
 module.exports = function registerFieldExceptionRoutes(router, context) {
-  const { storage, requireTeamAdmin, requireScope } = context;
+  const { storage, requireTeamAdmin, requireScope, fieldStore } = context;
   const { readFromStorage } = storage;
 
   const DEMO_MODE = process.env.DEMO_MODE === 'true';
@@ -169,8 +169,7 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
 
     // Validate fieldId exists and is not deleted (skip for __boards__ sentinel)
     if (fieldId !== '__boards__') {
-      const fieldStore = require('../../../../shared/server/field-store');
-      const fieldDefs = await fieldStore.readFieldDefinitions(storage);
+      const fieldDefs = await fieldStore.readFieldDefinitions();
       const scope = entityType === 'person' ? 'personFields' : 'teamFields';
       const field = (fieldDefs[scope] || []).find(f => f.id === fieldId);
       if (!field) {
