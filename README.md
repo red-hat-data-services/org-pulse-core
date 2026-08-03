@@ -1,6 +1,6 @@
 # Org Pulse Core
 
-A modular engineering dashboard platform connecting Jira, GitHub, and GitLab data with a team roster to surface delivery insights. Vue 3 + Express, deployed on OpenShift via ArgoCD.
+A modular engineering dashboard platform connecting Jira, GitHub, and GitLab data with a team roster to surface delivery insights. Built with Vue 3 + Express, deployed on OpenShift via ArgoCD.
 
 This is the **core platform** repository. It provides the app shell, shared code, module system, and the built-in team-tracker module. Organizations extend it by creating their own repo that consumes `@org-pulse/core` as an npm dependency and adds custom modules.
 
