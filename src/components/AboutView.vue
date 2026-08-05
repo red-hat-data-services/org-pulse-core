@@ -391,6 +391,7 @@ import {
 } from 'lucide-vue-next'
 import { useAuth } from '@shared/client'
 import SiteUsageTab from './health-metrics/SiteUsageTab.vue'
+import { ISSUE_TEMPLATES, RESOURCE_LINKS } from '../utils/repo-links.js'
 
 const { isAdmin: authIsAdmin, roles } = useAuth()
 
@@ -463,18 +464,10 @@ const pipelineSteps = [
   { label: 'Report', desc: 'Render dashboards and charts per module' }
 ]
 
-const repoBase = 'https://github.com/red-hat-data-services/org-pulse-core'
+const iconMap = { Github: GithubIcon, FileCode2, MessageSquarePlus, Bug }
 
-const resourceLinks = [
-  { label: 'Source Code', icon: GithubIcon, url: repoBase },
-  { label: 'Contributing Guide', icon: FileCode2, url: repoBase + '/blob/main/CONTRIBUTING.md' },
-  { label: 'API Docs', icon: FileCode2, url: '/api/docs' }
-]
-
-const issueTemplates = [
-  { label: 'Feature Request / Feedback', icon: MessageSquarePlus, url: repoBase + '/issues/new?template=general-feedback.yml' },
-  { label: 'Bug Report', icon: Bug, url: repoBase + '/issues/new?template=bug-report.yml' }
-]
+const resourceLinks = RESOURCE_LINKS.map(l => ({ ...l, icon: iconMap[l.icon] || l.icon }))
+const issueTemplates = ISSUE_TEMPLATES.map(t => ({ ...t, icon: iconMap[t.icon] || t.icon }))
 
 // --- Backups state ---
 const backupsList = ref([])

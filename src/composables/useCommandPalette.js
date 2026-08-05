@@ -1,12 +1,19 @@
 import { ref, computed } from 'vue'
 import discoveredNav from 'virtual:nav-discovery'
+import { ISSUE_TEMPLATES, RESOURCE_LINKS } from '../utils/repo-links.js'
+
+const LINK_ACTIONS = [...RESOURCE_LINKS, ...ISSUE_TEMPLATES].map(link => ({
+  type: 'action', id: link.id, label: link.label, sublabel: link.sublabel,
+  icon: link.icon, url: link.url, keywords: link.keywords
+}))
 
 const ACTIONS = [
   { type: 'action', id: 'toggle-theme', label: 'Toggle Theme', sublabel: 'Switch between light, dark, and system', icon: 'Sun', keywords: ['dark', 'light', 'mode', 'theme'] },
   { type: 'action', id: 'toggle-sidebar', label: 'Toggle Sidebar', sublabel: 'Collapse or expand the sidebar', icon: 'PanelLeftClose', keywords: ['collapse', 'expand', 'sidebar', 'panel'] },
   { type: 'action', id: 'go-settings', label: 'Open Settings', sublabel: 'App configuration', icon: 'Settings', keywords: ['settings', 'config', 'preferences'] },
   { type: 'action', id: 'go-about', label: 'About', sublabel: 'App info and documentation', icon: 'Info', keywords: ['about', 'help', 'docs', 'version'] },
-  { type: 'action', id: 'go-home', label: 'Go Home', sublabel: 'Return to the landing page', icon: 'Home', keywords: ['home', 'dashboard', 'landing'] }
+  { type: 'action', id: 'go-home', label: 'Go Home', sublabel: 'Return to the landing page', icon: 'Home', keywords: ['home', 'dashboard', 'landing'] },
+  ...LINK_ACTIONS
 ]
 
 const MAX_RESULTS = 50
