@@ -3,8 +3,6 @@
  * Used by both the manager dashboard and field-completeness endpoints.
  */
 
-const fieldStore = require('../../../shared/server/field-store');
-
 /**
  * Build an enriched person object with customFields populated from _appFields.
  * @param {Object} person - Registry person object
@@ -35,12 +33,12 @@ function enrichPerson(person, personFieldDefs, options = {}) {
 
 /**
  * Read and prepare field definitions with optionsRef resolution.
- * @param {Object} storage - Storage abstraction
+ * @param {Object} fieldStore - Field store instance
  * @param {Function} optionsResolver - (refName) => values array
  * @returns {{ personFieldDefs: Array, teamFieldDefs: Array }}
  */
-async function resolveFieldDefinitions(storage, optionsResolver) {
-  const fieldDefs = await fieldStore.readFieldDefinitions(storage);
+async function resolveFieldDefinitions(fieldStore, optionsResolver) {
+  const fieldDefs = await fieldStore.readFieldDefinitions();
   const personFieldDefs = fieldDefs ? fieldDefs.personFields.filter(f => !f.deleted) : [];
   const teamFieldDefs = fieldDefs ? fieldDefs.teamFields.filter(f => !f.deleted) : [];
 

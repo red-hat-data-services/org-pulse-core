@@ -15,6 +15,7 @@
  * @property {Function} requireRole    - Factory: requireRole(role) returns Express middleware
  * @property {Function} requireScope   - Factory returning Express middleware for API token scope check
  * @property {object} roleStore        - Role store instance (getRole, setRole, etc.)
+ * @property {object} fieldStore       - Field store instance (readFieldDefinitions, createFieldDefinition, etc.)
  * @property {object} [roleRegistry]   - Role registry for registerRole
  * @property {object} [scopeRegistry]  - Scope registry for registerScopes
  * @property {object} [secretRegistry] - Secret registry for module secrets
@@ -43,6 +44,7 @@
  * @property {Function} requireRole    - Factory: requireRole(role) returns Express middleware
  * @property {Function} requireScope   - Factory returning Express middleware for API token scope check
  * @property {object} roleStore        - Role store instance
+ * @property {object} fieldStore       - Field store instance
  * @property {Function} registerDiagnostics - Register a diagnostics function for admin health checks
  * @property {Function} registerMessageProvider - Register a message provider (id, fn)
  * @property {Function} registerRefresh - Register a refresh handler (id, config)
@@ -94,6 +96,7 @@ function buildModuleContext(coreServices, slug, registries = {}) {
     requireRole: coreServices.requireRole,
     requireScope: coreServices.requireScope,
     roleStore: coreServices.roleStore,
+    fieldStore: coreServices.fieldStore,
 
     registerRole: roleRegistry
       ? function (id, config) {
@@ -194,15 +197,19 @@ function createTestContext(overrides = {}) {
   const noop = function () {}
   const noopMiddleware = function (_req, _res, next) { next() }
 
+  const testStorage = {
+    readFromStorage: async function () { return null },
+    writeToStorage: async function () {},
+    deleteFromStorage: async function () {},
+    listStorageFiles: async function () { return [] },
+    deleteStorageDirectory: async function () { return { deleted: 0 } },
+    getFileMtime: async function () { return null }
+  }
+
+  const { createFieldStore } = require('./field-store')
+
   const defaults = {
-    storage: {
-      readFromStorage: async function () { return null },
-      writeToStorage: async function () {},
-      deleteFromStorage: async function () {},
-      listStorageFiles: async function () { return [] },
-      deleteStorageDirectory: async function () { return { deleted: 0 } },
-      getFileMtime: async function () { return null }
-    },
+    storage: testStorage,
     requireAuth: noopMiddleware,
     requireAdmin: noopMiddleware,
     requireTeamAdmin: noopMiddleware,
@@ -214,6 +221,7 @@ function createTestContext(overrides = {}) {
       removeRole: noop,
       getAllRoles: function () { return {} }
     },
+    fieldStore: createFieldStore(testStorage, {}),
     registerDiagnostics: noop,
     registerMessageProvider: noop,
     registerRefresh: noop,

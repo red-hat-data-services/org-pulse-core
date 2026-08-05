@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  * the org-teams routes on a mock router and invoking the GET /org-teams handler.
  */
 
-
+const { createFieldStore } = require('../../../../shared/server/field-store')
 const rosterSyncConfig = require('../../../../shared/server/roster-sync/config')
 
 function makeStorage(initial = {}) {
@@ -68,14 +68,16 @@ function setupRoutes(storage, opts = {}) {
   }
 
   const registeredSearchHandler = { fn: null }
-
+  const fieldStore = createFieldStore(storage)
   const context = {
     storage,
     requireAdmin: (req, res, next) => next(),
     requireScope: () => (req, res, next) => next(),
     registerSearchIndex: opts.captureSearchIndex
       ? (fn) => { registeredSearchHandler.fn = fn }
-      : undefined
+      : undefined,
+    fieldStore,
+    secrets: {}
   }
 
   // Clear config cache before registering

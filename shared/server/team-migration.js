@@ -425,11 +425,12 @@ async function migrateToInApp(storage, config, actorEmail, fieldOverrides) {
 
   // ─── Read all data once ───
   const { readTeams, generateTeamId, TEAMS_KEY } = require('./team-store');
-  const { readFieldDefinitions, FIELD_DEFS_KEY } = require('./field-store');
+  const { createFieldStore, FIELD_DEFS_KEY } = require('./field-store');
   const { getOrgDisplayNames } = require('./roster-sync/config');
 
+  const fieldStore = createFieldStore(storage);
   const teamsData = await readTeams(storage);
-  const fieldDefs = await readFieldDefinitions(storage);
+  const fieldDefs = await fieldStore.readFieldDefinitions();
 
   // Build override lookup: key → { type, multiValue, scope }
   const overrideMap = {};

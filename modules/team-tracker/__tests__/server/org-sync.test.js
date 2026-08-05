@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // Clear the org display names cache before each test
 const rosterSyncConfig = require('../../../../shared/server/roster-sync/config')
 const googleSheets = require('../../../../shared/server/google-sheets')
+const { createFieldStore } = require('../../../../shared/server/field-store')
 
 const {
   deriveTeamsFromPeople,
@@ -173,8 +174,9 @@ describe('runSync', () => {
       ]
     )
     const storage = makeStorage(data)
+    const fieldStore = createFieldStore(storage)
 
-    const result = await runSync(storage, null, {})
+    const result = await runSync(storage, null, {}, {}, fieldStore)
     expect(result.status).toBe('success')
     expect(result.teamCount).toBe(2)
 
@@ -192,9 +194,10 @@ describe('runSync', () => {
       ]
     )
     const storage = makeStorage(data)
+    const fieldStore = createFieldStore(storage)
     fetchRawSheetSpy.mockRejectedValue(new Error('Sheet not found'))
 
-    const result = await runSync(storage, 'sheet123', { teamBoardsTab: 'Missing Tab' })
+    const result = await runSync(storage, 'sheet123', { teamBoardsTab: 'Missing Tab' }, {}, fieldStore)
     expect(result.status).toBe('success')
     expect(result.teamCount).toBe(1)
 
@@ -211,8 +214,9 @@ describe('runSync', () => {
       ]
     )
     const storage = makeStorage(data)
+    const fieldStore = createFieldStore(storage)
 
-    await runSync(storage, null, {})
+    await runSync(storage, null, {}, {}, fieldStore)
 
     expect(fetchRawSheetSpy).not.toHaveBeenCalled()
   })

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 
 
 const { previewMigration, executeMigration } = require('../../server/migration/field-options-migration')
-const fieldStore = require('../../../../shared/server/field-store')
+const { createFieldStore } = require('../../../../shared/server/field-store')
 
 function makeStorage(initial = {}) {
   const data = { ...initial }
@@ -159,7 +159,8 @@ describe('field-options-migration', () => {
         optionSetLabel: 'Components'
       }, 'admin@test.com')
 
-      const defs = await fieldStore.readFieldDefinitions(storage)
+      const _fieldStore = createFieldStore(storage);
+      const defs = await _fieldStore.readFieldDefinitions()
       const field = defs.personFields.find(f => f.id === 'field_comp')
       expect(field.type).toBe('constrained')
       expect(field.multiValue).toBe(true)
@@ -190,7 +191,8 @@ describe('field-options-migration', () => {
       }, 'admin@test.com')
 
       expect(result.counterpartFieldCreated).toBe(true)
-      const defs = await fieldStore.readFieldDefinitions(storage)
+      const _fieldStore = createFieldStore(storage);
+      const defs = await _fieldStore.readFieldDefinitions()
       const teamField = defs.teamFields.find(f => f.optionsRef === 'components')
       expect(teamField).toBeDefined()
       expect(teamField.label).toBe('Team Components')
@@ -210,7 +212,8 @@ describe('field-options-migration', () => {
 
       expect(result.teamsSeeded).toBe(2)
       const teams = storage._data['team-data/teams.json']
-      const defs = await fieldStore.readFieldDefinitions(storage)
+      const _fieldStore = createFieldStore(storage);
+      const defs = await _fieldStore.readFieldDefinitions()
       const teamField = defs.teamFields.find(f => f.optionsRef === 'components')
 
       // team_1 has person1 (Platform Core) and person2 (ML Models)
@@ -281,7 +284,8 @@ describe('field-options-migration', () => {
       expect(result.valuesExtracted).toBe(2)
       expect(result.sourceFieldUpdated).toBe(true)
 
-      const defs = await fieldStore.readFieldDefinitions(storage)
+      const _fieldStore = createFieldStore(storage);
+      const defs = await _fieldStore.readFieldDefinitions()
       const field = defs.teamFields.find(f => f.id === 'field_region')
       expect(field.optionsRef).toBe('regions')
 

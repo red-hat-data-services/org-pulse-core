@@ -332,6 +332,16 @@ async function startServer(options = {}) {
     getFileMtime
   });
 
+  // ─── Field Store ───
+
+  const { createFieldStore } = require('../shared/server/field-store');
+  const fieldStoreOpts = {};
+  if (dbConnection) {
+    const { fieldDefinitionSchema } = require('../shared/server/models/field-definition');
+    fieldStoreOpts.model = dbConnection.model('core__field_definitions', fieldDefinitionSchema, 'core__field_definitions');
+  }
+  const fieldStore = createFieldStore(storageModule, fieldStoreOpts);
+
   // ─── Swagger UI (before auth) ───
 
   const { createOpenApiSpec } = require('./openapi-config');
@@ -475,7 +485,7 @@ async function startServer(options = {}) {
 
   // ─── Module State ───
 
-  const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, roleRegistry, scopeRegistry, secretRegistry, allocationStrategy, dbConnection };
+  const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, fieldStore, roleRegistry, scopeRegistry, secretRegistry, allocationStrategy, dbConnection };
   const registries = { diagnostics: diagnosticsRegistry, messages: messageRegistry, refresh: refreshRegistry, exports: exportRegistry, searchIndex: searchIndexRegistry };
 
   const persistedState = await loadModuleState(storageModule);

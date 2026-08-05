@@ -27,6 +27,7 @@ async function setupRoutes(storageData) {
   }
 
   const storage = makeStorage(storageData)
+  const { createFieldStore } = require('../../../../shared/server/field-store')
   const context = {
     storage,
     requireAdmin: (req, res, next) => next(),
@@ -37,6 +38,7 @@ async function setupRoutes(storageData) {
       isAdmin: vi.fn(() => false),
       isTeamAdmin: vi.fn(() => false)
     },
+    fieldStore: createFieldStore(storage),
     registerScopes: vi.fn()
   }
 

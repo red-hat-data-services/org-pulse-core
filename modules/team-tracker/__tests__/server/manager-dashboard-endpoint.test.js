@@ -1,3 +1,4 @@
+const { createFieldStore } = require('../../../../shared/server/field-store')
 import { describe, it, expect, vi } from 'vitest'
 
 
@@ -33,6 +34,7 @@ async function setupRoutes(storageData) {
   }
 
   const storage = makeStorage(storageData)
+  const fieldStore = createFieldStore(storage)
   const mockRoleStore = {
     getRoles: vi.fn(() => []),
     isAdmin: vi.fn(() => false),
@@ -45,6 +47,7 @@ async function setupRoutes(storageData) {
     requireTeamAdmin: (req, res, next) => next(),
     requireScope: () => (req, res, next) => next(),
     roleStore: mockRoleStore,
+    fieldStore,
     registerScopes: vi.fn()
   }
 

@@ -9,7 +9,7 @@
  */
 
 const fieldOptionsStore = require('../field-options-store');
-const fieldStore = require('../../../../shared/server/field-store');
+const { createFieldStore } = require('../../../../shared/server/field-store');
 const teamStore = require('../../../../shared/server/team-store');
 const { appendAuditEntry } = require('../../../../shared/server/audit-log');
 
@@ -22,7 +22,8 @@ const REGISTRY_KEY = 'team-data/registry.json';
  * @returns {{ field, scope, uniqueValues, recordCount } | { error }}
  */
 async function previewMigration(storage, sourceFieldId) {
-  const fieldDefs = await fieldStore.readFieldDefinitions(storage);
+  const fieldStore = createFieldStore(storage);
+  const fieldDefs = await fieldStore.readFieldDefinitions();
 
   // Find the source field in either scope
   let scope = null;
@@ -90,6 +91,7 @@ async function previewMigration(storage, sourceFieldId) {
  */
 async function executeMigration(storage, params, actorEmail) {
   const { sourceFieldId, optionSetName, optionSetLabel, createCounterpart, counterpartLabel, seedFromMembers } = params;
+  const fieldStore = createFieldStore(storage);
 
   // Validate option set doesn't already exist
   const existing = await fieldOptionsStore.readFieldOptions(storage, optionSetName);
@@ -114,7 +116,7 @@ async function executeMigration(storage, params, actorEmail) {
   await fieldOptionsStore.replaceValues(storage, optionSetName, preview.uniqueValues, optionSetLabel, actorEmail);
 
   // Step 2: Update the source field to link to the option set
-  await fieldStore.updateFieldDefinition(storage, preview.scope, sourceFieldId, {
+  await fieldStore.updateFieldDefinition(preview.scope, sourceFieldId, {
     type: 'constrained',
     multiValue: true,
     optionsRef: optionSetName,
@@ -159,7 +161,7 @@ async function executeMigration(storage, params, actorEmail) {
     const counterpartScope = preview.scope === 'person' ? 'team' : 'person';
     const label = counterpartLabel || optionSetLabel || preview.field.label;
 
-    const counterpartField = await fieldStore.createFieldDefinition(storage, counterpartScope, {
+    const counterpartField = await fieldStore.createFieldDefinition(counterpartScope, {
       label,
       type: 'constrained',
       multiValue: true,
