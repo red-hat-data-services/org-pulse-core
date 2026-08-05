@@ -216,7 +216,12 @@ function selectItem(item) {
   } else if (item.type === 'data') {
     emit('navigate', item.module, item.viewId, item.params)
   } else if (item.type === 'action') {
-    emit('action', item.id)
+    if (item.url) {
+      window.open(item.url, '_blank', 'noopener,noreferrer')
+      emit('close')
+    } else {
+      emit('action', item.id)
+    }
   }
 }
 

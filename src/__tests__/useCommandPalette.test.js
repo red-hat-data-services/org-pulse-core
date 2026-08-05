@@ -657,10 +657,10 @@ describe('useCommandPalette', () => {
   })
 
   describe('ACTIONS built-in items', () => {
-    it('includes 5 built-in action items', () => {
+    it('includes 10 built-in action items', () => {
       const { allItems } = createPalette()
       const actions = allItems.value.filter(r => r.type === 'action')
-      expect(actions.length).toBe(5)
+      expect(actions.length).toBe(10)
     })
 
     it('all action items have correct structure', () => {
@@ -681,6 +681,54 @@ describe('useCommandPalette', () => {
       expect(actionIds).toContain('go-settings')
       expect(actionIds).toContain('go-about')
       expect(actionIds).toContain('go-home')
+      expect(actionIds).toContain('feature-request')
+      expect(actionIds).toContain('bug-report')
+      expect(actionIds).toContain('source-code')
+      expect(actionIds).toContain('contributing-guide')
+      expect(actionIds).toContain('api-docs')
+    })
+
+    it('external link actions have url fields', () => {
+      const { allItems } = createPalette()
+      const actions = allItems.value.filter(r => r.type === 'action')
+      const featureReq = actions.find(a => a.id === 'feature-request')
+      const bugReport = actions.find(a => a.id === 'bug-report')
+      const sourceCode = actions.find(a => a.id === 'source-code')
+      const contributing = actions.find(a => a.id === 'contributing-guide')
+      const apiDocs = actions.find(a => a.id === 'api-docs')
+      expect(featureReq.url).toContain('/issues/new?template=general-feedback.yml')
+      expect(bugReport.url).toContain('/issues/new?template=bug-report.yml')
+      expect(sourceCode.url).toContain('github.com')
+      expect(contributing.url).toContain('CONTRIBUTING.md')
+      expect(apiDocs.url).toBe('/api/docs')
+    })
+
+    it('finds feature-request action by keyword "feedback"', () => {
+      const { searchQuery, filteredResults } = createPalette()
+      searchQuery.value = 'feedback'
+      const actions = filteredResults.value.filter(r => r.type === 'action')
+      expect(actions.some(a => a.id === 'feature-request')).toBe(true)
+    })
+
+    it('finds bug-report action by keyword "bug"', () => {
+      const { searchQuery, filteredResults } = createPalette()
+      searchQuery.value = 'bug'
+      const actions = filteredResults.value.filter(r => r.type === 'action')
+      expect(actions.some(a => a.id === 'bug-report')).toBe(true)
+    })
+
+    it('finds api-docs action by keyword "documentation"', () => {
+      const { searchQuery, filteredResults } = createPalette()
+      searchQuery.value = 'documentation'
+      const actions = filteredResults.value.filter(r => r.type === 'action')
+      expect(actions.some(a => a.id === 'api-docs')).toBe(true)
+    })
+
+    it('finds source-code action by keyword "github"', () => {
+      const { searchQuery, filteredResults } = createPalette()
+      searchQuery.value = 'github'
+      const actions = filteredResults.value.filter(r => r.type === 'action')
+      expect(actions.some(a => a.id === 'source-code')).toBe(true)
     })
   })
 
