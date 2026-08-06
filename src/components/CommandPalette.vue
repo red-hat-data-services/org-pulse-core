@@ -85,11 +85,19 @@
             </svg>
           </kbd>
           <kbd
-            v-else
+            v-else-if="i === (selectedIndex + 1) % filteredResults.length"
             class="inline-flex items-center px-1.5 py-0.5 text-[9px] font-medium text-gray-400/60 bg-gray-100/50 rounded border border-gray-200/40 flex-shrink-0 ml-1 tracking-wide"
           >
             TAB
           </kbd>
+          <span
+            v-else-if="filteredResults.length > 2 && i === (selectedIndex - 1 + filteredResults.length) % filteredResults.length"
+            class="inline-flex items-center gap-0.5 flex-shrink-0 ml-1"
+          >
+            <kbd class="inline-flex items-center px-1.5 py-0.5 text-[9px] font-medium text-gray-400/60 bg-gray-100/50 rounded border border-gray-200/40 tracking-wide">SHIFT</kbd>
+            <span class="text-[9px] text-gray-400/60 font-medium">+</span>
+            <kbd class="inline-flex items-center px-1.5 py-0.5 text-[9px] font-medium text-gray-400/60 bg-gray-100/50 rounded border border-gray-200/40 tracking-wide">TAB</kbd>
+          </span>
         </div>
       </div>
 

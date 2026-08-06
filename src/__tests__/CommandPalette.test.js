@@ -107,26 +107,64 @@ describe('CommandPalette keyboard indicators', () => {
     wrapper.unmount()
   })
 
-  it('non-selected items show TAB text badge', () => {
+  it('only the next item shows TAB text badge', () => {
     const wrapper = mountPalette()
     const rows = wrapper.findAll('.command-palette-suggestions > div')
 
-    for (let i = 1; i < rows.length; i++) {
-      const kbd = rows[i].find('kbd')
-      expect(kbd.exists()).toBe(true)
-      expect(kbd.text()).toBe('TAB')
-    }
+    const nextRow = rows[1]
+    const nextKbd = nextRow.find('kbd')
+    expect(nextKbd.exists()).toBe(true)
+    expect(nextKbd.text()).toBe('TAB')
     wrapper.unmount()
   })
 
-  it('every result row has exactly one kbd element', () => {
+  it('previous item shows Shift+TAB badge when 3+ results', () => {
     const wrapper = mountPalette()
     const rows = wrapper.findAll('.command-palette-suggestions > div')
 
-    for (const row of rows) {
-      const kbds = row.findAll('kbd')
-      expect(kbds.length).toBe(1)
-    }
+    const prevRow = rows[2]
+    const kbds = prevRow.findAll('kbd')
+    expect(kbds.length).toBe(2)
+    expect(kbds[0].text()).toBe('SHIFT')
+    expect(kbds[1].text()).toBe('TAB')
+    wrapper.unmount()
+  })
+
+  it('does not show Shift+TAB when only 2 results', () => {
+    mockFilteredResults = computed(() => [
+      { id: 'team-tracker::home', label: 'Team Directory', sublabel: 'People & Teams', type: 'page', slug: 'team-tracker', viewId: 'home' },
+      { id: 'releases::schedule', label: 'Schedule', sublabel: 'Releases', type: 'page', slug: 'releases', viewId: 'schedule' }
+    ])
+    const wrapper = mountPalette()
+    const rows = wrapper.findAll('.command-palette-suggestions > div')
+
+    expect(rows[0].findAll('kbd').length).toBe(1)
+    expect(rows[1].findAll('kbd').length).toBe(1)
+    expect(rows[1].find('kbd').text()).toBe('TAB')
+    wrapper.unmount()
+  })
+
+  it('selected shows Enter, next shows TAB, prev shows Shift+TAB, rest have no kbd', () => {
+    mockFilteredResults = computed(() => [
+      { id: 'a', label: 'A', sublabel: 'X', type: 'page', slug: 's', viewId: 'v' },
+      { id: 'b', label: 'B', sublabel: 'X', type: 'page', slug: 's', viewId: 'v' },
+      { id: 'c', label: 'C', sublabel: 'X', type: 'page', slug: 's', viewId: 'v' },
+      { id: 'd', label: 'D', sublabel: 'X', type: 'page', slug: 's', viewId: 'v' }
+    ])
+    const wrapper = mountPalette()
+    const rows = wrapper.findAll('.command-palette-suggestions > div')
+
+    expect(rows[0].findAll('kbd').length).toBe(1)
+    expect(rows[0].find('kbd').text()).not.toBe('TAB')
+
+    expect(rows[1].findAll('kbd').length).toBe(1)
+    expect(rows[1].find('kbd').text()).toBe('TAB')
+
+    expect(rows[2].findAll('kbd').length).toBe(0)
+
+    expect(rows[3].findAll('kbd').length).toBe(2)
+    expect(rows[3].findAll('kbd')[0].text()).toBe('SHIFT')
+    expect(rows[3].findAll('kbd')[1].text()).toBe('TAB')
     wrapper.unmount()
   })
 
@@ -144,6 +182,7 @@ describe('CommandPalette keyboard indicators', () => {
 
     for (let i = 1; i < rows.length; i++) {
       const kbd = rows[i].find('kbd')
+      if (!kbd.exists()) continue
       const paths = kbd.findAll('path')
       expect(paths.some(p => p.attributes('d').includes('M9 10l-5 5 5 5'))).toBe(false)
     }
