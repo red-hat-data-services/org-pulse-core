@@ -35,8 +35,8 @@ configMapGenerator:
 
 images:
 - name: quay.io/org-pulse/org-pulse-chatbot
-  newTag: 0819a4efa0c1230b203d52e4a85c123bcae7b27f
+  newTag: 6412d09c5bca37e2950825312746c3e172a49693
 - name: quay.io/org-pulse/org-pulse-core-backend
-  newTag: 0819a4efa0c1230b203d52e4a85c123bcae7b27f
+  newTag: 6412d09c5bca37e2950825312746c3e172a49693
 - name: quay.io/org-pulse/org-pulse-core-frontend
-  newTag: 0819a4efa0c1230b203d52e4a85c123bcae7b27f
+  newTag: 6412d09c5bca37e2950825312746c3e172a49693
