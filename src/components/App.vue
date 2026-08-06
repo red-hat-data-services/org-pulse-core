@@ -78,7 +78,7 @@
             ]"
           >
             <span class="font-medium tracking-wide">press</span>
-            <kbd class="px-2 py-0.5 text-xs font-bold rounded-md border shadow-sm bg-white/90 dark:bg-orange-900/50" style="color: #93480a; border-color: rgba(236, 122, 8, 0.35);">/</kbd>
+            <kbd class="scope-chip-kbd px-2 py-0.5 text-xs font-bold rounded-md border shadow-sm">/</kbd>
             <span class="font-medium tracking-wide">to explore</span>
           </button>
           <div class="flex items-center gap-3">
