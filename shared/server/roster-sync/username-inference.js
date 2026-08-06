@@ -1,9 +1,13 @@
 /**
- * Infer missing GitHub and GitLab usernames by matching roster people
- * against org/group member lists.
+ * Infer missing GitHub usernames by matching roster people
+ * against org member lists.
  *
  * Runs as an optional enrichment step after LDAP + Sheets merge.
- * Modifies person objects in place (adds githubUsername / gitlabUsername).
+ * Modifies person objects in place (adds githubUsername).
+ *
+ * GitLab username inference is intentionally disabled — GitLab usernames
+ * must come from explicit LDAP configuration (rhatSocialUrl) to prevent
+ * attribution of contributions from namesquatted accounts.
  */
 
 const BATCH_DELAY_MS = 200;
@@ -127,79 +131,21 @@ async function fetchGithubOrgMembers(orgName, githubToken) {
   return members;
 }
 
-// ─── GitLab ───
-
-/**
- * Fetch all members of a GitLab group via REST API.
- * @param {string} groupPath
- * @param {{ baseUrl: string, token: string }} [credentials] - Per-instance credentials
- * @returns {Array<{username, name}>|null}
- */
-async function fetchGitlabGroupMembers(groupPath, credentials) {
-  const token = credentials?.token || process.env.GITLAB_TOKEN;
-  const baseUrl = credentials?.baseUrl || process.env.GITLAB_BASE_URL || 'https://gitlab.com';
-
-  const headers = { 'Accept': 'application/json' };
-  if (token) {
-    headers['PRIVATE-TOKEN'] = token;
-  } else {
-    console.warn('[username-inference] No GitLab token available, skipping GitLab inference');
-    return null;
-  }
-
-  console.log(`[username-inference] Fetching GitLab group members: ${groupPath}`);
-  const members = [];
-  let page = 1;
-
-  while (true) {
-    const url = `${baseUrl}/api/v4/groups/${encodeURIComponent(groupPath)}/members/all?per_page=100&page=${page}`;
-    const res = await fetch(url, { headers });
-
-    if (!res.ok) {
-      console.error(`[username-inference] GitLab group members fetch failed: HTTP ${res.status}`);
-      return null;
-    }
-
-    const data = await res.json();
-    if (data.length === 0) break;
-    members.push(...data.map(function(m) {
-      return { username: m.username, name: m.name || null };
-    }));
-
-    const totalPages = parseInt(res.headers.get('x-total-pages') || '1', 10);
-    if (page >= totalPages) break;
-    page++;
-    await delay(BATCH_DELAY_MS);
-  }
-
-  console.log(`[username-inference] GitLab: ${members.length} group members fetched`);
-  return members;
-}
-
 // ─── Main inference ───
 
 /**
- * Run username inference against the built roster.
- * Modifies person objects in place.
+ * Run GitHub username inference against the built roster.
+ * Modifies person objects in place (adds githubUsername).
  *
  * @param {Object} roster - The full roster object (with orgs)
- * @param {Object} config - Sync config (may contain githubOrg, gitlabGroup)
- * @returns {Object} Summary of inferences made
- */
-/**
- * @param {Object} roster - The full roster object (with orgs)
- * @param {Object} config - Sync config (may contain githubOrg, gitlabGroup)
- * @param {{ githubToken?: string, gitlabToken?: string, resolveSecret?: Function }} [tokens]
+ * @param {Object} config - Sync config (may contain githubOrg/githubOrgs)
+ * @param {{ githubToken?: string }} [tokens]
+ * @returns {Object} Summary of inferences made ({ github, gitlab })
  */
 async function inferUsernames(roster, config, tokens) {
   const githubOrgs = normalizeToArray(config.githubOrgs || config.githubOrg);
 
-  // Resolve GitLab groups: prefer gitlabInstances, fall back to legacy gitlabGroups
-  const gitlabInstances = config.gitlabInstances || [];
-  const legacyGitlabGroups = normalizeToArray(config.gitlabGroups || config.gitlabGroup);
-  const hasGitlabWork = gitlabInstances.some(i => i.groups && i.groups.length > 0) || legacyGitlabGroups.length > 0;
-
-  if (githubOrgs.length === 0 && !hasGitlabWork) {
+  if (githubOrgs.length === 0) {
     return { github: 0, gitlab: 0 };
   }
 
@@ -213,7 +159,6 @@ async function inferUsernames(roster, config, tokens) {
   }
 
   let githubInferred = 0;
-  let gitlabInferred = 0;
 
   // GitHub inference — fetch members from all orgs, then match
   if (githubOrgs.length > 0) {
@@ -237,53 +182,12 @@ async function inferUsernames(roster, config, tokens) {
     }
   }
 
-  // GitLab inference — iterate over instances (or fall back to legacy groups)
-  if (hasGitlabWork) {
-    const allGitlabMembers = [];
+  // GitLab inference intentionally skipped — GitLab usernames must come from
+  // explicit LDAP/Rover configuration (rhatSocialUrl) to prevent misattribution
+  // from namesquatted accounts.
 
-    if (gitlabInstances.length > 0) {
-      // New path: per-instance credentials
-      for (const instance of gitlabInstances) {
-        const instanceToken = tokens && tokens.resolveSecret
-          ? tokens.resolveSecret(instance.tokenEnvVar)
-          : process.env[instance.tokenEnvVar];
-        if (!instanceToken) {
-          console.warn(`[username-inference] Token env var ${instance.tokenEnvVar} not set, skipping ${instance.label}`);
-          continue;
-        }
-        for (const groupPath of (instance.groups || [])) {
-          const members = await fetchGitlabGroupMembers(groupPath, { baseUrl: instance.baseUrl, token: instanceToken });
-          if (members) allGitlabMembers.push(...members);
-        }
-      }
-    } else {
-      // Legacy fallback: flat gitlabGroups with env vars
-      for (const groupPath of legacyGitlabGroups) {
-        const members = await fetchGitlabGroupMembers(groupPath, { token: tokens && tokens.gitlabToken });
-        if (members) allGitlabMembers.push(...members);
-      }
-    }
-
-    if (allGitlabMembers.length > 0) {
-      const needsGitlab = allPeople.filter(function(p) { return !p.gitlabUsername; });
-      const sourceCount = gitlabInstances.length > 0
-        ? `${gitlabInstances.length} GitLab instance(s)`
-        : `${legacyGitlabGroups.length} GitLab group(s)`;
-      console.log(`[username-inference] Matching ${needsGitlab.length} people against ${sourceCount}`);
-
-      for (const person of needsGitlab) {
-        const match = tryMatch(person, allGitlabMembers);
-        if (match) {
-          person.gitlabUsername = match;
-          gitlabInferred++;
-          console.log(`[username-inference] GitLab MATCH: ${person.name} -> ${match}`);
-        }
-      }
-    }
-  }
-
-  console.log(`[username-inference] Complete: ${githubInferred} GitHub, ${gitlabInferred} GitLab usernames inferred`);
-  return { github: githubInferred, gitlab: gitlabInferred };
+  console.log(`[username-inference] Complete: ${githubInferred} GitHub usernames inferred (GitLab inference disabled)`);
+  return { github: githubInferred, gitlab: 0 };
 }
 
 /**

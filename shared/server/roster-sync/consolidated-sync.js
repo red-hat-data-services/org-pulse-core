@@ -166,17 +166,15 @@ async function runConsolidatedSync(storage, credentials) {
       }
     }
 
-    // ─── Phase 3: Username inference (on temp roster-shaped structure) ───
+    // ─── Phase 3: Username inference (GitHub only) ───
+    // GitLab inference is disabled — GitLab usernames must come from explicit
+    // LDAP/Rover configuration to prevent misattribution from namesquatted accounts.
     var usernamesInferred = { github: 0, gitlab: 0 };
-    var hasGitlabInstances = Array.isArray(config.gitlabInstances) && config.gitlabInstances.some(function(inst) { return inst.groups && inst.groups.length > 0; });
-    if (config.githubOrgs || config.githubOrg || config.gitlabGroups || config.gitlabGroup || hasGitlabInstances) {
+    if (config.githubOrgs || config.githubOrg) {
       try {
-        // inferUsernames expects { orgs: { key: { leader, members } } }
         var tempRoster = { orgs: ldapOrgs };
         usernamesInferred = await inferUsernames(tempRoster, config, {
-          githubToken: creds.GITHUB_TOKEN,
-          gitlabToken: creds.GITLAB_TOKEN,
-          resolveSecret: creds.resolveSecret
+          githubToken: creds.GITHUB_TOKEN
         });
       } catch (err) {
         console.warn('[consolidated-sync] Username inference failed (continuing without): ' + err.message);
