@@ -13,6 +13,7 @@ const ACTIONS = [
   { type: 'action', id: 'go-settings', label: 'Open Settings', sublabel: 'App configuration', icon: 'Settings', keywords: ['settings', 'config', 'preferences'] },
   { type: 'action', id: 'go-about', label: 'About', sublabel: 'App info and documentation', icon: 'Info', keywords: ['about', 'help', 'docs', 'version'] },
   { type: 'action', id: 'go-home', label: 'Go Home', sublabel: 'Return to the landing page', icon: 'Home', keywords: ['home', 'dashboard', 'landing'] },
+  { type: 'action', id: 'go-api-tokens', label: 'API Tokens', sublabel: 'Manage your API tokens', icon: 'KeyRound', keywords: ['api', 'token', 'key', 'auth', 'authentication'] },
   ...LINK_ACTIONS
 ]
 

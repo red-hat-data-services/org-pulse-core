@@ -622,6 +622,7 @@ export default {
       else if (actionId === 'go-settings') window.location.hash = '#/settings'
       else if (actionId === 'go-about') window.location.hash = '#/about'
       else if (actionId === 'go-home') window.location.hash = '#/'
+      else if (actionId === 'go-api-tokens') window.location.hash = '#/api-tokens'
     },
 
     async fetchSearchIndex() {
