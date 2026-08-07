@@ -657,10 +657,10 @@ describe('useCommandPalette', () => {
   })
 
   describe('ACTIONS built-in items', () => {
-    it('includes 10 built-in action items', () => {
+    it('includes 11 built-in action items', () => {
       const { allItems } = createPalette()
       const actions = allItems.value.filter(r => r.type === 'action')
-      expect(actions.length).toBe(10)
+      expect(actions.length).toBe(11)
     })
 
     it('all action items have correct structure', () => {

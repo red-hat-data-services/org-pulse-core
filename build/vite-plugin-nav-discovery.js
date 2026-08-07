@@ -206,6 +206,7 @@ export default function navDiscovery() {
             for (const viewId of visibleViewIds) {
               const navLabel = meta.navItemLabels[viewId]
               if (!navLabel) continue
+              if (tab.label === navLabel) continue
 
               entries.push({
                 slug,

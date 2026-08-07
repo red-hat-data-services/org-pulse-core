@@ -138,6 +138,32 @@ describe('module discovery', () => {
     const entries = loadEntries(createPlugin())
     expect(entries).toEqual([])
   })
+
+  it('skips tabs whose label matches the parent navItem label', () => {
+    writeFixture('modules/health/module.json', JSON.stringify({
+      name: 'Health', slug: 'health',
+      client: { navItems: [{ id: 'maturity', label: 'Component maturity' }] }
+    }))
+    writeFixture('modules/health/client/index.js', `
+      import { defineAsyncComponent } from 'vue'
+      export const routes = {
+        'maturity': defineAsyncComponent(() => import('./views/MaturityView.vue'))
+      }
+    `)
+    writeFixture('modules/health/client/views/MaturityView.vue', `
+      <script setup>
+      const tabs = [
+        { id: 'maturity', label: 'Component maturity' },
+        { id: 'disconnected', label: 'Disconnected readiness' }
+      ]
+      </script>
+      <template><div /></template>
+    `)
+
+    const entries = loadEntries(createPlugin())
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({ label: 'Disconnected readiness', params: { tab: 'disconnected' } })
+  })
 })
 
 // ---------------------------------------------------------------------------
