@@ -45,7 +45,7 @@
           :ref="el => setItemRef(el, i)"
           class="group flex items-center gap-4 px-5 h-11 cursor-pointer rounded-md"
           :class="i === selectedIndex
-            ? 'bg-gray-100 text-gray-900'
+            ? 'command-palette-selected text-gray-900'
             : 'hover:bg-gray-50'"
           @click="selectItem(item)"
           @mousemove="selectedIndex !== i && (selectedIndex = i)"
@@ -326,6 +326,14 @@ onBeforeUnmount(() => {
 .command-palette-bar > * {
   position: relative;
   z-index: 1;
+}
+.command-palette-selected {
+  background: rgba(0, 0, 0, 0.08);
+}
+.scope-chip-btn {
+  background: rgba(236, 122, 8, 0.12);
+  color: #b35c00;
+  border: none;
 }
 .command-palette-suggestions {
   background: rgba(255, 255, 255, 0.92);
