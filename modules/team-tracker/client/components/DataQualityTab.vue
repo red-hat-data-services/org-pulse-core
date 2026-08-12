@@ -167,9 +167,9 @@
                   </td>
                   <!-- Team(s) -->
                   <td class="px-4 py-3 text-sm" :class="[
-  bulkEditing ? 'bg-blue-50 dark:bg-blue-900/20' : '',
-  !bulkEditing && editingTeamUid !== person.uid && (!person.teamIds || person.teamIds.length === 0) && !hasExceptionFor('person', person.uid, '__team__') ? 'bg-red-50 dark:bg-red-900/20' : ''
-]">
+                    bulkEditing ? 'bg-blue-50 dark:bg-blue-900/20' : '',
+                    !bulkEditing && editingTeamUid !== person.uid && (!person.teamIds || person.teamIds.length === 0) && !hasExceptionFor('person', person.uid, '__team__') ? 'bg-red-50 dark:bg-red-900/20' : ''
+                  ]">
                     <!-- BULK EDIT -->
                     <div v-if="bulkEditing" class="min-w-[140px]">
                       <ConstrainedAutocomplete
