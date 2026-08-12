@@ -172,13 +172,28 @@ function registerIpaRegistryRoutes(router, context) {
     // through getAllPeople(). But we still use getAllPeople for backward compat.
     var orgDisplayNames = await getOrgDisplayNames(storage);
     var rosterPeople = await getAllPeople(storage);
+    var rosterConfig = await loadConfig(storage);
+    var registryInAppMode = (rosterConfig?.teamDataSource || 'sheets') === 'in-app';
+
+    var teamIdToName = {};
+    if (registryInAppMode) {
+      var teamStore = require('../../../../shared/server/team-store');
+      var structureData = await teamStore.readTeams(storage);
+      for (var tid of Object.keys(structureData.teams)) {
+        teamIdToName[tid] = structureData.teams[tid].name;
+      }
+    }
+
     var teamsByUid = {};
     for (var r = 0; r < rosterPeople.length; r++) {
       var rp = rosterPeople[r];
       if (!rp.uid) continue;
-      var grouping = rp._teamGrouping || rp.miroTeam || '';
-      var teams = grouping.split(',').map(function(t) { return t.trim(); }).filter(Boolean);
-      teamsByUid[rp.uid] = teams;
+      if (registryInAppMode) {
+        teamsByUid[rp.uid] = (rp.teamIds || []).map(function(id) { return teamIdToName[id] || id; });
+      } else {
+        var grouping = rp._teamGrouping || rp.miroTeam || '';
+        teamsByUid[rp.uid] = grouping.split(',').map(function(t) { return t.trim(); }).filter(Boolean);
+      }
     }
 
     for (var i = 0; i < uids.length; i++) {

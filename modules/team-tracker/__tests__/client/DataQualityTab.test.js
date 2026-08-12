@@ -234,8 +234,8 @@ describe('DataQualityTab', () => {
   describe('completeness banner', () => {
     it('shows banner when people have incomplete fields', async () => {
       mockPeople.value = [
-        { uid: 'alice', name: 'Alice', email: 'a@x.com', title: 'Eng', teamIds: [], customFields: { f1: '' } },
-        { uid: 'bob', name: 'Bob', email: 'b@x.com', title: 'SRE', teamIds: [], customFields: { f1: 'val' } }
+        { uid: 'alice', name: 'Alice', email: 'a@x.com', title: 'Eng', teamIds: ['t1'], customFields: { f1: '' } },
+        { uid: 'bob', name: 'Bob', email: 'b@x.com', title: 'SRE', teamIds: ['t1'], customFields: { f1: 'val' } }
       ]
       mockFieldDefinitions.value = {
         person: [{ id: 'f1', label: 'Focus', type: 'free-text', visible: true, deleted: false }],
@@ -250,7 +250,7 @@ describe('DataQualityTab', () => {
 
     it('does not show banner when all complete', async () => {
       mockPeople.value = [
-        { uid: 'alice', name: 'Alice', email: 'a@x.com', title: 'Eng', teamIds: [], customFields: { f1: 'val' } }
+        { uid: 'alice', name: 'Alice', email: 'a@x.com', title: 'Eng', teamIds: ['t1'], customFields: { f1: 'val' } }
       ]
       mockFieldDefinitions.value = {
         person: [{ id: 'f1', label: 'Focus', type: 'free-text', visible: true, deleted: false }],
@@ -264,8 +264,8 @@ describe('DataQualityTab', () => {
 
     it('show incomplete only filter works', async () => {
       mockPeople.value = [
-        { uid: 'alice', name: 'Alice', email: 'a@x.com', title: 'Eng', teamIds: [], customFields: { f1: '' } },
-        { uid: 'bob', name: 'Bob', email: 'b@x.com', title: 'SRE', teamIds: [], customFields: { f1: 'val' } }
+        { uid: 'alice', name: 'Alice', email: 'a@x.com', title: 'Eng', teamIds: ['t1'], customFields: { f1: '' } },
+        { uid: 'bob', name: 'Bob', email: 'b@x.com', title: 'SRE', teamIds: ['t1'], customFields: { f1: 'val' } }
       ]
       mockFieldDefinitions.value = {
         person: [{ id: 'f1', label: 'Focus', type: 'free-text', visible: true, deleted: false }],
