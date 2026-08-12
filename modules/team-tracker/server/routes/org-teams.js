@@ -51,7 +51,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
     return await getOrgDisplayNames(storage);
   }
 
-  function groupPeopleByOrgTeam(allPeople, orgKeyToDisplay) {
+  function groupPeopleByOrgTeamFromGrouping(allPeople, orgKeyToDisplay) {
     const map = {};
     for (const person of allPeople) {
       const orgDisplay = orgKeyToDisplay[person.orgKey] || '';
@@ -62,6 +62,25 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
         const compositeKey = `${orgDisplay}::${teamName}`;
         if (!map[compositeKey]) map[compositeKey] = [];
         map[compositeKey].push(person);
+      }
+    }
+    return map;
+  }
+
+  function groupPeopleByOrgTeamFromRegistry(allPeople, orgKeyToDisplay, structureData) {
+    const map = {};
+    const teamLookup = {};
+    for (const [id, t] of Object.entries(structureData.teams)) {
+      const displayName = orgKeyToDisplay[t.orgKey] || t.orgKey;
+      teamLookup[id] = { compositeKey: `${displayName}::${t.name}` };
+    }
+    for (const person of allPeople) {
+      if (!person.teamIds || person.teamIds.length === 0) continue;
+      for (const teamId of person.teamIds) {
+        const entry = teamLookup[teamId];
+        if (!entry) continue;
+        if (!map[entry.compositeKey]) map[entry.compositeKey] = [];
+        map[entry.compositeKey].push(person);
       }
     }
     return map;
@@ -93,10 +112,14 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
       }
     }
 
-    // Teams are derived from people's _teamGrouping values (the source of truth)
+    const teamStore = require('../../../../shared/server/team-store');
+    const structureData = await teamStore.readTeams(storage);
+
     const allPeople = await getAllPeople(storage);
     const orgKeyToDisplay = await buildOrgKeyToDisplayName();
-    const orgTeamPeopleMap = groupPeopleByOrgTeam(allPeople, orgKeyToDisplay);
+    const orgTeamPeopleMap = isInAppMode
+      ? groupPeopleByOrgTeamFromRegistry(allPeople, orgKeyToDisplay, structureData)
+      : groupPeopleByOrgTeamFromGrouping(allPeople, orgKeyToDisplay);
 
     // In in-app mode, PM/Eng Lead are team fields in metadata — skip person-level rollup
     let allNames = new Set();
@@ -141,9 +164,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
       teams.push({ org, name, boardUrls: teamBoardUrls, boards, engLeads, productManagers, headcount: counts, components, memberCount: teamPeople.length, jiraFilter });
     }
 
-    // Enrich with structure team metadata (C1 fix)
-    const teamStore = require('../../../../shared/server/team-store');
-    const structureData = await teamStore.readTeams(storage);
+    // Enrich with structure team metadata
     const structureByComposite = {};
     for (const [id, t] of Object.entries(structureData.teams)) {
       const displayName = orgKeyToDisplay[t.orgKey] || t.orgKey;
@@ -196,6 +217,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
       : allPeople;
     const unassigned = relevantPeople
       .filter(p => {
+        if (isInAppMode) return !p.teamIds || p.teamIds.length === 0;
         const grouping = p._teamGrouping || p.miroTeam || '';
         return !grouping.trim();
       })
@@ -321,12 +343,28 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
       const teamName = teamKey.substring(sepIdx + 2);
       const allPeople = await getAllPeople(storage);
       const orgKeyToDisplay = await buildOrgKeyToDisplayName();
-      const members = allPeople.filter(function(person) {
-        const personOrg = orgKeyToDisplay[person.orgKey] || '';
-        if (personOrg !== orgName) return false;
-        const groupingValue = person._teamGrouping || person.miroTeam || '';
-        return groupingValue.split(',').map(t => t.trim()).includes(teamName);
-      });
+
+      const rosterConfig = await loadRosterSyncConfig(storage);
+      const membersInAppMode = (rosterConfig?.teamDataSource || 'sheets') === 'in-app';
+
+      let members;
+      if (membersInAppMode) {
+        const teamStore = require('../../../../shared/server/team-store');
+        const structureData = await teamStore.readTeams(storage);
+        const matchingTeam = Object.entries(structureData.teams).find(([, t]) => {
+          const display = orgKeyToDisplay[t.orgKey] || t.orgKey;
+          return display === orgName && t.name === teamName;
+        });
+        const teamId = matchingTeam?.[0];
+        members = teamId ? allPeople.filter(p => p.teamIds?.includes(teamId)) : [];
+      } else {
+        members = allPeople.filter(function(person) {
+          const personOrg = orgKeyToDisplay[person.orgKey] || '';
+          if (personOrg !== orgName) return false;
+          const groupingValue = person._teamGrouping || person.miroTeam || '';
+          return groupingValue.split(',').map(t => t.trim()).includes(teamName);
+        });
+      }
       res.json({ members });
     } catch (error) {
       console.error('[team-tracker] GET /org-teams/:teamKey/members error:', error);
@@ -348,10 +386,19 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
    */
   router.get('/org-list', requireScope('roster:read'), async function(req, res) {
     try {
-      // Derive orgs and team counts from people data (source of truth)
       const allPeople = await getAllPeople(storage);
       const orgKeyToDisplay = await buildOrgKeyToDisplayName();
-      const orgTeamPeopleMap = groupPeopleByOrgTeam(allPeople, orgKeyToDisplay);
+      const rosterConfig = await loadRosterSyncConfig(storage);
+      const listInAppMode = (rosterConfig?.teamDataSource || 'sheets') === 'in-app';
+
+      let orgTeamPeopleMap;
+      if (listInAppMode) {
+        const teamStore = require('../../../../shared/server/team-store');
+        const structureData = await teamStore.readTeams(storage);
+        orgTeamPeopleMap = groupPeopleByOrgTeamFromRegistry(allPeople, orgKeyToDisplay, structureData);
+      } else {
+        orgTeamPeopleMap = groupPeopleByOrgTeamFromGrouping(allPeople, orgKeyToDisplay);
+      }
 
       const orgMap = {};
       const orgPeople = {};
@@ -414,13 +461,17 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
         return (orgKeyToDisplay[person.orgKey] || '') === orgName;
       });
 
+      const rosterConfig = await loadRosterSyncConfig(storage);
+      const fteInAppMode = (rosterConfig?.teamDataSource || 'sheets') === 'in-app';
+
       const roleHeadcount = {};
       const roleFte = {};
       for (const person of orgPeople) {
         const role = person.engineeringSpeciality || person.specialty || 'Unspecified';
         roleHeadcount[role] = (roleHeadcount[role] || 0) + 1;
-        const miroTeam = person._teamGrouping || person.miroTeam || '';
-        const teamCount = miroTeam ? miroTeam.split(',').filter(t => t.trim()).length : 1;
+        const teamCount = fteInAppMode
+          ? (person.teamIds?.length || 1)
+          : (person._teamGrouping || person.miroTeam || '').split(',').filter(t => t.trim()).length || 1;
         roleFte[role] = (roleFte[role] || 0) + (1 / Math.max(teamCount, 1));
       }
 

@@ -33,12 +33,13 @@
         </select>
 
         <select
-          v-if="activeTab === 'people' ? visiblePersonFields.length > 0 : visibleTeamFields.length > 0"
+          v-if="activeTab === 'people' ? true : visibleTeamFields.length > 0"
           v-model="selectedField"
           data-testid="field-filter"
           class="text-sm rounded-md border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
         >
           <option value="">All fields</option>
+          <option value="__team__">Missing: Team</option>
           <option
             v-for="field in (activeTab === 'people' ? visiblePersonFields : visibleTeamFields)"
             :key="field.id"
@@ -165,7 +166,10 @@
                     {{ person.title || '—' }}
                   </td>
                   <!-- Team(s) -->
-                  <td class="px-4 py-3 text-sm" :class="bulkEditing ? 'bg-blue-50 dark:bg-blue-900/20' : ''">
+                  <td class="px-4 py-3 text-sm" :class="[
+                    bulkEditing ? 'bg-blue-50 dark:bg-blue-900/20' : '',
+                    !bulkEditing && editingTeamUid !== person.uid && (!person.teamIds || person.teamIds.length === 0) && !hasExceptionFor('person', person.uid, '__team__') ? 'bg-red-50 dark:bg-red-900/20' : ''
+                  ]">
                     <!-- BULK EDIT -->
                     <div v-if="bulkEditing" class="min-w-[140px]">
                       <ConstrainedAutocomplete
@@ -189,22 +193,30 @@
                       </div>
                     </div>
                     <!-- DISPLAY -->
-                    <div v-else class="group flex items-center gap-1.5 cursor-pointer" @click="startTeamEdit(person)">
-                      <div v-if="person.teamIds.length > 0">
-                        <template v-for="(id, idx) in person.teamIds" :key="id">
-                          <span v-if="idx > 0" class="text-gray-400 dark:text-gray-500">, </span>
-                          <button
-                            v-if="teamById[id]"
-                            @click.stop="navigateToTeamDetail(teamById[id])"
-                            class="text-primary-600 dark:text-primary-400 hover:underline"
-                          >{{ teamById[id].name }}</button>
-                          <span v-else class="text-gray-600 dark:text-gray-400">{{ id }}</span>
-                        </template>
+                    <div v-else>
+                      <ExceptionPopover
+                        v-if="(!person.teamIds || person.teamIds.length === 0) && hasExceptionFor('person', person.uid, '__team__')"
+                        :exception="getExceptionObj('person', person.uid, '__team__')"
+                        @remove="handleRemoveException"
+                        @view-all="navigateToExceptionsTab"
+                      />
+                      <div v-else class="group flex items-center gap-1.5 cursor-pointer" @click="startTeamEdit(person)">
+                        <div v-if="person.teamIds && person.teamIds.length > 0">
+                          <template v-for="(id, idx) in person.teamIds" :key="id">
+                            <span v-if="idx > 0" class="text-gray-400 dark:text-gray-500">, </span>
+                            <button
+                              v-if="teamById[id]"
+                              @click.stop="navigateToTeamDetail(teamById[id])"
+                              class="text-primary-600 dark:text-primary-400 hover:underline"
+                            >{{ teamById[id].name }}</button>
+                            <span v-else class="text-gray-600 dark:text-gray-400">{{ id }}</span>
+                          </template>
+                        </div>
+                        <span v-else class="text-amber-500 dark:text-amber-400">Unassigned</span>
+                        <svg class="h-3 w-3 text-gray-400 dark:text-gray-500 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
                       </div>
-                      <span v-else class="text-amber-500 dark:text-amber-400">Unassigned</span>
-                      <svg class="h-3 w-3 text-gray-400 dark:text-gray-500 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                      </svg>
                     </div>
                   </td>
                   <!-- Field cells -->
@@ -654,9 +666,13 @@ const filteredPeopleBeforeSearch = computed(() => {
   }
 
   if (selectedField.value) {
-    const fieldDef = visiblePersonFields.value.find(f => f.id === selectedField.value)
-    if (fieldDef) {
-      result = result.filter(p => isFieldEmpty(p.customFields?.[selectedField.value], fieldDef))
+    if (selectedField.value === '__team__') {
+      result = result.filter(p => !p.teamIds || p.teamIds.length === 0)
+    } else {
+      const fieldDef = visiblePersonFields.value.find(f => f.id === selectedField.value)
+      if (fieldDef) {
+        result = result.filter(p => isFieldEmpty(p.customFields?.[selectedField.value], fieldDef))
+      }
     }
   }
 
@@ -679,12 +695,15 @@ function getExceptionObj(entityType, entityId, fieldId) {
 }
 
 const incompletePeople = computed(() =>
-  filteredPeopleBeforeSearch.value.filter(person =>
-    visiblePersonFields.value.some(field =>
+  filteredPeopleBeforeSearch.value.filter(person => {
+    const missingTeam = (!person.teamIds || person.teamIds.length === 0)
+      && !hasExceptionFor('person', person.uid, '__team__')
+    if (missingTeam) return true
+    return visiblePersonFields.value.some(field =>
       isFieldEmpty(person.customFields?.[field.id], field) &&
       !hasExceptionFor('person', person.uid, field.id)
     )
-  )
+  })
 )
 
 const incompletePeopleUids = computed(() => new Set(incompletePeople.value.map(p => p.uid)))
