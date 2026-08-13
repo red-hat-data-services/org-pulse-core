@@ -48,7 +48,7 @@
 <script setup>
 import { computed, inject, ref, watch, nextTick } from 'vue'
 import { getReports, runGuard } from '../contributions'
-import ContributionBoundary from '../contributions/ContributionBoundary.vue'
+import ContributionBoundary from '@shared/client/components/ContributionBoundary.vue'
 import ReportCard from './ReportCard.vue'
 import ReportShell from './ReportShell.vue'
 import OrgFilter from './filters/OrgFilter.vue'

@@ -626,23 +626,47 @@ Without `RefreshSkip`, a bare `return` counts as a success — `lastSuccessfulRu
 
 Existing handlers that return `{ status: 'skipped', reason: '...' }` are also recognized as skips automatically via a legacy compatibility bridge.
 
-## Frontend Contribution Slots (team-tracker)
+## Frontend Contribution Slots
 
-Team-tracker exposes named **contribution slots** so features can extend its UI
-without core hardcoding `if (feature configured)` branches. This is the frontend
-analog of the backend `context.registerRefresh` pattern, and is the first step
-toward a generic multi-tenant extension system. Allocation is the reference
-consumer — see `modules/team-tracker/client/contributions/allocation-contributions.js`.
+### Mechanism vs. slots
 
-The registry lives at `modules/team-tracker/client/contributions/`:
+The generic contribution **mechanism** lives in `@shared`
+(`shared/client/contributions/` + `shared/client/components/ContributionBoundary.vue`)
+so any module can build its own contribution slots on it. Core deliberately does
+**not** define a universal slot vocabulary — each module decides what its own
+slots are and what a valid contribution looks like.
 
-- `registry.js` — the slot API and storage
-- `ContributionBoundary.vue` — the fault-isolation wrapper (see below)
+- `createContributionRegistry({ name, validate })` — factory returning a
+  namespaced registry `{ register, getAll, runGuard, reset }`. `name` prefixes
+  log messages; `validate` is optional slot-specific validation.
+- `runGuard(fn, opts)` — safely run a guard callback (throws are swallowed).
+- `ContributionBoundary.vue` — the fault-isolation wrapper (see below). The
+  single `render` descriptor `type` switch (component today; `remote` /
+  `declarative` later) lives in `shared/client/contributions/`
+  (`isValidRenderDescriptor` / `resolveRenderDescriptor`), so new delivery types
+  are added in one place.
+
+### team-tracker slots (reference consumer)
+
+Team-tracker builds three named **slots** on the shared factory so features can
+extend its UI without core hardcoding `if (feature configured)` branches. This is
+the frontend analog of the backend `context.registerRefresh` pattern. Allocation
+is the reference consumer — see
+`modules/team-tracker/client/contributions/allocation-contributions.js`.
+
+The slots live at `modules/team-tracker/client/contributions/`:
+
+- `registry.js` — three `createContributionRegistry` instances
+  (`team-tracker:team-detail-tab`, `team-tracker:report`,
+  `team-tracker:settings-tab`) wrapped in the team-tracker-specific slot API
 - `allocation-contributions.js` — built-in allocation registrations
 - `index.js` — evaluates the registry, then side-effect-imports the built-in
   registrations, and re-exports the getters. **Always import from
   `../contributions` (the index), never `./registry` directly**, so registration
   is guaranteed to have run.
+
+The fault-isolation wrapper is imported from
+`@shared/client/components/ContributionBoundary.vue`.
 
 ### Slots
 
@@ -702,11 +726,12 @@ to a fallback at render time. Future types (e.g. `{ type: 'remote', ... }`,
 
 Extension failures must never break the host page:
 
-- **Rendering** — every contributed component is rendered inside
-  `ContributionBoundary.vue`, which combines a Vue error boundary
-  (`onErrorCaptured`) with an async-load fallback. A component that throws at
-  runtime, or fails/ times out while loading, shows a small "This extension
-  failed to load" panel instead of crashing the page.
+- **Rendering** — every contributed component is rendered inside the shared
+  `ContributionBoundary.vue` (`@shared/client/components/ContributionBoundary.vue`),
+  which combines a Vue error boundary (`onErrorCaptured`) with an async-load
+  fallback. A component that throws at runtime, or fails/ times out while
+  loading, shows a small "This extension failed to load" panel instead of
+  crashing the page.
 - **Guards** — `isVisible` / `isAvailable` are always invoked through the
   `runGuard` helper (try/catch). A throw is treated as "not visible / not
   available", never a crash.

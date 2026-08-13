@@ -1,82 +1,60 @@
 /**
- * Team-tracker frontend contribution registry.
+ * Team-tracker frontend contribution slots.
  *
- * Core team-tracker exposes named "contribution slots" that features can
- * register into, instead of core hardcoding `if (feature configured)` branches.
- * Allocation is the reference/first consumer (see `allocation-contributions.js`).
+ * The generic contribution *mechanism* lives in `@shared`
+ * (`createContributionRegistry`, `runGuard`, `ContributionBoundary`). This file
+ * defines team-tracker's three named *slots* on top of it, instead of core
+ * hardcoding `if (feature configured)` branches. Allocation is the
+ * reference/first consumer (see `allocation-contributions.js`).
  *
- * Three slots are currently supported:
- *   - team-detail tab   (a tab on the team detail view)
- *   - report            (a card in the Reports hub)
- *   - settings tab      (a tab in Team Tracker settings)
+ * Three slots are supported, each a namespaced registry instance:
+ *   - team-detail tab   (`team-tracker:team-detail-tab`) — a tab on the team detail view
+ *   - report            (`team-tracker:report`)          — a card in the Reports hub
+ *   - settings tab      (`team-tracker:settings-tab`)    — a tab in Team Tracker settings
  *
  * The `render` field of every contribution is a *descriptor*, never a raw
  * component, so the shape stays forward-compatible with future remote/federated
  * or declarative delivery. Today only `{ type: 'component', load: () => import(...) }`
  * is rendered; unknown descriptor types degrade gracefully via ContributionBoundary.
  *
- * Registration is resilient: a malformed contribution is skipped and logged,
- * never aborting registration of the others. Guard callbacks (`isVisible`,
- * `isAvailable`) are the caller's responsibility to run inside try/catch — see
- * the `runGuard` helper, which core uses so a throwing guard means
- * "not visible / not available", never a crash.
+ * Registration is resilient (a malformed contribution is skipped and logged),
+ * and guard callbacks (`isVisible`, `isAvailable`) should be run through the
+ * re-exported `runGuard` helper so a throwing guard means "not visible / not
+ * available", never a crash.
  */
-
-const teamDetailTabs = []
-const reports = []
-const settingsTabs = []
+import { createContributionRegistry } from '@shared/client'
 
 /**
- * Validate a render descriptor. Only `component` is renderable today, but any
- * object with a string `type` is accepted so `remote` / `declarative` types can
- * be introduced later without breaking this registry. Unknown-but-well-formed
- * descriptors are allowed through and handled (with a fallback) at render time.
- * @param {*} render
- * @returns {boolean}
+ * Build a slot-specific validator that skips contributions missing any of the
+ * given required fields (null/undefined/empty-string).
+ * @param {string[]} fields
+ * @returns {(contribution: object) => (true|string)}
  */
-function isValidRenderDescriptor(render) {
-  if (!render || typeof render !== 'object') return false
-  if (typeof render.type !== 'string' || render.type.length === 0) return false
-  if (render.type === 'component') {
-    return typeof render.load === 'function'
-  }
-  // Forward-compatible: accept other descriptor types; render layer decides.
-  return true
-}
-
-/**
- * Shared, resilient registration routine.
- * @param {Array} collection - target slot array
- * @param {object} contribution - the contribution to register
- * @param {string[]} requiredFields - fields that must be present + non-null
- * @param {string} kind - slot name, for log messages
- */
-function register(collection, contribution, requiredFields, kind) {
-  try {
-    if (!contribution || typeof contribution !== 'object') {
-      console.warn(`[team-tracker] Skipping malformed ${kind} contribution: not an object`, contribution)
-      return
-    }
-    for (const field of requiredFields) {
+function requireFields(fields) {
+  return (contribution) => {
+    for (const field of fields) {
       if (contribution[field] == null || contribution[field] === '') {
-        console.warn(`[team-tracker] Skipping malformed ${kind} contribution: missing "${field}"`, contribution)
-        return
+        return `missing "${field}"`
       }
     }
-    if (!isValidRenderDescriptor(contribution.render)) {
-      console.warn(`[team-tracker] Skipping ${kind} contribution "${contribution.id}": invalid render descriptor`, contribution.render)
-      return
-    }
-    if (collection.some(c => c.id === contribution.id)) {
-      console.warn(`[team-tracker] Skipping duplicate ${kind} contribution id "${contribution.id}"`)
-      return
-    }
-    collection.push({ order: 100, ...contribution })
-    collection.sort((a, b) => (a.order ?? 100) - (b.order ?? 100))
-  } catch (err) {
-    console.error(`[team-tracker] Failed to register ${kind} contribution`, err)
+    return true
   }
 }
+
+const teamDetailTabRegistry = createContributionRegistry({
+  name: 'team-tracker:team-detail-tab',
+  validate: requireFields(['id', 'label', 'render'])
+})
+
+const reportRegistry = createContributionRegistry({
+  name: 'team-tracker:report',
+  validate: requireFields(['id', 'title', 'description', 'render'])
+})
+
+const settingsTabRegistry = createContributionRegistry({
+  name: 'team-tracker:settings-tab',
+  validate: requireFields(['id', 'label', 'render'])
+})
 
 /**
  * Register a tab on the team detail view.
@@ -90,7 +68,7 @@ function register(collection, contribution, requiredFields, kind) {
  * @param {{ type: 'component', load: () => Promise }} contribution.render
  */
 export function registerTeamDetailTab(contribution) {
-  register(teamDetailTabs, contribution, ['id', 'label', 'render'], 'team-detail-tab')
+  teamDetailTabRegistry.register(contribution)
 }
 
 /**
@@ -107,7 +85,7 @@ export function registerTeamDetailTab(contribution) {
  * @param {{ type: 'component', load: () => Promise }} contribution.render
  */
 export function registerReport(contribution) {
-  register(reports, contribution, ['id', 'title', 'description', 'render'], 'report')
+  reportRegistry.register(contribution)
 }
 
 /**
@@ -119,48 +97,36 @@ export function registerReport(contribution) {
  * @param {{ type: 'component', load: () => Promise }} contribution.render
  */
 export function registerSettingsTab(contribution) {
-  register(settingsTabs, contribution, ['id', 'label', 'render'], 'settings-tab')
+  settingsTabRegistry.register(contribution)
 }
 
 /** @returns {Array} registered team-detail tabs (sorted, defensive copy) */
 export function getTeamDetailTabs() {
-  return [...teamDetailTabs]
+  return teamDetailTabRegistry.getAll()
 }
 
 /** @returns {Array} registered reports (sorted, defensive copy) */
 export function getReports() {
-  return [...reports]
+  return reportRegistry.getAll()
 }
 
 /** @returns {Array} registered settings tabs (sorted, defensive copy) */
 export function getSettingsTabs() {
-  return [...settingsTabs]
+  return settingsTabRegistry.getAll()
 }
 
 /**
- * Run a contribution guard callback safely. A throw (or absent callback that
- * evaluates falsy) is swallowed and treated per `defaultValue`.
- * @param {Function|undefined} fn - guard callback (isVisible / isAvailable)
- * @param {object} [options]
- * @param {boolean} [options.defaultValue=true] - result when `fn` is not a function
- * @param {any[]} [options.args=[]] - arguments to pass to `fn`
- * @returns {boolean}
+ * Run a contribution guard callback safely. Re-exported from `@shared` so
+ * team-tracker consumers keep a single import surface. See the shared
+ * `runGuard` for semantics.
  */
-export function runGuard(fn, { defaultValue = true, args = [] } = {}) {
-  if (typeof fn !== 'function') return defaultValue
-  try {
-    return !!fn(...args)
-  } catch (err) {
-    console.error('[team-tracker] Contribution guard threw; treating as hidden/unavailable', err)
-    return false
-  }
-}
+export { runGuard } from '@shared/client'
 
 /**
- * Clear all registered contributions. Intended for unit tests only.
+ * Clear all registered team-tracker contributions. Intended for unit tests only.
  */
 export function resetContributions() {
-  teamDetailTabs.length = 0
-  reports.length = 0
-  settingsTabs.length = 0
+  teamDetailTabRegistry.reset()
+  reportRegistry.reset()
+  settingsTabRegistry.reset()
 }
