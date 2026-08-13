@@ -58,6 +58,19 @@ Core team owns `shared/` via CODEOWNERS. Changes require core team review.
 | `FeatureReadinessRow.vue` | `@shared/client/components/FeatureReadinessRow.vue` | Table row for feature readiness with priority score, rubric, and status columns |
 | `FeatureReadinessDrawer.vue` | `@shared/client/components/FeatureReadinessDrawer.vue` | Slide-out detail panel for feature readiness (rubric bars, blocking dims, metadata) |
 | `RubricScoreBadge.vue` | `@shared/client/components/RubricScoreBadge.vue` | Compact badge displaying AI rubric score with color coding |
+| `ContributionBoundary.vue` | `@shared/client/components/ContributionBoundary.vue` | Fault-isolation wrapper for a contributed component. Takes a `render` descriptor (`{ type: 'component', load }` today), `componentProps`, and `label`. Resolves the descriptor via `resolveRenderDescriptor`, renders the async component inside a Vue error boundary, and shows a "This extension failed to load" fallback on load failure, timeout, runtime throw, or an unsupported descriptor. Also exported as a named barrel export (`import { ContributionBoundary } from '@shared/client'`). |
+
+### Contribution machinery
+
+Domain-agnostic building blocks for module-defined "contribution slots" (named
+extension points that features register into). Core does **not** define any
+universal slots — each module builds its own on top of this factory. See
+`docs/MODULES.md` § Frontend Contribution Slots.
+
+| Export | Description |
+|--------|-------------|
+| `createContributionRegistry({ name, validate })` | Create a namespaced, resilient contribution registry. Returns `{ register(contribution), getAll(), runGuard, reset() }`. `name` (required string) prefixes log messages; `validate(contribution)` is optional slot-specific validation (`true`/`undefined` = accept, `false`/string reason = skip). `getAll()` returns a sorted (by `order`, default 100) defensive copy; malformed contributions, duplicate ids, and invalid `render` descriptors are skipped and logged rather than thrown. Two registries never share state. |
+| `runGuard(fn, { defaultValue, args })` | Safely run a guard callback (e.g. `isVisible` / `isAvailable`). Returns `defaultValue` (default `true`) when `fn` is not a function; coerces the result to boolean; a throw is swallowed and returns `false`. Also available as `registry.runGuard`. |
 
 ## Server Exports (`@shared/server`)
 
