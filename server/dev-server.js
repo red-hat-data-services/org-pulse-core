@@ -92,7 +92,7 @@ async function startServer(options = {}) {
 
   const { SecretRegistry } = require('../shared/server/secret-registry');
   const platformSecretGroups = require('../shared/server/platform-secrets');
-  const { loadAllocationStrategy, loadModuleViewExtensions } = require('./platform-loader');
+  const { loadModuleViewExtensions } = require('./platform-loader');
   const { buildModuleContext } = require('../shared/server/module-context');
 
   // ─── Module Discovery ───
@@ -474,18 +474,9 @@ async function startServer(options = {}) {
     }
   });
 
-  // ─── Platform extension loading ───
-
-  const allocationStrategy = loadAllocationStrategy(platformPaths);
-  if (allocationStrategy) {
-    console.log(`[platform] Loaded allocation strategy: ${allocationStrategy.name} (${allocationStrategy.id})`);
-  } else {
-    console.log('[platform] No allocation strategy found — allocation features will be hidden');
-  }
-
   // ─── Module State ───
 
-  const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, fieldStore, roleRegistry, scopeRegistry, secretRegistry, allocationStrategy, dbConnection };
+  const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, fieldStore, roleRegistry, scopeRegistry, secretRegistry, dbConnection };
   const registries = { diagnostics: diagnosticsRegistry, messages: messageRegistry, refresh: refreshRegistry, exports: exportRegistry, searchIndex: searchIndexRegistry };
 
   const persistedState = await loadModuleState(storageModule);
@@ -532,9 +523,6 @@ async function startServer(options = {}) {
       '/api/trend': '/trend',
       '/api/admin/roster-sync': '/admin/roster-sync',
       '/api/admin/jira-sync': '/admin/jira-sync',
-      '/api/modules/allocation-tracker/refresh': '/allocation/refresh',
-      '/api/modules/allocation-tracker/refresh/status': '/allocation/refresh/status',
-      '/api/modules/allocation-tracker/classify': '/allocation/classify',
     };
 
     for (const [legacyPath, modulePath] of Object.entries(LEGACY_FORWARDS)) {

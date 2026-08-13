@@ -3,8 +3,8 @@
  *
  * This module registers the always-available core reports into the shared
  * contribution registry as a side effect of being imported. Feature-specific
- * reports (e.g. allocation) register themselves separately — see
- * `../contributions/allocation-contributions.js`.
+ * reports register themselves separately — consumer repos do so via the platform
+ * discovery seam (see `../contributions/apply-platform-contributions.js`).
  *
  * The Reports hub reads the merged set via `getReports()`; it does not import
  * this module's internals directly.

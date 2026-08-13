@@ -794,10 +794,6 @@ export default {
           window.location.replace('#/team-tracker/reports?report=trends')
           return
         }
-        if (manifest.slug === 'team-tracker' && parts[1] === 'org-allocation') {
-          window.location.replace('#/team-tracker/reports?report=allocation')
-          return
-        }
         if (manifest.slug === 'team-tracker' && parts[1] === 'dashboard') {
           window.location.replace('#/team-tracker/home')
           return

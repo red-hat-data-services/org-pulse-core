@@ -178,8 +178,6 @@ function buildModuleContext(coreServices, slug, registries = {}) {
       ? require('./scoped-db').createScopedDb(dbConnection, slug)
       : null,
 
-    allocationStrategy: coreServices.allocationStrategy || null,
-
     RefreshSkip
   }
 
@@ -233,8 +231,7 @@ function createTestContext(overrides = {}) {
     secrets: {},
     resolveSecret: function () { return undefined },
     registerSecretValidator: noop,
-    db: null,
-    allocationStrategy: null
+    db: null
   }
 
   return { ...defaults, ...overrides }

@@ -300,7 +300,7 @@
         />
       </div>
 
-      <!-- Contributed Tabs (e.g. allocation) -->
+      <!-- Contributed tabs (registered via the contribution registry) -->
       <div
         v-for="tab in contributedTabs"
         :key="tab.id"
@@ -658,8 +658,8 @@ const coreTabs = [
   { id: 'autofix', label: 'Autofix', icon: TAB_ICONS.autofix },
 ]
 
-// Feature-contributed tabs (e.g. allocation), filtered by their `isVisible`
-// guard, which runs in a try/catch (a throw means "not visible").
+// Feature-contributed tabs, filtered by their `isVisible` guard, which runs in
+// a try/catch (a throw means "not visible").
 const contributedTabs = computed(() => {
   const context = { teamDetail: teamDetail.value }
   return getTeamDetailTabs().filter(tab =>
@@ -668,7 +668,7 @@ const contributedTabs = computed(() => {
 })
 
 // Contributed tabs are inserted before the trailing "Autofix" core tab to
-// preserve the historical tab order (…, Allocation, Autofix).
+// preserve the historical tab order (core tabs …, contributed tabs, Autofix).
 const visibleTabs = computed(() => {
   const leading = coreTabs.filter(t => t.id !== 'autofix')
   const trailing = coreTabs.filter(t => t.id === 'autofix')

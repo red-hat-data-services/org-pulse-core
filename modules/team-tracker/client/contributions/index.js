@@ -23,9 +23,8 @@ import {
 } from './registry'
 import { applyPlatformContributions } from './apply-platform-contributions'
 
-// Side-effect imports: these register contributions into the slots above.
-import '../reports/registry' // core reports (trends, team-comparison)
-import './allocation-contributions' // allocation tab, report, and settings tab
+// Side-effect import: registers the core reports (trends, team-comparison).
+import '../reports/registry'
 
 // ─── Platform contribution discovery seam ───
 //

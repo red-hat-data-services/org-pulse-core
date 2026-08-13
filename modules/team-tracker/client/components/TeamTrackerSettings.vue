@@ -88,7 +88,7 @@
     <SnapshotSettings v-if="activeTab === 'snapshots'" />
     <AuditLogView v-if="activeTab === 'audit-log'" />
 
-    <!-- Contributed settings tabs (e.g. allocation) -->
+    <!-- Contributed settings tabs (registered via the contribution registry) -->
     <template v-for="tab in contributedTabs" :key="tab.id">
       <ContributionBoundary
         v-if="activeTab === tab.id"
@@ -122,7 +122,7 @@ const { markConfigDirty } = useSyncStatus()
 const { reloadRoster } = useRoster()
 const { config, fetchConfig, saveConfig } = useRosterSync()
 
-// Feature-contributed settings tabs (e.g. allocation).
+// Feature-contributed settings tabs (registered via the contribution registry).
 const contributedTabs = getSettingsTabs()
 
 // --- Data source state ---

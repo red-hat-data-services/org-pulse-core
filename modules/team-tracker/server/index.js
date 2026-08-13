@@ -4900,11 +4900,6 @@ module.exports = async function registerRoutes(router, context) {
     }
   });
 
-  // ─── Allocation Routes ───
-
-  const registerAllocationRoutes = require('./allocation/routes');
-  registerAllocationRoutes(router, context);
-
   // ─── Refresh Registry Handlers ───
 
   async function refreshAllMetrics() {

@@ -1,7 +1,24 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import TeamRosterView from '../../client/views/TeamRosterView.vue'
+import { registerTeamDetailTab, resetContributions } from '../../client/contributions/registry'
+
+// A stand-in feature contribution used to exercise the generic contributed-tab
+// mechanism (the team-detail-tab slot + its isVisible guard). Registered only by
+// the tests that need it and torn down in afterEach.
+function registerBoardGatedTab() {
+  registerTeamDetailTab({
+    id: 'demo-contrib',
+    label: 'Demo Contrib',
+    order: 40,
+    isVisible: (team, context) => {
+      const boards = context?.teamDetail?.boards || team?.metadata?.boards || []
+      return Array.isArray(boards) && boards.some(b => b && b.boardId != null)
+    },
+    render: { type: 'component', load: () => Promise.resolve({ default: { template: '<div />' } }) }
+  })
+}
 
 // Mock all external dependencies
 vi.mock('@shared/client/composables/useRoster', () => ({
@@ -106,23 +123,6 @@ vi.mock('../../client/services/autofix-api.js', () => ({
   fetchAutofixData: vi.fn().mockResolvedValue({ issues: [], fetchedAt: null })
 }))
 
-vi.mock('../../client/composables/useAllocationStrategy', () => ({
-  useAllocationStrategy: () => ({
-    configured: { value: true },
-    strategyId: { value: 'ai-eng-40-40-20' },
-    name: { value: '40/40/20 Allocation' },
-    description: { value: '' },
-    categories: {
-      value: [
-        { key: 'tech-debt-quality', name: 'Tech Debt & Quality', color: 'amber', target: 40 },
-        { key: 'new-features', name: 'New Features', color: 'blue', target: 40 },
-        { key: 'learning-enablement', name: 'Learning & Enablement', color: 'green', target: 20 }
-      ]
-    },
-    settingsComponent: { value: null }
-  })
-}))
-
 // Mock chart dependencies
 vi.mock('vue-chartjs', () => ({
   Doughnut: { template: '<div></div>', props: ['data', 'options'] },
@@ -167,6 +167,10 @@ describe('TeamRosterView', () => {
     mockLoadRfeConfig.mockResolvedValue({ jiraHost: 'https://redhat.atlassian.net' })
   })
 
+  afterEach(() => {
+    resetContributions()
+  })
+
   it('renders team header with name and member count', async () => {
     const wrapper = mountView()
     await flushPromises()
@@ -194,17 +198,19 @@ describe('TeamRosterView', () => {
     expect(tabLabels).toContain('RFE Backlog')
   })
 
-  it('shows the contributed allocation tab when the team has allocation boards', async () => {
+  it('shows a contributed tab when its isVisible guard passes (team has boards)', async () => {
+    registerBoardGatedTab()
     const wrapper = mountView()
     await flushPromises()
     const tabLabels = wrapper.findAll('nav button').map(b => b.text())
     expect(tabLabels).toHaveLength(5)
-    expect(tabLabels).toContain('Allocation')
+    expect(tabLabels).toContain('Demo Contrib')
     // Contributed tab is inserted before the trailing Autofix core tab.
     expect(tabLabels[tabLabels.length - 1]).toBe('Autofix')
   })
 
-  it('hides the allocation tab when the team has no allocation boards', async () => {
+  it('hides a contributed tab when its isVisible guard fails (no boards)', async () => {
+    registerBoardGatedTab()
     setupMockLoadTeamDetail({
       name: 'Model Serving',
       org: 'AI Platform',
@@ -218,7 +224,7 @@ describe('TeamRosterView', () => {
     await flushPromises()
     const tabLabels = wrapper.findAll('nav button').map(b => b.text())
     expect(tabLabels).toHaveLength(4)
-    expect(tabLabels).not.toContain('Allocation')
+    expect(tabLabels).not.toContain('Demo Contrib')
   })
 
   it('switches tabs when tab buttons are clicked', async () => {
