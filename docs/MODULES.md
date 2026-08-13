@@ -626,6 +626,103 @@ Without `RefreshSkip`, a bare `return` counts as a success — `lastSuccessfulRu
 
 Existing handlers that return `{ status: 'skipped', reason: '...' }` are also recognized as skips automatically via a legacy compatibility bridge.
 
+## Frontend Contribution Slots (team-tracker)
+
+Team-tracker exposes named **contribution slots** so features can extend its UI
+without core hardcoding `if (feature configured)` branches. This is the frontend
+analog of the backend `context.registerRefresh` pattern, and is the first step
+toward a generic multi-tenant extension system. Allocation is the reference
+consumer — see `modules/team-tracker/client/contributions/allocation-contributions.js`.
+
+The registry lives at `modules/team-tracker/client/contributions/`:
+
+- `registry.js` — the slot API and storage
+- `ContributionBoundary.vue` — the fault-isolation wrapper (see below)
+- `allocation-contributions.js` — built-in allocation registrations
+- `index.js` — evaluates the registry, then side-effect-imports the built-in
+  registrations, and re-exports the getters. **Always import from
+  `../contributions` (the index), never `./registry` directly**, so registration
+  is guaranteed to have run.
+
+### Slots
+
+```js
+import {
+  registerTeamDetailTab,
+  registerReport,
+  registerSettingsTab
+} from '../contributions/registry'
+
+// A tab on the team detail view
+registerTeamDetailTab({
+  id: 'allocation',           // unique; also the URL ?tab= value
+  label: 'Allocation',
+  order: 40,                  // optional, default 100
+  icon: '<path ... />',       // optional inline SVG markup
+  isVisible: (team, context) => boolean, // optional; throw or falsy hides it
+  render: { type: 'component', load: () => import('../components/TeamAllocationTab.vue') }
+})
+
+// A card in the Reports hub
+registerReport({
+  id: 'allocation',
+  title: 'Work Allocation',
+  description: '...',
+  icon: 'PieChart',           // optional lucide icon name
+  tags: ['Allocation'],       // optional
+  filters: [],                // optional shared filter ids ('org', 'team')
+  order: 30,
+  isAvailable: () => boolean, // optional; throw or falsy hides it
+  render: { type: 'component', load: () => import('../reports/AllocationReport.vue') }
+})
+
+// A tab in Team Tracker settings
+registerSettingsTab({
+  id: 'allocation',
+  label: 'Allocation',
+  order: 40,
+  render: { type: 'component', load: () => import('../components/AllocationSettings.vue') }
+})
+```
+
+Read the merged, sorted contributions with `getTeamDetailTabs()`, `getReports()`,
+and `getSettingsTabs()`. Core renders each slot generically — it does not know
+about any specific feature.
+
+### The `render` descriptor
+
+`render` is a **descriptor**, never a raw component, so the shape stays
+forward-compatible with remote/federated or declarative delivery. Today only
+`{ type: 'component', load: () => import('...') }` is rendered. Any object with a
+string `type` is accepted at registration time; unknown types degrade gracefully
+to a fallback at render time. Future types (e.g. `{ type: 'remote', ... }`,
+`{ type: 'declarative', ... }`) can be added without breaking existing callers.
+
+### Fault isolation
+
+Extension failures must never break the host page:
+
+- **Rendering** — every contributed component is rendered inside
+  `ContributionBoundary.vue`, which combines a Vue error boundary
+  (`onErrorCaptured`) with an async-load fallback. A component that throws at
+  runtime, or fails/ times out while loading, shows a small "This extension
+  failed to load" panel instead of crashing the page.
+- **Guards** — `isVisible` / `isAvailable` are always invoked through the
+  `runGuard` helper (try/catch). A throw is treated as "not visible / not
+  available", never a crash.
+- **Registration** — a malformed contribution (missing required field, invalid
+  render descriptor, duplicate id) is skipped and logged; it never aborts
+  registration of the others.
+
+### Conditional availability
+
+Prefer expressing "only show when X" through `isVisible` / `isAvailable`
+callbacks rather than conditional registration, so the decision is re-evaluated
+reactively. `registerSettingsTab` has no visibility hook, so gate it by
+registering conditionally. Allocation, for example, registers all three slots
+only when `useAllocationStrategy().configured` is true, and its team-detail tab
+additionally checks that the team has allocation boards via `isVisible`.
+
 ## Secrets Declaration
 
 Modules declare their secret requirements in `module.json`. This enables startup validation, admin diagnostics, and ESLint enforcement preventing direct `process.env` access in module server code.
