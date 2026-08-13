@@ -19,7 +19,7 @@
             :show-count="activeReport.id === 'team-comparison'"
           />
         </template>
-        <component :is="activeReportComponent" />
+        <ContributionBoundary :render="activeReport.render" :label="activeReport.title" />
       </ReportShell>
     </template>
 
@@ -32,7 +32,7 @@
 
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <ReportCard
-          v-for="report in reports"
+          v-for="report in availableReports"
           :key="report.id"
           :title="report.title"
           :description="report.description"
@@ -46,8 +46,9 @@
 </template>
 
 <script setup>
-import { computed, inject, defineAsyncComponent, ref, watch, nextTick } from 'vue'
-import { reports } from './registry'
+import { computed, inject, ref, watch, nextTick } from 'vue'
+import { getReports, runGuard } from '../contributions'
+import ContributionBoundary from '../contributions/ContributionBoundary.vue'
 import ReportCard from './ReportCard.vue'
 import ReportShell from './ReportShell.vue'
 import OrgFilter from './filters/OrgFilter.vue'
@@ -57,22 +58,18 @@ import { useReportFilters } from '../composables/useReportFilters'
 const nav = inject('moduleNav')
 const { orgs, selectedOrgKeys, selectedTeamKeys, availableTeams } = useReportFilters()
 
-// Memoize defineAsyncComponent wrappers so they aren't recreated on every recomputation
-const componentCache = new Map()
+// Reports registered into the contribution registry, normalised + filtered by
+// their (optionally throwing) `isAvailable` guard.
+const availableReports = computed(() =>
+  getReports()
+    .filter(r => runGuard(r.isAvailable, { defaultValue: true }))
+    .map(r => ({ ...r, filters: r.filters || [], tags: r.tags || [] }))
+)
 
 const activeReport = computed(() => {
   const reportId = nav.params.value?.report
   if (!reportId) return null
-  return reports.find(r => r.id === reportId) || null
-})
-
-const activeReportComponent = computed(() => {
-  if (!activeReport.value) return null
-  const id = activeReport.value.id
-  if (!componentCache.has(id)) {
-    componentCache.set(id, defineAsyncComponent(activeReport.value.component))
-  }
-  return componentCache.get(id)
+  return availableReports.value.find(r => r.id === reportId) || null
 })
 
 // For Trends: hide team filter when no orgs selected
