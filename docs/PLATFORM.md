@@ -139,6 +139,14 @@ module.exports = { classifyIssue, getJiraFields }
 - **Frontend**: `src/platform-loader.js` discovers the manifest via
   `import.meta.glob` and exposes category metadata. The `useAllocationStrategy()`
   composable provides reactive access to categories.
+- **Frontend UI wiring**: Allocation does **not** hardcode its tab/report/settings
+  into core team-tracker. It registers a team-detail tab, a report, and a settings
+  tab through the team-tracker **contribution registry**
+  (`modules/team-tracker/client/contributions/`). See the "Frontend Contribution
+  Slots" section of [`docs/MODULES.md`](MODULES.md). Registration is gated on
+  `useAllocationStrategy().configured` (and, for the team-detail tab, on the team
+  having allocation boards) via `isVisible` / `isAvailable` callbacks, so when no
+  strategy is configured the feature is absent entirely.
 - **Cache invalidation**: The `strategyId` is stored alongside sprint data. When
   the strategy changes, cached closed sprint data is invalidated and re-classified.
 - **Uncategorized**: Issues that don't match any category are automatically placed

@@ -300,25 +300,17 @@
         />
       </div>
 
-      <!-- Allocation Tab -->
-      <div v-if="tabActivated.allocation" v-show="activeTab === 'allocation'">
-        <template v-if="teamHasAllocationBoards">
-          <TeamAllocationTab
-            :team="team"
-            :teamId="team?.teamId"
-            :teamDetail="teamDetail"
+      <!-- Contributed Tabs (e.g. allocation) -->
+      <div
+        v-for="tab in contributedTabs"
+        :key="tab.id"
+      >
+        <div v-if="tabActivated[tab.id]" v-show="activeTab === tab.id">
+          <ContributionBoundary
+            :render="tab.render"
+            :label="tab.label"
+            :component-props="{ team, teamId: team?.teamId, teamDetail }"
           />
-        </template>
-        <div v-else class="text-center py-16 text-gray-500">
-          <svg class="mx-auto h-12 w-12 text-gray-300 mb-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" />
-            <path stroke-linecap="round" stroke-linejoin="round" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
-          </svg>
-          <h3 class="text-lg font-medium text-gray-700 mb-2">No allocation boards configured</h3>
-          <p class="text-sm max-w-md mx-auto">
-            Add a Jira board URL to this team's board list to enable allocation tracking.
-            Boards can be configured in the team settings.
-          </p>
         </div>
       </div>
 
@@ -343,9 +335,10 @@ import { computed, ref, onMounted, onBeforeUnmount, inject, watch, nextTick } fr
 import TeamOverviewTab from '../components/TeamOverviewTab.vue'
 import TeamDeliveryTab from '../components/TeamDeliveryTab.vue'
 import TeamBacklogTab from '../components/TeamBacklogTab.vue'
-import TeamAllocationTab from '../components/TeamAllocationTab.vue'
 import TeamAutofixTab from '../components/autofix/TeamAutofixTab.vue'
 import TeamFieldEditor from '../components/TeamFieldEditor.vue'
+import ContributionBoundary from '@shared/client/components/ContributionBoundary.vue'
+import { getTeamDetailTabs, runGuard } from '../contributions'
 import RefreshModal from '@shared/client/components/RefreshModal.vue'
 import { useRoster } from '@shared/client/composables/useRoster'
 import { useGitlabStats } from '@shared/client/composables/useGitlabStats'
@@ -355,7 +348,6 @@ import { useFieldDefinitions } from '@shared/client/composables/useFieldDefiniti
 import { useOrgRoster } from '../composables/useOrgRoster'
 import { refreshMetrics, getTeamMetrics, apiRequest } from '@shared/client/services/api'
 import { useManagerTutorial } from '../composables/useManagerTutorial'
-import { useAllocationStrategy } from '../composables/useAllocationStrategy'
 import { Marked } from 'marked'
 import DOMPurify from 'dompurify'
 
@@ -367,7 +359,6 @@ const { isAdmin } = useAuth()
 const { canEditTeam, managedUids } = usePermissions()
 const { definitions, fetchDefinitions } = useFieldDefinitions()
 const { resumeTourIfActive, destroyTour } = useManagerTutorial()
-const { configured: allocationConfigured } = useAllocationStrategy()
 
 const fromSotu = computed(() => nav.params.value?.from === 'sotu')
 
@@ -650,35 +641,41 @@ async function saveBoards() {
 
 // --- Tabs ---
 const activeTab = ref('overview')
-const tabActivated = ref({ overview: true, delivery: false, backlog: false, allocation: false, autofix: false })
+const tabActivated = ref({ overview: true, delivery: false, backlog: false, autofix: false })
 
 const TAB_ICONS = {
   overview: '<path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />',
   delivery: '<path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />',
   backlog: '<path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />',
-  allocation: '<path stroke-linecap="round" stroke-linejoin="round" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" /><path stroke-linecap="round" stroke-linejoin="round" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />',
   autofix: '<path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />',
 }
 
-const teamHasAllocationBoards = computed(() => {
-  const boards = teamDetail.value?.boards || team.value?.metadata?.boards || []
-  return boards.some(b => b.boardId != null)
+// Core, always-present tabs rendered by dedicated components below.
+const coreTabs = [
+  { id: 'overview', label: 'Overview', icon: TAB_ICONS.overview },
+  { id: 'delivery', label: 'Delivery', icon: TAB_ICONS.delivery },
+  { id: 'backlog', label: 'RFE Backlog', icon: TAB_ICONS.backlog },
+  { id: 'autofix', label: 'Autofix', icon: TAB_ICONS.autofix },
+]
+
+// Feature-contributed tabs (e.g. allocation), filtered by their `isVisible`
+// guard, which runs in a try/catch (a throw means "not visible").
+const contributedTabs = computed(() => {
+  const context = { teamDetail: teamDetail.value }
+  return getTeamDetailTabs().filter(tab =>
+    runGuard(tab.isVisible, { defaultValue: true, args: [team.value, context] })
+  )
 })
 
+// Contributed tabs are inserted before the trailing "Autofix" core tab to
+// preserve the historical tab order (…, Allocation, Autofix).
 const visibleTabs = computed(() => {
-  const tabs = [
-    { id: 'overview', label: 'Overview', icon: TAB_ICONS.overview },
-    { id: 'delivery', label: 'Delivery', icon: TAB_ICONS.delivery },
-    { id: 'backlog', label: 'RFE Backlog', icon: TAB_ICONS.backlog },
-  ]
-  if (allocationConfigured.value) {
-    tabs.push({ id: 'allocation', label: 'Allocation', icon: TAB_ICONS.allocation })
-  }
-  tabs.push({ id: 'autofix', label: 'Autofix', icon: TAB_ICONS.autofix })
-  return tabs
+  const leading = coreTabs.filter(t => t.id !== 'autofix')
+  const trailing = coreTabs.filter(t => t.id === 'autofix')
+  return [...leading, ...contributedTabs.value, ...trailing]
 })
 
-const VALID_TABS = ['overview', 'delivery', 'backlog', 'allocation', 'autofix']
+const VALID_TABS = computed(() => visibleTabs.value.map(t => t.id))
 let updatingFromUrl = false
 
 watch(activeTab, (tab) => {
@@ -689,7 +686,7 @@ watch(activeTab, (tab) => {
 })
 
 watch(() => nav.params.value?.tab, (tabParam) => {
-  const tab = tabParam && VALID_TABS.includes(tabParam) ? tabParam : 'overview'
+  const tab = tabParam && VALID_TABS.value.includes(tabParam) ? tabParam : 'overview'
   if (activeTab.value !== tab) {
     updatingFromUrl = true
     activeTab.value = tab

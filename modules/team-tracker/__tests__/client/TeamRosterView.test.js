@@ -158,7 +158,7 @@ describe('TeamRosterView', () => {
       org: 'AI Platform',
       productManagers: ['Jane Doe'],
       engLeads: ['Alice B.'],
-      boards: [{ url: 'https://jira.example.com/boards/123', name: 'MS Board' }],
+      boards: [{ url: 'https://jira.example.com/boards/123', name: 'MS Board', boardId: 123 }],
       rfeCount: 5,
       rfeIssues: [],
       components: ['KServe'],
@@ -194,11 +194,31 @@ describe('TeamRosterView', () => {
     expect(tabLabels).toContain('RFE Backlog')
   })
 
-  it('always shows all 5 tabs', async () => {
+  it('shows the contributed allocation tab when the team has allocation boards', async () => {
     const wrapper = mountView()
     await flushPromises()
     const tabLabels = wrapper.findAll('nav button').map(b => b.text())
     expect(tabLabels).toHaveLength(5)
+    expect(tabLabels).toContain('Allocation')
+    // Contributed tab is inserted before the trailing Autofix core tab.
+    expect(tabLabels[tabLabels.length - 1]).toBe('Autofix')
+  })
+
+  it('hides the allocation tab when the team has no allocation boards', async () => {
+    setupMockLoadTeamDetail({
+      name: 'Model Serving',
+      org: 'AI Platform',
+      boards: [{ url: 'https://jira.example.com/boards/123', name: 'MS Board' }],
+      rfeCount: 0,
+      rfeIssues: [],
+      components: [],
+      headcount: { totalHeadcount: 2, byRole: {} }
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    const tabLabels = wrapper.findAll('nav button').map(b => b.text())
+    expect(tabLabels).toHaveLength(4)
+    expect(tabLabels).not.toContain('Allocation')
   })
 
   it('switches tabs when tab buttons are clicked', async () => {

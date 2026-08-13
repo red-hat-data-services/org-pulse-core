@@ -626,6 +626,128 @@ Without `RefreshSkip`, a bare `return` counts as a success — `lastSuccessfulRu
 
 Existing handlers that return `{ status: 'skipped', reason: '...' }` are also recognized as skips automatically via a legacy compatibility bridge.
 
+## Frontend Contribution Slots
+
+### Mechanism vs. slots
+
+The generic contribution **mechanism** lives in `@shared`
+(`shared/client/contributions/` + `shared/client/components/ContributionBoundary.vue`)
+so any module can build its own contribution slots on it. Core deliberately does
+**not** define a universal slot vocabulary — each module decides what its own
+slots are and what a valid contribution looks like.
+
+- `createContributionRegistry({ name, validate })` — factory returning a
+  namespaced registry `{ register, getAll, runGuard, reset }`. `name` prefixes
+  log messages; `validate` is optional slot-specific validation.
+- `runGuard(fn, opts)` — safely run a guard callback (throws are swallowed).
+- `ContributionBoundary.vue` — the fault-isolation wrapper (see below). The
+  single `render` descriptor `type` switch (component today; `remote` /
+  `declarative` later) lives in `shared/client/contributions/`
+  (`isValidRenderDescriptor` / `resolveRenderDescriptor`), so new delivery types
+  are added in one place.
+
+### team-tracker slots (reference consumer)
+
+Team-tracker builds three named **slots** on the shared factory so features can
+extend its UI without core hardcoding `if (feature configured)` branches. This is
+the frontend analog of the backend `context.registerRefresh` pattern. Allocation
+is the reference consumer — see
+`modules/team-tracker/client/contributions/allocation-contributions.js`.
+
+The slots live at `modules/team-tracker/client/contributions/`:
+
+- `registry.js` — three `createContributionRegistry` instances
+  (`team-tracker:team-detail-tab`, `team-tracker:report`,
+  `team-tracker:settings-tab`) wrapped in the team-tracker-specific slot API
+- `allocation-contributions.js` — built-in allocation registrations
+- `index.js` — evaluates the registry, then side-effect-imports the built-in
+  registrations, and re-exports the getters. **Always import from
+  `../contributions` (the index), never `./registry` directly**, so registration
+  is guaranteed to have run.
+
+The fault-isolation wrapper is imported from
+`@shared/client/components/ContributionBoundary.vue`.
+
+### Slots
+
+```js
+import {
+  registerTeamDetailTab,
+  registerReport,
+  registerSettingsTab
+} from '../contributions/registry'
+
+// A tab on the team detail view
+registerTeamDetailTab({
+  id: 'allocation',           // unique; also the URL ?tab= value
+  label: 'Allocation',
+  order: 40,                  // optional, default 100
+  icon: '<path ... />',       // optional inline SVG markup
+  isVisible: (team, context) => boolean, // optional; throw or falsy hides it
+  render: { type: 'component', load: () => import('../components/TeamAllocationTab.vue') }
+})
+
+// A card in the Reports hub
+registerReport({
+  id: 'allocation',
+  title: 'Work Allocation',
+  description: '...',
+  icon: 'PieChart',           // optional lucide icon name
+  tags: ['Allocation'],       // optional
+  filters: [],                // optional shared filter ids ('org', 'team')
+  order: 30,
+  isAvailable: () => boolean, // optional; throw or falsy hides it
+  render: { type: 'component', load: () => import('../reports/AllocationReport.vue') }
+})
+
+// A tab in Team Tracker settings
+registerSettingsTab({
+  id: 'allocation',
+  label: 'Allocation',
+  order: 40,
+  render: { type: 'component', load: () => import('../components/AllocationSettings.vue') }
+})
+```
+
+Read the merged, sorted contributions with `getTeamDetailTabs()`, `getReports()`,
+and `getSettingsTabs()`. Core renders each slot generically — it does not know
+about any specific feature.
+
+### The `render` descriptor
+
+`render` is a **descriptor**, never a raw component, so the shape stays
+forward-compatible with remote/federated or declarative delivery. Today only
+`{ type: 'component', load: () => import('...') }` is rendered. Any object with a
+string `type` is accepted at registration time; unknown types degrade gracefully
+to a fallback at render time. Future types (e.g. `{ type: 'remote', ... }`,
+`{ type: 'declarative', ... }`) can be added without breaking existing callers.
+
+### Fault isolation
+
+Extension failures must never break the host page:
+
+- **Rendering** — every contributed component is rendered inside the shared
+  `ContributionBoundary.vue` (`@shared/client/components/ContributionBoundary.vue`),
+  which combines a Vue error boundary (`onErrorCaptured`) with an async-load
+  fallback. A component that throws at runtime, or fails/ times out while
+  loading, shows a small "This extension failed to load" panel instead of
+  crashing the page.
+- **Guards** — `isVisible` / `isAvailable` are always invoked through the
+  `runGuard` helper (try/catch). A throw is treated as "not visible / not
+  available", never a crash.
+- **Registration** — a malformed contribution (missing required field, invalid
+  render descriptor, duplicate id) is skipped and logged; it never aborts
+  registration of the others.
+
+### Conditional availability
+
+Prefer expressing "only show when X" through `isVisible` / `isAvailable`
+callbacks rather than conditional registration, so the decision is re-evaluated
+reactively. `registerSettingsTab` has no visibility hook, so gate it by
+registering conditionally. Allocation, for example, registers all three slots
+only when `useAllocationStrategy().configured` is true, and its team-detail tab
+additionally checks that the team has allocation boards via `isVisible`.
+
 ## Secrets Declaration
 
 Modules declare their secret requirements in `module.json`. This enables startup validation, admin diagnostics, and ESLint enforcement preventing direct `process.env` access in module server code.

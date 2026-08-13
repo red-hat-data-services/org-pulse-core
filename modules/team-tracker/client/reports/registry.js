@@ -1,33 +1,40 @@
-import { loadAllocationStrategy } from '@/platform-loader'
+/**
+ * Core team-tracker report registrations.
+ *
+ * This module registers the always-available core reports into the shared
+ * contribution registry as a side effect of being imported. Feature-specific
+ * reports (e.g. allocation) register themselves separately — see
+ * `../contributions/allocation-contributions.js`.
+ *
+ * The Reports hub reads the merged set via `getReports()`; it does not import
+ * this module's internals directly.
+ */
+import { registerReport } from '../contributions/registry'
 
-const allocationStrategy = loadAllocationStrategy()
+registerReport({
+  id: 'trends',
+  title: 'Productivity Trends',
+  description: 'Monthly trend lines for issues resolved, contributions, and cycle time.',
+  icon: 'TrendingUp',
+  tags: ['Jira', 'GitHub', 'GitLab'],
+  filters: ['org', 'team'],
+  order: 10,
+  render: {
+    type: 'component',
+    load: () => import('./TrendsReport.vue')
+  }
+})
 
-export const reports = [
-  {
-    id: 'trends',
-    title: 'Productivity Trends',
-    description: 'Monthly trend lines for issues resolved, contributions, and cycle time.',
-    icon: 'TrendingUp',
-    tags: ['Jira', 'GitHub', 'GitLab'],
-    component: () => import('./TrendsReport.vue'),
-    filters: ['org', 'team'],
-  },
-  {
-    id: 'team-comparison',
-    title: 'Team Comparison',
-    description: 'Compare metrics across teams with bar, horizontal, or doughnut charts.',
-    icon: 'BarChart3',
-    tags: ['Jira', 'GitHub', 'GitLab'],
-    component: () => import('./TeamComparisonReport.vue'),
-    filters: ['org', 'team'],
-  },
-  ...(allocationStrategy ? [{
-    id: 'allocation',
-    title: 'Work Allocation',
-    description: `${allocationStrategy.name} breakdown across teams.`,
-    icon: 'PieChart',
-    tags: ['Allocation'],
-    component: () => import('./AllocationReport.vue'),
-    filters: [],
-  }] : []),
-]
+registerReport({
+  id: 'team-comparison',
+  title: 'Team Comparison',
+  description: 'Compare metrics across teams with bar, horizontal, or doughnut charts.',
+  icon: 'BarChart3',
+  tags: ['Jira', 'GitHub', 'GitLab'],
+  filters: ['org', 'team'],
+  order: 20,
+  render: {
+    type: 'component',
+    load: () => import('./TeamComparisonReport.vue')
+  }
+})

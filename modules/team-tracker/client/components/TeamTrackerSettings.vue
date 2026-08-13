@@ -87,7 +87,15 @@
     <LdapFieldsSettings v-if="activeTab === 'ldap-fields'" />
     <SnapshotSettings v-if="activeTab === 'snapshots'" />
     <AuditLogView v-if="activeTab === 'audit-log'" />
-    <AllocationSettings v-if="activeTab === 'allocation'" />
+
+    <!-- Contributed settings tabs (e.g. allocation) -->
+    <template v-for="tab in contributedTabs" :key="tab.id">
+      <ContributionBoundary
+        v-if="activeTab === tab.id"
+        :render="tab.render"
+        :label="tab.label"
+      />
+    </template>
   </div>
 </template>
 
@@ -101,19 +109,21 @@ import JiraSyncSettings from './JiraSyncSettings.vue'
 import LdapFieldsSettings from './LdapFieldsSettings.vue'
 import SnapshotSettings from './SnapshotSettings.vue'
 import AuditLogView from './AuditLogView.vue'
-import AllocationSettings from './AllocationSettings.vue'
 import MigrationFieldConfig from './MigrationFieldConfig.vue'
+import ContributionBoundary from '@shared/client/components/ContributionBoundary.vue'
+import { getSettingsTabs } from '../contributions'
 import { useSyncStatus } from '../composables/useSyncStatus'
 import { useRosterSync } from '../composables/useRosterSync'
 import { useRoster } from '@shared/client'
-import { useAllocationStrategy } from '../composables/useAllocationStrategy'
 
 defineEmits(['toast'])
 
 const { markConfigDirty } = useSyncStatus()
 const { reloadRoster } = useRoster()
 const { config, fetchConfig, saveConfig } = useRosterSync()
-const { configured: allocationConfigured, name: allocationName } = useAllocationStrategy()
+
+// Feature-contributed settings tabs (e.g. allocation).
+const contributedTabs = getSettingsTabs()
 
 // --- Data source state ---
 const editTeamDataSource = ref('sheets')
@@ -199,8 +209,8 @@ const inAppTabs = [
 
 const tabs = computed(() => {
   const result = isInAppMode.value ? [...baseTabs, ...inAppTabs] : [...baseTabs, ...sheetsTabs]
-  if (allocationConfigured.value) {
-    result.push({ id: 'allocation', label: allocationName.value || 'Allocation' })
+  for (const tab of contributedTabs) {
+    result.push({ id: tab.id, label: tab.label })
   }
   return result
 })
