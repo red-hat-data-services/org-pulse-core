@@ -21,8 +21,6 @@ if (!fs.existsSync(PLATFORM_DIR)) {
 // --- About Tabs Validation ---
 
 const hasAboutTabs = fs.existsSync(ABOUT_TABS_DIR)
-const ALLOCATION_DIR = path.join(PLATFORM_DIR, 'allocation-strategy')
-const hasAllocation = fs.existsSync(ALLOCATION_DIR)
 
 // Discover module-views extensions
 const moduleViewsDirs = []
@@ -39,7 +37,7 @@ if (fs.existsSync(PLATFORM_DIR)) {
 }
 const hasModuleViews = moduleViewsDirs.length > 0
 
-if (!hasAboutTabs && !hasAllocation && !hasModuleViews) {
+if (!hasAboutTabs && !hasModuleViews) {
   console.log('No platform extensions found — skipping validation')
   process.exit(0)
 }
@@ -102,74 +100,6 @@ if (hasAboutTabs) {
         if (errors === 0) {
           console.log(`  ${manifest.tabs.length} tab(s) validated successfully`)
         }
-      }
-    }
-  }
-}
-
-// --- Allocation Strategy Validation ---
-
-if (hasAllocation) {
-  const allocManifestPath = path.join(ALLOCATION_DIR, 'manifest.json')
-  if (!fs.existsSync(allocManifestPath)) {
-    error('platform/allocation-strategy/manifest.json not found')
-  } else {
-    let allocManifest
-    try {
-      allocManifest = JSON.parse(fs.readFileSync(allocManifestPath, 'utf-8'))
-    } catch (e) {
-      error(`allocation-strategy manifest.json is not valid JSON: ${e.message}`)
-    }
-
-    if (allocManifest) {
-      console.log('Validating platform/allocation-strategy/manifest.json...')
-
-      const REQUIRED_FIELDS = ['id', 'name', 'categories', 'classify']
-      for (const field of REQUIRED_FIELDS) {
-        if (!allocManifest[field]) {
-          error(`allocation-strategy manifest missing required field "${field}"`)
-        }
-      }
-
-      if (!Array.isArray(allocManifest.categories)) {
-        error('"categories" must be an array')
-      } else {
-        const REQUIRED_CAT_FIELDS = ['key', 'name', 'color', 'target']
-        for (const cat of allocManifest.categories) {
-          for (const field of REQUIRED_CAT_FIELDS) {
-            if (cat[field] === undefined || cat[field] === null || cat[field] === '') {
-              error(`Category "${cat.key || '(unnamed)'}" missing required field "${field}"`)
-            }
-          }
-          if (typeof cat.target !== 'number') {
-            error(`Category "${cat.key}": "target" must be a number`)
-          }
-        }
-
-        const targetSum = allocManifest.categories.reduce((sum, c) => sum + (c.target || 0), 0)
-        if (targetSum !== 100) {
-          console.warn(`  WARNING: Category targets sum to ${targetSum}, expected 100`)
-        }
-      }
-
-      if (allocManifest.classify) {
-        const classifyFile = allocManifest.classify.replace(/^\.\//, '')
-        const classifyPath = path.join(ALLOCATION_DIR, classifyFile)
-        if (!fs.existsSync(classifyPath)) {
-          error(`classify file not found: ${allocManifest.classify} (expected at ${classifyPath})`)
-        }
-      }
-
-      if (allocManifest.settingsComponent) {
-        const settingsFile = allocManifest.settingsComponent.replace(/^\.\//, '')
-        const settingsPath = path.join(ALLOCATION_DIR, settingsFile)
-        if (!fs.existsSync(settingsPath)) {
-          error(`settingsComponent file not found: ${allocManifest.settingsComponent} (expected at ${settingsPath})`)
-        }
-      }
-
-      if (errors === 0) {
-        console.log(`  Strategy "${allocManifest.id}" with ${allocManifest.categories?.length || 0} categories validated successfully`)
       }
     }
   }

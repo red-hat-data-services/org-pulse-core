@@ -3,14 +3,6 @@ import { mount } from '@vue/test-utils'
 import { ref, readonly } from 'vue'
 import ReportsHub from '../../../client/reports/ReportsHub.vue'
 
-vi.mock('@/platform-loader', () => ({
-  loadAllocationStrategy: () => ({
-    id: 'ai-eng-40-40-20',
-    name: '40/40/20 Allocation',
-    categories: []
-  })
-}))
-
 // Mock dependencies
 vi.mock('@shared/client/composables/useRoster', () => ({
   useRoster: () => ({
@@ -43,7 +35,6 @@ describe('ReportsHub', () => {
           // Stub out async components that would fail to load in tests
           TrendsReport: { template: '<div data-testid="trends-report">Trends</div>' },
           TeamComparisonReport: { template: '<div>Comparison</div>' },
-          AllocationReport: { template: '<div>Allocation</div>' },
         }
       }
     })
@@ -52,7 +43,7 @@ describe('ReportsHub', () => {
   it('renders catalog with report cards when no report param', () => {
     const wrapper = createWrapper()
     const cards = wrapper.findAll('[data-testid="report-card"]')
-    expect(cards.length).toBe(3)
+    expect(cards.length).toBe(2)
   })
 
   it('shows catalog title', () => {
@@ -77,6 +68,6 @@ describe('ReportsHub', () => {
   it('renders catalog when report param does not match any report', () => {
     const wrapper = createWrapper({ report: 'nonexistent' })
     const cards = wrapper.findAll('[data-testid="report-card"]')
-    expect(cards.length).toBe(3)
+    expect(cards.length).toBe(2)
   })
 })

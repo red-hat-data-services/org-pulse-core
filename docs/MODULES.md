@@ -646,66 +646,99 @@ slots are and what a valid contribution looks like.
   (`isValidRenderDescriptor` / `resolveRenderDescriptor`), so new delivery types
   are added in one place.
 
-### team-tracker slots (reference consumer)
+### team-tracker slots
 
 Team-tracker builds three named **slots** on the shared factory so features can
 extend its UI without core hardcoding `if (feature configured)` branches. This is
-the frontend analog of the backend `context.registerRefresh` pattern. Allocation
-is the reference consumer — see
-`modules/team-tracker/client/contributions/allocation-contributions.js`.
+the frontend analog of the backend `context.registerRefresh` pattern.
 
 The slots live at `modules/team-tracker/client/contributions/`:
 
 - `registry.js` — three `createContributionRegistry` instances
   (`team-tracker:team-detail-tab`, `team-tracker:report`,
   `team-tracker:settings-tab`) wrapped in the team-tracker-specific slot API
-- `allocation-contributions.js` — built-in allocation registrations
-- `index.js` — evaluates the registry, then side-effect-imports the built-in
-  registrations, and re-exports the getters. **Always import from
-  `../contributions` (the index), never `./registry` directly**, so registration
-  is guaranteed to have run.
+  (`registerTeamDetailTab`, `registerReport`, `registerSettingsTab`, the getters,
+  and `runGuard`)
+- `apply-platform-contributions.js` — the pure, resilient helper that applies
+  platform-provided contributions (see the discovery seam below)
+- `index.js` — evaluates the registry, side-effect-imports the core reports
+  (`../reports/registry`), applies the platform discovery seam, and re-exports the
+  getters + `register*` functions. **Always import from `../contributions` (the
+  index), never `./registry` directly**, so registration is guaranteed to have run.
 
 The fault-isolation wrapper is imported from
 `@shared/client/components/ContributionBoundary.vue`.
 
-### Slots
+### Platform discovery seam (consumer contributions)
+
+Core registers only its own reports (trends, team-comparison) directly. Consumer
+repos add contributions from `platform/` — without importing team-tracker
+internals — via a glob-by-convention seam:
 
 ```js
-import {
-  registerTeamDetailTab,
-  registerReport,
-  registerSettingsTab
-} from '../contributions/registry'
+// modules/team-tracker/client/contributions/index.js
+const platformContributions = import.meta.glob(
+  '/platform/*/team-tracker-contributions.js',
+  { eager: true }
+)
+applyPlatformContributions(platformContributions, {
+  registerTeamDetailTab, registerReport, registerSettingsTab
+})
+```
 
+A consumer ships one file per extension exporting a `register` function; the
+registrar API is **injected**, never imported:
+
+```js
+// platform/<name>/team-tracker-contributions.js
+export function register({ registerTeamDetailTab, registerReport, registerSettingsTab }) {
+  registerTeamDetailTab({ /* ... */ })
+}
+```
+
+`applyPlatformContributions` calls each `register(api)` inside a try/catch, so a
+missing-`register` or throwing extension is skipped and logged, never aborting the
+others (mirroring the registry's per-item resilience). When `platform/` is absent
+(core / CI) the glob is empty and the seam is a no-op. See
+[`docs/PLATFORM.md`](PLATFORM.md) § Team-Tracker Contributions for the consumer
+guide.
+
+### Slots
+
+Core registrations import the `register*` functions from `../contributions`
+(e.g. `../reports/registry`); consumer contributions receive them injected via
+`register(api)` (see the discovery seam above). Either way the shape is the same:
+
+```js
 // A tab on the team detail view
 registerTeamDetailTab({
-  id: 'allocation',           // unique; also the URL ?tab= value
-  label: 'Allocation',
+  id: 'my-feature',           // unique; also the URL ?tab= value
+  label: 'My Feature',
   order: 40,                  // optional, default 100
   icon: '<path ... />',       // optional inline SVG markup
   isVisible: (team, context) => boolean, // optional; throw or falsy hides it
-  render: { type: 'component', load: () => import('../components/TeamAllocationTab.vue') }
+  render: { type: 'component', load: () => import('./MyFeatureTab.vue') }
 })
 
 // A card in the Reports hub
 registerReport({
-  id: 'allocation',
-  title: 'Work Allocation',
+  id: 'my-report',
+  title: 'My Report',
   description: '...',
   icon: 'PieChart',           // optional lucide icon name
-  tags: ['Allocation'],       // optional
-  filters: [],                // optional shared filter ids ('org', 'team')
+  tags: ['My Feature'],       // optional
+  filters: ['org', 'team'],   // optional shared filter ids
   order: 30,
   isAvailable: () => boolean, // optional; throw or falsy hides it
-  render: { type: 'component', load: () => import('../reports/AllocationReport.vue') }
+  render: { type: 'component', load: () => import('./MyReport.vue') }
 })
 
 // A tab in Team Tracker settings
 registerSettingsTab({
-  id: 'allocation',
-  label: 'Allocation',
+  id: 'my-feature',
+  label: 'My Feature',
   order: 40,
-  render: { type: 'component', load: () => import('../components/AllocationSettings.vue') }
+  render: { type: 'component', load: () => import('./MyFeatureSettings.vue') }
 })
 ```
 
@@ -744,9 +777,9 @@ Extension failures must never break the host page:
 Prefer expressing "only show when X" through `isVisible` / `isAvailable`
 callbacks rather than conditional registration, so the decision is re-evaluated
 reactively. `registerSettingsTab` has no visibility hook, so gate it by
-registering conditionally. Allocation, for example, registers all three slots
-only when `useAllocationStrategy().configured` is true, and its team-detail tab
-additionally checks that the team has allocation boards via `isVisible`.
+registering conditionally. For example, a per-team tab can check that the team
+has the relevant boards configured via `isVisible: (team, context) => ...`,
+returning falsy (or throwing) to stay hidden.
 
 ## Secrets Declaration
 

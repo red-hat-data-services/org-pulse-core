@@ -4,8 +4,9 @@
  * The generic contribution *mechanism* lives in `@shared`
  * (`createContributionRegistry`, `runGuard`, `ContributionBoundary`). This file
  * defines team-tracker's three named *slots* on top of it, instead of core
- * hardcoding `if (feature configured)` branches. Allocation is the
- * reference/first consumer (see `allocation-contributions.js`).
+ * hardcoding `if (feature configured)` branches. Features register into these
+ * slots — core reports directly (see `../reports/registry.js`), and consumer
+ * repos via the platform discovery seam (see `apply-platform-contributions.js`).
  *
  * Three slots are supported, each a namespaced registry instance:
  *   - team-detail tab   (`team-tracker:team-detail-tab`) — a tab on the team detail view

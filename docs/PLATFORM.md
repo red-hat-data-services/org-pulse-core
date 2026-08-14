@@ -65,99 +65,90 @@ Usage.
 Platform tab components receive no props and emit no events. They are
 standalone sections that render their own content.
 
-## Allocation Strategy (`platform/allocation-strategy/`)
+## Team-Tracker Contributions (`platform/<name>/team-tracker-contributions.js`)
 
-The allocation tracker supports customizable work classification via
-`platform/allocation-strategy/`. When present, the allocation tab appears on
-team detail views and the Work Allocation report appears in the reports hub.
-When absent, allocation features are hidden entirely.
+Core team-tracker exposes fine-grained **contribution slots** — a per-team tab
+on the team-detail view, a card in the Reports hub, and a tab in Team Tracker
+settings — that a consumer repo can fill from `platform/`, without core
+hardcoding `if (feature configured)` branches. This is how an org ships a
+feature like work allocation as a native part of team-tracker while keeping it
+out of published core.
 
-### Manifest format
+### Discovery seam
 
-```json
-{
-  "id": "ai-eng-40-40-20",
-  "name": "40/40/20 Allocation",
-  "description": "Tracks tech debt, features, and learning investment.",
-  "classify": "classify.js",
-  "categories": [
-    { "key": "tech-debt-quality", "name": "Tech Debt & Quality", "color": "amber", "target": 40 },
-    { "key": "new-features", "name": "New Features", "color": "blue", "target": 40 },
-    { "key": "learning-enablement", "name": "Learning & Enablement", "color": "green", "target": 20 }
-  ]
-}
+Team-tracker discovers a single file per extension by convention:
+
+```
+platform/<name>/team-tracker-contributions.js
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | string | yes | Unique strategy identifier (stored in sprint data for cache invalidation) |
-| `name` | string | yes | Display name for the strategy |
-| `description` | string | no | Short description |
-| `classify` | string | yes | Path to CommonJS classification module relative to the extension directory |
-| `categories` | array | yes | Ordered list of allocation categories |
-| `settingsComponent` | string | no | Path to Vue component for strategy-specific admin settings |
+Core loads them all with
+`import.meta.glob('/platform/*/team-tracker-contributions.js', { eager: true })`
+and calls each module's exported `register` function, passing in the registrar
+API. When `platform/` is absent (core / CI), the glob is empty and nothing is
+registered.
 
-Each category object:
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `key` | string | yes | Unique identifier (used in data storage) |
-| `name` | string | yes | Display name |
-| `color` | string | yes | Tailwind color name (e.g., `amber`, `blue`, `green`) |
-| `target` | number | yes | Target percentage (all targets should sum to 100) |
-
-### Classification module (`classify.js`)
-
-The classification module must export:
+### The `register(api)` contract
 
 ```js
-// Required: classify a Jira issue into a category
-function classifyIssue(issue) {
-  // issue has: issueType, status, storyPoints, summary, assignee,
-  //            plus any extra fields declared by getJiraFields()
-  return 'category-key' // or 'uncategorized'
-}
+// platform/allocation/team-tracker-contributions.js
+export function register({ registerTeamDetailTab, registerReport, registerSettingsTab }) {
+  registerTeamDetailTab({
+    id: 'allocation',
+    label: 'Allocation',
+    order: 40,
+    icon: '<path ... />',                                   // optional inline SVG
+    isVisible: (team, context) => teamHasBoards(team, context), // optional guard
+    render: { type: 'component', load: () => import('./TeamAllocationTab.vue') }
+  })
 
-// Optional: declare additional Jira fields needed for classification
-function getJiraFields() {
-  return {
-    fieldIds: ['customfield_10464'],
-    extract: (issue, fields) => ({
-      activityType: fields.customfield_10464?.value || null
-    })
-  }
-}
+  registerReport({
+    id: 'allocation',
+    title: 'Work Allocation',
+    description: 'Effort breakdown across categories.',
+    order: 30,
+    isAvailable: () => true,                                // optional guard
+    render: { type: 'component', load: () => import('./AllocationReport.vue') }
+  })
 
-module.exports = { classifyIssue, getJiraFields }
+  registerSettingsTab({
+    id: 'allocation',
+    label: 'Allocation',
+    order: 40,
+    render: { type: 'component', load: () => import('./AllocationSettings.vue') }
+  })
+}
 ```
 
-### How it works
+The registrar API is **injected**, never imported. A contribution must not
+import team-tracker internals — the injected `register*` functions are the only
+supported surface, which keeps the seam stable and forward-compatible with
+future remote/federated delivery. See the "Frontend Contribution Slots" section
+of [`docs/MODULES.md`](MODULES.md) for the full slot/field reference, the
+`render` descriptor contract, and the fault-isolation behavior.
 
-- **Server-side**: `server/platform-loader.js` discovers the manifest and loads
-  the classification module. The strategy is passed into module context via
-  `context.allocationStrategy`.
-- **Frontend**: `src/platform-loader.js` discovers the manifest via
-  `import.meta.glob` and exposes category metadata. The `useAllocationStrategy()`
-  composable provides reactive access to categories.
-- **Frontend UI wiring**: Allocation does **not** hardcode its tab/report/settings
-  into core team-tracker. It registers a team-detail tab, a report, and a settings
-  tab through the team-tracker **contribution registry**
-  (`modules/team-tracker/client/contributions/`). See the "Frontend Contribution
-  Slots" section of [`docs/MODULES.md`](MODULES.md). Registration is gated on
-  `useAllocationStrategy().configured` (and, for the team-detail tab, on the team
-  having allocation boards) via `isVisible` / `isAvailable` callbacks, so when no
-  strategy is configured the feature is absent entirely.
-- **Cache invalidation**: The `strategyId` is stored alongside sprint data. When
-  the strategy changes, cached closed sprint data is invalidated and re-classified.
-- **Uncategorized**: Issues that don't match any category are automatically placed
-  in an "Uncategorized" bucket (always appended, not declared in the manifest).
+### Resilience
 
-### Adding a new strategy
+- A file that does not export `register`, or whose `register` throws, is skipped
+  and logged — it never aborts the other extensions
+  (`modules/team-tracker/client/contributions/apply-platform-contributions.js`).
+- Guards (`isVisible` / `isAvailable`) run in a try/catch; a throw means
+  "hidden / unavailable", never a crash.
+- Each contributed component renders inside `ContributionBoundary.vue`, so a
+  runtime or load failure shows a small fallback instead of breaking the page.
 
-1. Create `platform/allocation-strategy/manifest.json` with your categories
-2. Create `platform/allocation-strategy/classify.js` with classification logic
-3. Run `npm run validate:platform` to verify
-4. The allocation tab and report appear automatically
+### Backend for a contribution
+
+A contributed tab/report talks only to its own API routes. Ship those routes as
+a **module-views** extension (see below) targeting `team-tracker`; the routes
+mount at `/api/modules/team-tracker/...` after the module's own router. A
+contribution never calls core internals directly.
+
+### Example: work allocation
+
+Allocation (per-team allocation tab + Work Allocation report + settings tab, plus
+its Jira classification engine and a refresh job) is delivered this way as a
+consumer-repo `platform/allocation/` extension. It is **not** part of core.
 
 ## Module Views (`platform/<name>/`)
 

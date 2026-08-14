@@ -2,7 +2,6 @@ import { defineAsyncComponent } from 'vue'
 
 const aboutTabManifests = import.meta.glob('/platform/*/manifest.json', { eager: true })
 const aboutTabComponents = import.meta.glob('/platform/about-tabs/*.vue')
-const allocationStrategyComponents = import.meta.glob('/platform/allocation-strategy/*.vue')
 const moduleViewComponents = import.meta.glob('/platform/*/client/**/*.vue')
 
 export function loadPlatformAboutTabs() {
@@ -59,27 +58,6 @@ export function loadModuleViewExtensions() {
         continue
       }
       result[manifest.targetModule][viewId] = defineAsyncComponent(loader)
-    }
-  }
-  return result
-}
-
-export function loadAllocationStrategy() {
-  const manifest = aboutTabManifests['/platform/allocation-strategy/manifest.json']
-  if (!manifest) return null
-  const data = manifest.default || manifest
-  const result = {
-    id: data.id,
-    name: data.name,
-    description: data.description || '',
-    categories: data.categories || []
-  }
-  if (data.settingsComponent) {
-    const normalized = data.settingsComponent.replace(/^\.\//, '')
-    const globKey = `/platform/allocation-strategy/${normalized}`
-    const loader = allocationStrategyComponents[globKey]
-    if (loader) {
-      result.settingsComponent = defineAsyncComponent(loader)
     }
   }
   return result

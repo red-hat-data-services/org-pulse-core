@@ -451,7 +451,7 @@ watch(activeTab, (tab) => {
 const valueProps = [
   { title: 'Delivery Velocity', desc: 'Track issue throughput and story points across teams', icon: TrendingUp },
   { title: 'Trends Over Time', desc: 'Spot patterns in monthly resolution and contribution data', icon: BarChart3 },
-  { title: 'Work Allocation', desc: 'See how effort is distributed across priorities and initiatives', icon: PieChart },
+  { title: 'Contribution Insights', desc: 'See GitHub and GitLab contribution activity alongside Jira delivery', icon: PieChart },
   { title: 'Release Tracking', desc: 'Monitor sprint commitments and delivery against plans', icon: Milestone }
 ]
 
@@ -460,7 +460,7 @@ const dataSources = ['Jira Cloud', 'GitHub', 'GitLab', 'Team Roster (LDAP)', 'Go
 const pipelineSteps = [
   { label: 'Collect', desc: 'Pull data from Jira, GitHub, GitLab, and LDAP' },
   { label: 'Organize', desc: 'Map people to teams using roster sync' },
-  { label: 'Analyze', desc: 'Compute velocity, trends, and allocations' },
+  { label: 'Analyze', desc: 'Compute velocity, trends, and contribution metrics' },
   { label: 'Report', desc: 'Render dashboards and charts per module' }
 ]
 

@@ -1,22 +1,14 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// These tests verify that core reports register into the shared contribution
-// registry, and that allocation registers (only) when a strategy is configured.
-// The Reports hub reads the merged set via getReports().
+// These tests verify that the core reports register into the shared contribution
+// registry. The Reports hub reads the merged set via getReports(). Feature
+// reports are provided by platform contributions (absent in core / CI).
 
-describe('Report registrations (strategy configured)', () => {
+describe('Core report registrations', () => {
   let getReports
 
   beforeEach(async () => {
     vi.resetModules()
-    vi.doMock('@/platform-loader', () => ({
-      loadAllocationStrategy: () => ({
-        id: 'ai-eng-40-40-20',
-        name: '40/40/20 Allocation',
-        description: 'AI Engineering allocation strategy',
-        categories: []
-      })
-    }))
     ;({ getReports } = await import('../../../client/contributions'))
   })
 
@@ -26,9 +18,9 @@ describe('Report registrations (strategy configured)', () => {
     expect(ids).toContain('team-comparison')
   })
 
-  it('registers the allocation report when a strategy is configured', () => {
+  it('registers only the core reports in core (no platform contributions)', () => {
     const ids = getReports().map(r => r.id)
-    expect(ids).toContain('allocation')
+    expect(ids).toEqual(['trends', 'team-comparison'])
   })
 
   it('all reports expose required fields and a component render descriptor', () => {
@@ -50,26 +42,5 @@ describe('Report registrations (strategy configured)', () => {
   it('trends report uses org and team filters', () => {
     const trends = getReports().find(r => r.id === 'trends')
     expect(trends.filters).toEqual(['org', 'team'])
-  })
-
-  it('allocation report uses no shared filters, is available, and names the strategy', () => {
-    const allocation = getReports().find(r => r.id === 'allocation')
-    expect(allocation.filters).toEqual([])
-    expect(allocation.description).toContain('40/40/20 Allocation')
-    expect(allocation.isAvailable()).toBe(true)
-  })
-})
-
-describe('Report registrations (no strategy)', () => {
-  it('excludes the allocation report when no strategy is configured', async () => {
-    vi.resetModules()
-    vi.doMock('@/platform-loader', () => ({
-      loadAllocationStrategy: () => null
-    }))
-    const { getReports } = await import('../../../client/contributions')
-    const ids = getReports().map(r => r.id)
-    expect(ids).toContain('trends')
-    expect(ids).toContain('team-comparison')
-    expect(ids).not.toContain('allocation')
   })
 })
