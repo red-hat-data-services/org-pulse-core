@@ -72,7 +72,6 @@ COPY modules/ ./modules/
 COPY fixtures/team-data/ ./fixtures/team-data/
 COPY fixtures/org-roster/ ./fixtures/org-roster/
 COPY fixtures/people/ ./fixtures/people/
-COPY fixtures/allocation-tracker/ ./fixtures/allocation-tracker/
 COPY fixtures/health-metrics/ ./fixtures/health-metrics/
 COPY fixtures/allowlist.json fixtures/api-tokens.json fixtures/audit-log.json ./fixtures/
 COPY fixtures/github-contributions.json fixtures/github-history.json ./fixtures/

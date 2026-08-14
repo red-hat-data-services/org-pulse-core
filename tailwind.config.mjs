@@ -49,7 +49,9 @@ export function createTailwindConfig(options = {}) {
     darkMode: 'class',
     content,
     safelist: [
-      // Dynamic allocation category colors (used via template literals in AllocationBar, BucketBreakdown, AllocationTeamCard)
+      // Dynamic color classes built via template literals (e.g. category/status
+      // colors in module and platform-extension components) that Tailwind cannot
+      // detect statically and would otherwise purge.
       { pattern: /bg-(amber|blue|green|gray|red|purple|indigo|cyan|teal|orange|pink|yellow|lime|emerald|sky|violet|fuchsia|rose)-400/ },
       { pattern: /text-(amber|blue|green|gray|red|purple|indigo|cyan|teal|orange|pink|yellow|lime|emerald|sky|violet|fuchsia|rose)-900/ },
       { pattern: /border-l-(amber|blue|green|gray|red|purple|indigo|cyan|teal|orange|pink|yellow|lime|emerald|sky|violet|fuchsia|rose)-400/ },
