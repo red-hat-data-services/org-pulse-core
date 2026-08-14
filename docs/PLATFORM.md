@@ -186,9 +186,21 @@ forking core code.
 |-------|------|----------|-------------|
 | `type` | string | yes | Must be `"module-views"` |
 | `targetModule` | string | yes | Slug of the core module to extend |
-| `navItems` | array | yes | Nav items to inject into the target module's sidebar section |
-| `client.views` | object | yes | Map of view ID → Vue component path (relative to extension dir) |
-| `server.entry` | string | no | Path to CommonJS server entry (relative to extension dir) |
+| `navItems` | array | conditional | Nav items to inject into the target module's sidebar section. Required unless the extension declares a `server.entry` |
+| `client.views` | object | conditional | Map of view ID → Vue component path (relative to extension dir). Required when `navItems` are declared (each nav item renders a view) |
+| `server.entry` | string | conditional | Path to CommonJS server entry (relative to extension dir). Required unless the extension declares `navItems` |
+
+An extension must contribute **something** — it needs `navItems` (+ matching
+`client.views`) and/or a `server.entry`. Both loader and `validate:platform`
+reject a `module-views` manifest that has neither.
+
+**Server-only / contribution-seam extensions.** An extension may declare *only* a
+`server.entry` (no `navItems`, no `client.views`). This is the pattern for a
+feature whose UI is registered through a module's contribution seam (e.g.
+[Team-Tracker Contributions](#team-tracker-contributions-platformnameteam-tracker-contributionsjs))
+rather than the sidebar: the `server.entry` mounts the backend routes, while the
+per-team tab / report / settings tab come from `team-tracker-contributions.js`.
+Such an extension adds **no** top-level nav item. Allocation is delivered this way.
 
 Each nav item:
 

@@ -52,17 +52,14 @@ function loadModuleViewExtensions(platformDirs) {
         continue
       }
 
-      if (!Array.isArray(manifest.navItems) || manifest.navItems.length === 0) {
-        console.error(`[platform-loader] module-views extension "${entry.name}" missing navItems`)
-        continue
-      }
-
       const id = entry.name
       if (seenIds.has(id)) {
         console.warn(`[platform-loader] Duplicate module-views extension "${id}", skipping`)
         continue
       }
       seenIds.add(id)
+
+      const navItems = Array.isArray(manifest.navItems) ? manifest.navItems : []
 
       // Validate server entry if declared
       let serverEntry = null
@@ -81,10 +78,20 @@ function loadModuleViewExtensions(platformDirs) {
         serverEntry = entryPath
       }
 
+      // A module-views extension must contribute something: nav items (which
+      // render frontend views) and/or a server entry (backend routes). An
+      // extension whose UI is registered through the target module's
+      // contribution seam legitimately has no navItems/client.views here — it
+      // just needs a server entry to be discovered by this (server-side) loader.
+      if (navItems.length === 0 && !serverEntry) {
+        console.error(`[platform-loader] module-views extension "${id}" contributes nothing (no navItems and no server.entry), skipping`)
+        continue
+      }
+
       extensions.push({
         id: id,
         targetModule: manifest.targetModule,
-        navItems: manifest.navItems,
+        navItems: navItems,
         serverEntry: serverEntry,
         secrets: manifest.secrets || null,
         _dir: extDir

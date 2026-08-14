@@ -124,9 +124,20 @@ for (const dirName of moduleViewsDirs) {
     error(`${dirName}: "targetModule" must be a non-empty string`)
   }
 
-  if (!Array.isArray(manifest.navItems) || manifest.navItems.length === 0) {
-    error(`${dirName}: "navItems" must be a non-empty array`)
-  } else {
+  // A module-views extension must contribute something: nav items (which render
+  // frontend views) and/or a server entry (backend routes). Extensions whose UI
+  // is registered through the target module's contribution seam legitimately have
+  // no navItems/client.views — they only declare a server entry.
+  const hasNav = Array.isArray(manifest.navItems) && manifest.navItems.length > 0
+  const hasServer = !!(manifest.server && manifest.server.entry)
+
+  if (!hasNav && !hasServer) {
+    error(`${dirName}: a module-views extension must define a non-empty "navItems" array and/or a "server.entry" (it contributes nothing otherwise)`)
+  }
+
+  if (manifest.navItems !== undefined && !Array.isArray(manifest.navItems)) {
+    error(`${dirName}: "navItems" must be an array`)
+  } else if (hasNav) {
     const REQUIRED_NAV_FIELDS = ['id', 'label', 'icon']
     const seenIds = new Set()
 
@@ -148,9 +159,16 @@ for (const dirName of moduleViewsDirs) {
     }
   }
 
-  if (!manifest.client || !manifest.client.views || typeof manifest.client.views !== 'object' || Array.isArray(manifest.client.views)) {
-    error(`${dirName}: "client.views" is required and must be an object`)
-  } else {
+  const hasViews = manifest.client && manifest.client.views &&
+    typeof manifest.client.views === 'object' && !Array.isArray(manifest.client.views)
+
+  // client.views is required only when navItems are declared (each nav entry
+  // renders a view); it is optional for server-only / contribution-seam extensions.
+  if (hasNav && !hasViews) {
+    error(`${dirName}: "client.views" is required when "navItems" are defined and must be an object`)
+  }
+
+  if (hasViews) {
     for (const [viewId, viewPath] of Object.entries(manifest.client.views)) {
       if (typeof viewPath !== 'string') {
         error(`${dirName}: client.views["${viewId}"] must be a string path`)
@@ -178,7 +196,10 @@ for (const dirName of moduleViewsDirs) {
   }
 
   if (errors === 0) {
-    console.log(`  Extension "${dirName}" → ${manifest.targetModule}: ${manifest.navItems?.length || 0} navItem(s) validated successfully`)
+    const parts = []
+    if (hasNav) parts.push(`${manifest.navItems.length} navItem(s)`)
+    if (hasServer) parts.push('server routes')
+    console.log(`  Extension "${dirName}" → ${manifest.targetModule}: ${parts.join(' + ') || 'no contributions'} validated successfully`)
   }
 }
 
