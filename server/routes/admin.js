@@ -307,30 +307,47 @@ function registerAdminRoutes(app, context) {
 
   /**
    * @openapi
-   * /api/admin/refresh/handler/{handlerId}:
+   * /api/admin/refresh/handler:
    *   post:
    *     tags: [Admin]
    *     summary: Run a single refresh handler by ID (admin only)
-   *     parameters:
-   *       - in: path
-   *         name: handlerId
-   *         required: true
-   *         schema:
-   *           type: string
-   *         description: Full handler ID (e.g. "team-tracker:roster-sync")
+   *     description: >
+   *       Handler ID is passed in the request body. Handler IDs are opaque and
+   *       may contain characters (e.g. "/") that are unsafe in a URL path
+   *       segment — notably platform-extension handlers whose IDs are prefixed
+   *       with a disambiguated slug like "team-tracker/allocation". A legacy
+   *       path-parameter form is retained for back-compat with simple IDs.
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [handlerId]
+   *             properties:
+   *               handlerId:
+   *                 type: string
+   *                 description: Full handler ID (e.g. "team-tracker:roster-sync")
    *     responses:
    *       202:
    *         description: Handler started
+   *       400:
+   *         description: Missing handlerId
    *       404:
    *         description: Handler not found
    *       409:
    *         description: Refresh already in progress
    */
-  app.post('/api/admin/refresh/handler/:handlerId', requireAdmin, requireScope('admin:manage'), function(req, res) {
+  app.post(['/api/admin/refresh/handler', '/api/admin/refresh/handler/:handlerId'], requireAdmin, requireScope('admin:manage'), function(req, res) {
     if (refreshRegistry.isRunning()) {
       return res.status(409).json({ error: 'Refresh is already running' });
     }
-    const handlerId = req.params.handlerId;
+    // Prefer the body (robust for IDs containing "/" or other URL-unsafe chars);
+    // fall back to the legacy path parameter.
+    const handlerId = (req.body && req.body.handlerId) || req.params.handlerId;
+    if (!handlerId) {
+      return res.status(400).json({ error: 'handlerId is required' });
+    }
     const handler = refreshRegistry.get(handlerId);
     if (!handler) {
       return res.status(404).json({ error: 'No handler registered with id "' + handlerId + '"' });

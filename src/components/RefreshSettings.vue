@@ -197,7 +197,11 @@ async function refreshModule(slug) {
 async function refreshHandler(handler) {
   refreshingHandlers.value[handler.id] = true
   try {
-    await apiRequest('/admin/refresh/handler/' + encodeURIComponent(handler.id), { method: 'POST' })
+    await apiRequest('/admin/refresh/handler', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ handlerId: handler.id })
+    })
     emit('toast', { type: 'success', message: handler.displayName + ' refresh started' })
     startPolling()
   } catch (e) {
