@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-const teamStore = require('../server/team-store')
+const { createTeamStore } = require('../server/team-store')
 
 function makeStorage(initial = {}) {
   const data = { ...initial }
@@ -34,12 +34,13 @@ function storageWithTeam(teamOverrides = {}) {
 describe('updateTeamBoards', () => {
   it('replaces the entire boards array', async () => {
     const storage = storageWithTeam()
+    const teamStore = createTeamStore(storage)
     const newBoards = [
       { url: 'https://jira.example.com/board/1', name: 'Board One' },
       { url: 'https://jira.example.com/board/2', name: 'Board Two' }
     ]
 
-    const result = await teamStore.updateTeamBoards(storage, 'team_abc', newBoards, 'admin@test.com')
+    const result = await teamStore.updateTeamBoards('team_abc', newBoards, 'admin@test.com')
 
     expect(result).toHaveLength(2)
     expect(result[0]).toEqual({ url: 'https://jira.example.com/board/1', name: 'Board One', boardId: 1 })
@@ -51,6 +52,7 @@ describe('updateTeamBoards', () => {
 
   it('defaults name to empty string when not provided', async () => {
     const storage = storageWithTeam()
+    const teamStore = createTeamStore(storage)
     const boards = [
       { url: 'https://jira.example.com/board/1' },
       { url: 'https://jira.example.com/board/2', name: undefined },
@@ -58,7 +60,7 @@ describe('updateTeamBoards', () => {
       { url: 'https://jira.example.com/board/4', name: 42 }
     ]
 
-    const result = await teamStore.updateTeamBoards(storage, 'team_abc', boards, 'admin@test.com')
+    const result = await teamStore.updateTeamBoards('team_abc', boards, 'admin@test.com')
 
     expect(result[0].name).toBe('')
     expect(result[1].name).toBe('')
@@ -68,21 +70,24 @@ describe('updateTeamBoards', () => {
 
   it('preserves url values exactly', async () => {
     const storage = storageWithTeam()
+    const teamStore = createTeamStore(storage)
     const url = 'https://redhat.atlassian.net/jira/software/c/projects/RHOAIENG/boards/1103'
-    const result = await teamStore.updateTeamBoards(storage, 'team_abc', [{ url, name: '' }], 'admin@test.com')
+    const result = await teamStore.updateTeamBoards('team_abc', [{ url, name: '' }], 'admin@test.com')
 
     expect(result[0].url).toBe(url)
   })
 
   it('returns null for unknown team', async () => {
     const storage = storageWithTeam()
-    const result = await teamStore.updateTeamBoards(storage, 'team_nonexistent', [], 'admin@test.com')
+    const teamStore = createTeamStore(storage)
+    const result = await teamStore.updateTeamBoards('team_nonexistent', [], 'admin@test.com')
     expect(result).toBeNull()
   })
 
   it('can set boards to an empty array', async () => {
     const storage = storageWithTeam()
-    const result = await teamStore.updateTeamBoards(storage, 'team_abc', [], 'admin@test.com')
+    const teamStore = createTeamStore(storage)
+    const result = await teamStore.updateTeamBoards('team_abc', [], 'admin@test.com')
 
     expect(result).toEqual([])
     expect(storage._data['team-data/teams.json'].teams.team_abc.boards).toEqual([])
@@ -90,52 +95,59 @@ describe('updateTeamBoards', () => {
 
   it('rejects javascript: URLs', async () => {
     const storage = storageWithTeam()
+    const teamStore = createTeamStore(storage)
     await expect(
-      teamStore.updateTeamBoards(storage, 'team_abc', [{ url: 'javascript:alert(1)', name: '' }], 'admin@test.com')
+      teamStore.updateTeamBoards('team_abc', [{ url: 'javascript:alert(1)', name: '' }], 'admin@test.com')
     ).rejects.toThrow('must start with https:// or http://')
   })
 
   it('rejects data: URLs', async () => {
     const storage = storageWithTeam()
+    const teamStore = createTeamStore(storage)
     await expect(
-      teamStore.updateTeamBoards(storage, 'team_abc', [{ url: 'data:text/html,<h1>XSS</h1>', name: '' }], 'admin@test.com')
+      teamStore.updateTeamBoards('team_abc', [{ url: 'data:text/html,<h1>XSS</h1>', name: '' }], 'admin@test.com')
     ).rejects.toThrow('must start with https:// or http://')
   })
 
   it('accepts http:// URLs', async () => {
     const storage = storageWithTeam()
-    const result = await teamStore.updateTeamBoards(storage, 'team_abc', [{ url: 'http://jira.local/board/1', name: '' }], 'admin@test.com')
+    const teamStore = createTeamStore(storage)
+    const result = await teamStore.updateTeamBoards('team_abc', [{ url: 'http://jira.local/board/1', name: '' }], 'admin@test.com')
     expect(result[0].url).toBe('http://jira.local/board/1')
   })
 
   it('rejects boards array exceeding 50 entries', async () => {
     const storage = storageWithTeam()
+    const teamStore = createTeamStore(storage)
     const boards = Array.from({ length: 51 }, (_, i) => ({ url: 'https://example.com/board/' + i, name: '' }))
     await expect(
-      teamStore.updateTeamBoards(storage, 'team_abc', boards, 'admin@test.com')
+      teamStore.updateTeamBoards('team_abc', boards, 'admin@test.com')
     ).rejects.toThrow('exceeds maximum of 50')
   })
 
   it('rejects URL exceeding 2048 characters', async () => {
     const storage = storageWithTeam()
+    const teamStore = createTeamStore(storage)
     const longUrl = 'https://example.com/' + 'a'.repeat(2040)
     await expect(
-      teamStore.updateTeamBoards(storage, 'team_abc', [{ url: longUrl, name: '' }], 'admin@test.com')
+      teamStore.updateTeamBoards('team_abc', [{ url: longUrl, name: '' }], 'admin@test.com')
     ).rejects.toThrow('exceeds maximum length of 2048')
   })
 
   it('truncates name to 200 characters', async () => {
     const storage = storageWithTeam()
+    const teamStore = createTeamStore(storage)
     const longName = 'A'.repeat(300)
-    const result = await teamStore.updateTeamBoards(storage, 'team_abc', [{ url: 'https://example.com/board/1', name: longName }], 'admin@test.com')
+    const result = await teamStore.updateTeamBoards('team_abc', [{ url: 'https://example.com/board/1', name: longName }], 'admin@test.com')
     expect(result[0].name).toHaveLength(200)
   })
 
   it('creates an audit log entry with correct fields', async () => {
     const storage = storageWithTeam()
+    const teamStore = createTeamStore(storage)
     const boards = [{ url: 'https://jira.example.com/board/new', name: 'New Board' }]
 
-    await teamStore.updateTeamBoards(storage, 'team_abc', boards, 'admin@test.com')
+    await teamStore.updateTeamBoards('team_abc', boards, 'admin@test.com')
 
     const log = storage._data['audit-log.json']
     expect(log.entries).toHaveLength(1)

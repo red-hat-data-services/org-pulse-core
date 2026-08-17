@@ -424,12 +424,14 @@ async function migrateToInApp(storage, config, actorEmail, fieldOverrides) {
   }
 
   // ─── Read all data once ───
-  const { readTeams, generateTeamId, TEAMS_KEY } = require('./team-store');
+  const { createTeamStore, generateTeamId, TEAMS_KEY } = require('./team-store');
   const { createFieldStore, FIELD_DEFS_KEY } = require('./field-store');
   const { getOrgDisplayNames } = require('./roster-sync/config');
 
   const fieldStore = createFieldStore(storage);
-  const teamsData = await readTeams(storage);
+  // TODO(mongodb-migration): accept an injected store so this uses the same backend as the app
+  const teamStore = createTeamStore(storage);
+  const teamsData = await teamStore.readTeams();
   const fieldDefs = await fieldStore.readFieldDefinitions();
 
   // Build override lookup: key → { type, multiValue, scope }

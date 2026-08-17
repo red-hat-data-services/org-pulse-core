@@ -1,17 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-const {
-  createTeam,
-  renameTeam,
-  deleteTeam,
-  assignMember,
-  assignMembersBulk,
-  unassignMember,
-  getUnassigned,
-  updateTeamFields,
-  updateTeamBoards,
-  extractBoardId
-} = require('../team-store');
+const { createTeamStore, extractBoardId } = require('../team-store');
 
 function createMockStorage(initialData = {}) {
   const store = {};
@@ -37,7 +26,8 @@ const baseRegistry = {
 describe('createTeam', () => {
   it('creates a team with generated ID', async () => {
     const storage = createMockStorage({ 'team-data/teams.json': { teams: {} } });
-    const team = await createTeam(storage, 'Platform', 'achen', 'admin@example.com');
+    const teamStore = createTeamStore(storage);
+    const team = await teamStore.createTeam('Platform', 'achen', 'admin@example.com');
     expect(team.id).toMatch(/^team_[a-f0-9]{6}$/);
     expect(team.name).toBe('Platform');
     expect(team.orgKey).toBe('achen');
@@ -47,7 +37,8 @@ describe('createTeam', () => {
 
   it('writes audit log entry', async () => {
     const storage = createMockStorage({ 'team-data/teams.json': { teams: {} } });
-    await createTeam(storage, 'Platform', 'achen', 'admin@example.com');
+    const teamStore = createTeamStore(storage);
+    await teamStore.createTeam('Platform', 'achen', 'admin@example.com');
     const log = await storage.readFromStorage('audit-log.json');
     expect(log.entries).toHaveLength(1);
     expect(log.entries[0].action).toBe('team.create');
@@ -59,13 +50,15 @@ describe('renameTeam', () => {
     const storage = createMockStorage({
       'team-data/teams.json': { teams: { team_abc123: { id: 'team_abc123', name: 'Old', orgKey: 'achen', metadata: {} } } }
     });
-    const result = await renameTeam(storage, 'team_abc123', 'New', 'admin@example.com');
+    const teamStore = createTeamStore(storage);
+    const result = await teamStore.renameTeam('team_abc123', 'New', 'admin@example.com');
     expect(result.name).toBe('New');
   });
 
   it('returns null for non-existent team', async () => {
     const storage = createMockStorage({ 'team-data/teams.json': { teams: {} } });
-    expect(await renameTeam(storage, 'team_xxx', 'New', 'admin@example.com')).toBeNull();
+    const teamStore = createTeamStore(storage);
+    expect(await teamStore.renameTeam('team_xxx', 'New', 'admin@example.com')).toBeNull();
   });
 });
 
@@ -79,8 +72,9 @@ describe('deleteTeam', () => {
         }
       }
     });
+    const teamStore = createTeamStore(storage);
 
-    const result = await deleteTeam(storage, 'team_abc', 'admin@example.com');
+    const result = await teamStore.deleteTeam('team_abc', 'admin@example.com');
     expect(result.name).toBe('Platform');
 
     const teams = await storage.readFromStorage('team-data/teams.json');
@@ -97,8 +91,9 @@ describe('assignMember', () => {
       'team-data/teams.json': { teams: { team_abc: { id: 'team_abc', name: 'Platform', orgKey: 'achen', metadata: {} } } },
       'team-data/registry.json': baseRegistry
     });
+    const teamStore = createTeamStore(storage);
 
-    const result = await assignMember(storage, 'team_abc', 'bsmith', 'admin@example.com');
+    const result = await teamStore.assignMember('team_abc', 'bsmith', 'admin@example.com');
     expect(result.assigned).toBe(true);
 
     const reg = await storage.readFromStorage('team-data/registry.json');
@@ -112,8 +107,9 @@ describe('assignMember', () => {
         people: { bsmith: { uid: 'bsmith', name: 'Bob', status: 'active', teamIds: ['team_abc'] } }
       }
     });
+    const teamStore = createTeamStore(storage);
 
-    const result = await assignMember(storage, 'team_abc', 'bsmith', 'admin@example.com');
+    const result = await teamStore.assignMember('team_abc', 'bsmith', 'admin@example.com');
     expect(result.skipped).toBe(true);
   });
 
@@ -122,7 +118,8 @@ describe('assignMember', () => {
       'team-data/teams.json': { teams: {} },
       'team-data/registry.json': baseRegistry
     });
-    const result = await assignMember(storage, 'team_xxx', 'bsmith', 'admin@example.com');
+    const teamStore = createTeamStore(storage);
+    const result = await teamStore.assignMember('team_xxx', 'bsmith', 'admin@example.com');
     expect(result.error).toBeTruthy();
   });
 });
@@ -133,8 +130,9 @@ describe('assignMembersBulk', () => {
       'team-data/teams.json': { teams: { team_abc: { id: 'team_abc', name: 'Platform', orgKey: 'achen', metadata: {} } } },
       'team-data/registry.json': baseRegistry
     });
+    const teamStore = createTeamStore(storage);
 
-    const result = await assignMembersBulk(storage, 'team_abc', ['bsmith', 'cwilliams'], 'admin@example.com');
+    const result = await teamStore.assignMembersBulk('team_abc', ['bsmith', 'cwilliams'], 'admin@example.com');
     expect(result.assigned).toEqual(['bsmith', 'cwilliams']);
     expect(result.skipped).toEqual([]);
   });
@@ -146,8 +144,9 @@ describe('assignMembersBulk', () => {
       'team-data/teams.json': { teams: { team_abc: { id: 'team_abc', name: 'Platform', orgKey: 'achen', metadata: {} } } },
       'team-data/registry.json': reg
     });
+    const teamStore = createTeamStore(storage);
 
-    const result = await assignMembersBulk(storage, 'team_abc', ['bsmith', 'cwilliams', 'nonexistent'], 'admin@example.com');
+    const result = await teamStore.assignMembersBulk('team_abc', ['bsmith', 'cwilliams', 'nonexistent'], 'admin@example.com');
     expect(result.assigned).toEqual(['cwilliams']);
     expect(result.skipped).toEqual(['bsmith', 'nonexistent']);
   });
@@ -161,8 +160,9 @@ describe('unassignMember', () => {
         people: { bsmith: { uid: 'bsmith', name: 'Bob', status: 'active', teamIds: ['team_abc'] } }
       }
     });
+    const teamStore = createTeamStore(storage);
 
-    const result = await unassignMember(storage, 'team_abc', 'bsmith', 'admin@example.com');
+    const result = await teamStore.unassignMember('team_abc', 'bsmith', 'admin@example.com');
     expect(result.unassigned).toBe(true);
 
     const reg = await storage.readFromStorage('team-data/registry.json');
@@ -178,31 +178,36 @@ describe('getUnassigned', () => {
 
   it('returns all unassigned for admin with scope=all', () => {
     const storage = createMockStorage();
-    const result = getUnassigned(storage, 'all', null, true, managerMap, reg);
+    const teamStore = createTeamStore(storage);
+    const result = teamStore.getUnassigned('all', null, true, managerMap, reg);
     expect(result.map(p => p.uid).sort()).toEqual(['achen', 'cwilliams']);
   });
 
   it('returns direct reports for scope=direct', () => {
     const storage = createMockStorage();
-    const result = getUnassigned(storage, 'direct', 'achen', false, managerMap, reg);
+    const teamStore = createTeamStore(storage);
+    const result = teamStore.getUnassigned('direct', 'achen', false, managerMap, reg);
     expect(result.map(p => p.uid)).toEqual(['cwilliams']);
   });
 
   it('returns org subtree for scope=org', () => {
     const storage = createMockStorage();
-    const result = getUnassigned(storage, 'org', 'achen', false, managerMap, reg);
+    const teamStore = createTeamStore(storage);
+    const result = teamStore.getUnassigned('org', 'achen', false, managerMap, reg);
     expect(result.map(p => p.uid)).toEqual(['cwilliams']);
   });
 
   it('returns empty for non-admin with scope=all', () => {
     const storage = createMockStorage();
-    const result = getUnassigned(storage, 'all', 'achen', false, managerMap, reg);
+    const teamStore = createTeamStore(storage);
+    const result = teamStore.getUnassigned('all', 'achen', false, managerMap, reg);
     expect(result).toHaveLength(0);
   });
 
   it('returns empty for invalid scope value', () => {
     const storage = createMockStorage();
-    const result = getUnassigned(storage, 'invalid', 'achen', true, managerMap, reg);
+    const teamStore = createTeamStore(storage);
+    const result = teamStore.getUnassigned('invalid', 'achen', true, managerMap, reg);
     expect(result).toHaveLength(0);
   });
 });
@@ -212,8 +217,9 @@ describe('updateTeamFields', () => {
     const storage = createMockStorage({
       'team-data/teams.json': { teams: { team_abc: { id: 'team_abc', name: 'Platform', orgKey: 'achen', metadata: {} } } }
     });
+    const teamStore = createTeamStore(storage);
 
-    const result = await updateTeamFields(storage, 'team_abc', { field_1: 'value1' }, 'admin@example.com');
+    const result = await teamStore.updateTeamFields('team_abc', { field_1: 'value1' }, 'admin@example.com');
     expect(result.metadata.field_1).toBe('value1');
   });
 });
@@ -263,7 +269,8 @@ describe('updateTeamBoards', () => {
 
   it('auto-extracts boardId from Jira Cloud URL', async () => {
     const storage = createMockStorage(teamData);
-    const result = await updateTeamBoards(storage, 'team_abc', [
+    const teamStore = createTeamStore(storage);
+    const result = await teamStore.updateTeamBoards('team_abc', [
       { url: 'https://redhat.atlassian.net/jira/software/projects/RHOAIENG/boards/123', name: 'Platform' }
     ], 'admin@example.com');
     expect(result[0].boardId).toBe(123);
@@ -271,7 +278,8 @@ describe('updateTeamBoards', () => {
 
   it('auto-extracts boardId from rapidView URL', async () => {
     const storage = createMockStorage(teamData);
-    const result = await updateTeamBoards(storage, 'team_abc', [
+    const teamStore = createTeamStore(storage);
+    const result = await teamStore.updateTeamBoards('team_abc', [
       { url: 'https://issues.redhat.com/secure/RapidBoard.jspa?rapidView=42', name: 'Legacy' }
     ], 'admin@example.com');
     expect(result[0].boardId).toBe(42);
@@ -279,7 +287,8 @@ describe('updateTeamBoards', () => {
 
   it('uses explicit boardId over auto-extracted', async () => {
     const storage = createMockStorage(teamData);
-    const result = await updateTeamBoards(storage, 'team_abc', [
+    const teamStore = createTeamStore(storage);
+    const result = await teamStore.updateTeamBoards('team_abc', [
       { url: 'https://redhat.atlassian.net/jira/software/projects/RHOAIENG/boards/123', name: 'Platform', boardId: 999 }
     ], 'admin@example.com');
     expect(result[0].boardId).toBe(999);
@@ -287,7 +296,8 @@ describe('updateTeamBoards', () => {
 
   it('sets boardId to null when URL has no recognizable pattern', async () => {
     const storage = createMockStorage(teamData);
-    const result = await updateTeamBoards(storage, 'team_abc', [
+    const teamStore = createTeamStore(storage);
+    const result = await teamStore.updateTeamBoards('team_abc', [
       { url: 'https://example.com/some-page', name: 'Unknown' }
     ], 'admin@example.com');
     expect(result[0].boardId).toBeNull();
@@ -295,7 +305,8 @@ describe('updateTeamBoards', () => {
 
   it('preserves sprintFilter when provided', async () => {
     const storage = createMockStorage(teamData);
-    const result = await updateTeamBoards(storage, 'team_abc', [
+    const teamStore = createTeamStore(storage);
+    const result = await teamStore.updateTeamBoards('team_abc', [
       { url: 'https://redhat.atlassian.net/jira/software/projects/RHOAIENG/boards/123', name: 'Backend', sprintFilter: 'Backend' }
     ], 'admin@example.com');
     expect(result[0].sprintFilter).toBe('Backend');
@@ -303,7 +314,8 @@ describe('updateTeamBoards', () => {
 
   it('omits sprintFilter when empty or whitespace', async () => {
     const storage = createMockStorage(teamData);
-    const result = await updateTeamBoards(storage, 'team_abc', [
+    const teamStore = createTeamStore(storage);
+    const result = await teamStore.updateTeamBoards('team_abc', [
       { url: 'https://redhat.atlassian.net/jira/software/projects/RHOAIENG/boards/123', name: 'All', sprintFilter: '  ' }
     ], 'admin@example.com');
     expect(result[0].sprintFilter).toBeUndefined();
@@ -311,7 +323,8 @@ describe('updateTeamBoards', () => {
 
   it('trims sprintFilter whitespace', async () => {
     const storage = createMockStorage(teamData);
-    const result = await updateTeamBoards(storage, 'team_abc', [
+    const teamStore = createTeamStore(storage);
+    const result = await teamStore.updateTeamBoards('team_abc', [
       { url: 'https://redhat.atlassian.net/jira/software/projects/RHOAIENG/boards/123', name: 'FE', sprintFilter: '  Frontend  ' }
     ], 'admin@example.com');
     expect(result[0].sprintFilter).toBe('Frontend');
@@ -319,7 +332,8 @@ describe('updateTeamBoards', () => {
 
   it('writes audit log with board details', async () => {
     const storage = createMockStorage(teamData);
-    await updateTeamBoards(storage, 'team_abc', [
+    const teamStore = createTeamStore(storage);
+    await teamStore.updateTeamBoards('team_abc', [
       { url: 'https://redhat.atlassian.net/jira/software/projects/RHOAIENG/boards/123', name: 'Platform', sprintFilter: 'Backend' }
     ], 'admin@example.com');
     const log = await storage.readFromStorage('audit-log.json');

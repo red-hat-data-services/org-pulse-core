@@ -16,6 +16,7 @@
  * @property {Function} requireScope   - Factory returning Express middleware for API token scope check
  * @property {object} roleStore        - Role store instance (getRole, setRole, etc.)
  * @property {object} fieldStore       - Field store instance (readFieldDefinitions, createFieldDefinition, etc.)
+ * @property {object} teamStore        - Team store instance (readTeams, createTeam, etc.)
  * @property {object} [roleRegistry]   - Role registry for registerRole
  * @property {object} [scopeRegistry]  - Scope registry for registerScopes
  * @property {object} [secretRegistry] - Secret registry for module secrets
@@ -45,6 +46,7 @@
  * @property {Function} requireScope   - Factory returning Express middleware for API token scope check
  * @property {object} roleStore        - Role store instance
  * @property {object} fieldStore       - Field store instance
+ * @property {object} teamStore        - Team store instance
  * @property {Function} registerDiagnostics - Register a diagnostics function for admin health checks
  * @property {Function} registerMessageProvider - Register a message provider (id, fn)
  * @property {Function} registerRefresh - Register a refresh handler (id, config)
@@ -97,6 +99,7 @@ function buildModuleContext(coreServices, slug, registries = {}) {
     requireScope: coreServices.requireScope,
     roleStore: coreServices.roleStore,
     fieldStore: coreServices.fieldStore,
+    teamStore: coreServices.teamStore,
 
     registerRole: roleRegistry
       ? function (id, config) {
@@ -205,6 +208,7 @@ function createTestContext(overrides = {}) {
   }
 
   const { createFieldStore } = require('./field-store')
+  const { createTeamStore } = require('./team-store')
 
   const defaults = {
     storage: testStorage,
@@ -220,6 +224,7 @@ function createTestContext(overrides = {}) {
       getAllRoles: function () { return {} }
     },
     fieldStore: createFieldStore(testStorage, {}),
+    teamStore: createTeamStore(testStorage),
     registerDiagnostics: noop,
     registerMessageProvider: noop,
     registerRefresh: noop,

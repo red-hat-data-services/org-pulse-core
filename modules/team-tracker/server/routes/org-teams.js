@@ -10,6 +10,7 @@ const { fetchAllRfeBacklog } = rfeModule;
 const { getAllPeople, getTeamRollup, collectRoleNames } = require('../../../../shared/server/roster');
 const { getOrgDisplayNames, loadConfig: loadRosterSyncConfig } = require('../../../../shared/server/roster-sync/config');
 const { fetchRawSheet } = require('../../../../shared/server/google-sheets');
+const { extractBoardId } = require('../../../../shared/server/team-store');
 
 let orgSyncInProgress = false;
 let orgDailyTimer = null;
@@ -23,7 +24,7 @@ function isOrgSyncInProgress() {
 }
 
 module.exports = function registerOrgTeamsRoutes(router, context) {
-  const { storage, requireAdmin, requireScope, fieldStore } = context;
+  const { storage, requireAdmin, requireScope, fieldStore, teamStore } = context;
   const { readFromStorage, writeToStorage } = storage;
   const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
@@ -112,8 +113,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
       }
     }
 
-    const teamStore = require('../../../../shared/server/team-store');
-    const structureData = await teamStore.readTeams(storage);
+    const structureData = await teamStore.readTeams();
 
     const allPeople = await getAllPeople(storage);
     const orgKeyToDisplay = await buildOrgKeyToDisplayName();
@@ -179,7 +179,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
         // Priority cascade: prefer structure boards over metadata boards
         if (Array.isArray(structure.boards)) {
           // Backfill boardId for boards saved before extraction was added
-          team.boards = structure.boards.map(b => b.boardId != null ? b : { ...b, boardId: teamStore.extractBoardId(b.url) });
+          team.boards = structure.boards.map(b => b.boardId != null ? b : { ...b, boardId: extractBoardId(b.url) });
           team.boardUrls = team.boards.map(b => b.url);
         }
       }
@@ -206,7 +206,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
         ? [].concat(structure.metadata[componentFieldId])
         : [];
       const structureBoards = Array.isArray(structure.boards)
-        ? structure.boards.map(b => b.boardId != null ? b : { ...b, boardId: teamStore.extractBoardId(b.url) })
+        ? structure.boards.map(b => b.boardId != null ? b : { ...b, boardId: extractBoardId(b.url) })
         : [];
       teams.push({ org, name, boardUrls: structureBoards.map(b => b.url), boards: structureBoards, engLeads: [], productManagers: [], headcount: {}, components: emptyTeamComponents, memberCount: 0, jiraFilter: null, structureId: structure.id, metadata: structure.metadata || {} });
     }
@@ -349,8 +349,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
 
       let members;
       if (membersInAppMode) {
-        const teamStore = require('../../../../shared/server/team-store');
-        const structureData = await teamStore.readTeams(storage);
+        const structureData = await teamStore.readTeams();
         const matchingTeam = Object.entries(structureData.teams).find(([, t]) => {
           const display = orgKeyToDisplay[t.orgKey] || t.orgKey;
           return display === orgName && t.name === teamName;
@@ -393,8 +392,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
 
       let orgTeamPeopleMap;
       if (listInAppMode) {
-        const teamStore = require('../../../../shared/server/team-store');
-        const structureData = await teamStore.readTeams(storage);
+        const structureData = await teamStore.readTeams();
         orgTeamPeopleMap = groupPeopleByOrgTeamFromRegistry(allPeople, orgKeyToDisplay, structureData);
       } else {
         orgTeamPeopleMap = groupPeopleByOrgTeamFromGrouping(allPeople, orgKeyToDisplay);
