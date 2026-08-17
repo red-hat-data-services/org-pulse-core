@@ -10,7 +10,7 @@
 
 const fieldOptionsStore = require('../field-options-store');
 const { createFieldStore } = require('../../../../shared/server/field-store');
-const teamStore = require('../../../../shared/server/team-store');
+const { createTeamStore } = require('../../../../shared/server/team-store');
 const { appendAuditEntry } = require('../../../../shared/server/audit-log');
 
 const REGISTRY_KEY = 'team-data/registry.json';
@@ -23,6 +23,8 @@ const REGISTRY_KEY = 'team-data/registry.json';
  */
 async function previewMigration(storage, sourceFieldId) {
   const fieldStore = createFieldStore(storage);
+  // TODO(mongodb-migration): accept an injected store so this uses the same backend as the app
+  const teamStore = createTeamStore(storage);
   const fieldDefs = await fieldStore.readFieldDefinitions();
 
   // Find the source field in either scope
@@ -56,7 +58,7 @@ async function previewMigration(storage, sourceFieldId) {
       }
     }
   } else {
-    const teamsData = await teamStore.readTeams(storage);
+    const teamsData = await teamStore.readTeams();
     for (const team of Object.values(teamsData.teams || {})) {
       const val = team.metadata?.[sourceFieldId];
       if (val != null) {
@@ -92,6 +94,8 @@ async function previewMigration(storage, sourceFieldId) {
 async function executeMigration(storage, params, actorEmail) {
   const { sourceFieldId, optionSetName, optionSetLabel, createCounterpart, counterpartLabel, seedFromMembers } = params;
   const fieldStore = createFieldStore(storage);
+  // TODO(mongodb-migration): accept an injected store so this uses the same backend as the app
+  const teamStore = createTeamStore(storage);
 
   // Validate option set doesn't already exist
   const existing = await fieldOptionsStore.readFieldOptions(storage, optionSetName);
@@ -141,7 +145,7 @@ async function executeMigration(storage, params, actorEmail) {
       }
     }
   } else {
-    const teamsData = await teamStore.readTeams(storage);
+    const teamsData = await teamStore.readTeams();
     let converted = 0;
     for (const team of Object.values(teamsData.teams || {})) {
       const val = team.metadata?.[sourceFieldId];
@@ -176,7 +180,7 @@ async function executeMigration(storage, params, actorEmail) {
     // Step 4: Seed counterpart team field from person members
     if (seedFromMembers && preview.scope === 'person' && counterpartScope === 'team') {
       const registry = await storage.readFromStorage(REGISTRY_KEY);
-      const teamsData = await teamStore.readTeams(storage);
+      const teamsData = await teamStore.readTeams();
 
       if (registry?.people && teamsData?.teams) {
         for (const [teamId, _team] of Object.entries(teamsData.teams)) {
@@ -195,7 +199,7 @@ async function executeMigration(storage, params, actorEmail) {
           }
 
           if (memberComponents.size > 0) {
-            await teamStore.updateTeamFields(storage, teamId, {
+            await teamStore.updateTeamFields(teamId, {
               [counterpartField.id]: [...memberComponents].sort()
             }, actorEmail);
             summary.teamsSeeded++;

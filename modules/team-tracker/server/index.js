@@ -1,5 +1,5 @@
 module.exports = async function registerRoutes(router, context) {
-  const { storage, requireAdmin, requireTeamAdmin, requireScope, fieldStore: contextFieldStore } = context;
+  const { storage, requireAdmin, requireTeamAdmin, requireScope, fieldStore: contextFieldStore, teamStore: contextTeamStore } = context;
   const { readFromStorage, writeToStorage, listStorageFiles, deleteStorageDirectory } = storage;
 
   // Register module scopes
@@ -130,7 +130,7 @@ module.exports = async function registerRoutes(router, context) {
     const teamDataSource = liveConfig?.teamDataSource || 'sheets';
 
     // In-app mode: load teams and field definitions
-    const teamsData = teamDataSource === 'in-app' ? await teamStore.readTeams(storage) : null;
+    const teamsData = teamDataSource === 'in-app' ? await contextTeamStore.readTeams() : null;
     const fieldDefs = teamDataSource === 'in-app' ? await contextFieldStore.readFieldDefinitions() : null;
     const personFieldDefs = fieldDefs ? fieldDefs.personFields.filter(f => !f.deleted) : [];
 
@@ -611,10 +611,9 @@ module.exports = async function registerRoutes(router, context) {
       return res.status(403).json({ error: 'You are not a manager' });
     }
 
-    const teamStore = require('../../../shared/server/team-store');
     const fieldOptionsStore = require('./field-options-store');
     const { enrichPerson, resolveFieldDefinitions, buildReferencedPeopleMap, buildAllPeopleList } = require('./field-payload');
-    const teamsData = await teamStore.readTeams(storage);
+    const teamsData = await contextTeamStore.readTeams();
     const optionsResolver = async (ref) => await fieldOptionsStore.getValues(storage, ref);
     const { personFieldDefs, teamFieldDefs } = await resolveFieldDefinitions(contextFieldStore, optionsResolver);
 
@@ -712,7 +711,6 @@ module.exports = async function registerRoutes(router, context) {
       return res.status(403).json({ error: 'Requires team-admin or admin role' });
     }
 
-    const teamStoreLocal = require('../../../shared/server/team-store');
     const fieldOptionsStoreLocal = require('./field-options-store');
     const { enrichPerson, resolveFieldDefinitions: resolveFieldDefs, buildReferencedPeopleMap, buildAllPeopleList } = require('./field-payload');
 
@@ -728,7 +726,7 @@ module.exports = async function registerRoutes(router, context) {
       });
     }
 
-    const teamsData = await teamStoreLocal.readTeams(storage);
+    const teamsData = await contextTeamStore.readTeams();
     const localOptionsResolver = async (ref) => await fieldOptionsStoreLocal.getValues(storage, ref);
     const { personFieldDefs, teamFieldDefs } = await resolveFieldDefs(contextFieldStore, localOptionsResolver);
 
@@ -783,7 +781,7 @@ module.exports = async function registerRoutes(router, context) {
 
   // ─── Routes: Team Structure Management ───
 
-  const teamStore = require('../../../shared/server/team-store');
+  const { MAX_DESCRIPTION_LENGTH: TEAM_MAX_DESCRIPTION_LENGTH } = require('../../../shared/server/team-store');
   const auditLog = require('../../../shared/server/audit-log');
   const fieldOptionsStore = require('./field-options-store');
   const { migrateToInApp, previewMigration } = require('../../../shared/server/team-migration');
@@ -818,7 +816,7 @@ module.exports = async function registerRoutes(router, context) {
    *         description: List of teams
    */
   router.get('/structure/teams', requireScope('team-tracker:read'), async function(req, res) {
-    const data = await teamStore.readTeams(storage);
+    const data = await contextTeamStore.readTeams();
     let teams = Object.values(data.teams);
     if (req.query.orgKey) {
       teams = teams.filter(t => t.orgKey === req.query.orgKey);
@@ -935,7 +933,7 @@ module.exports = async function registerRoutes(router, context) {
     }
 
     // Load teams and filter
-    const data = await teamStore.readTeams(storage);
+    const data = await contextTeamStore.readTeams();
     let teams = Object.values(data.teams);
 
     if (parsed.length > 0) {
@@ -1021,7 +1019,7 @@ module.exports = async function registerRoutes(router, context) {
       resolvedField = matches[0];
     }
 
-    const data = await teamStore.readTeams(storage);
+    const data = await contextTeamStore.readTeams();
     const index = Object.create(null);
     const seenTeamIds = new Set();
 
@@ -1067,7 +1065,7 @@ module.exports = async function registerRoutes(router, context) {
     const { name, orgKey } = req.body;
     if (!name || !orgKey) return res.status(400).json({ error: 'name and orgKey are required' });
     if (typeof name !== 'string' || name.length > 100) return res.status(400).json({ error: 'name must be a string of 100 characters or fewer' });
-    const team = await teamStore.createTeam(storage, name.trim(), orgKey, req.auditActor);
+    const team = await contextTeamStore.createTeam(name.trim(), orgKey, req.auditActor);
     await rebuildManagerMap();
     res.status(201).json(team);
   });
@@ -1095,7 +1093,7 @@ module.exports = async function registerRoutes(router, context) {
     const { name } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
     if (typeof name !== 'string' || name.length > 100) return res.status(400).json({ error: 'name must be a string of 100 characters or fewer' });
-    const team = await teamStore.renameTeam(storage, req.params.teamId, name.trim(), req.auditActor);
+    const team = await contextTeamStore.renameTeam(req.params.teamId, name.trim(), req.auditActor);
     if (!team) return res.status(404).json({ error: 'Team not found' });
     res.json(team);
   });
@@ -1123,9 +1121,9 @@ module.exports = async function registerRoutes(router, context) {
     const { description } = req.body;
     if (description !== null && description !== undefined) {
       if (typeof description !== 'string') return res.status(400).json({ error: 'description must be a string or null' });
-      if (description.length > teamStore.MAX_DESCRIPTION_LENGTH) return res.status(400).json({ error: `description must be ${teamStore.MAX_DESCRIPTION_LENGTH} characters or fewer` });
+      if (description.length > TEAM_MAX_DESCRIPTION_LENGTH) return res.status(400).json({ error: `description must be ${TEAM_MAX_DESCRIPTION_LENGTH} characters or fewer` });
     }
-    const team = await teamStore.updateTeamDescription(storage, req.params.teamId, description || null, req.auditActor);
+    const team = await contextTeamStore.updateTeamDescription(req.params.teamId, description || null, req.auditActor);
     if (!team) return res.status(404).json({ error: 'Team not found' });
     res.json(team);
   });
@@ -1150,7 +1148,7 @@ module.exports = async function registerRoutes(router, context) {
   router.delete('/structure/teams/:teamId', requireTeamAdmin, requireScope('team-tracker:write'), async function(req, res) {
     const guard = demoWriteGuard(res);
     if (guard) return;
-    const result = await teamStore.deleteTeam(storage, req.params.teamId, req.auditActor);
+    const result = await contextTeamStore.deleteTeam(req.params.teamId, req.auditActor);
     if (!result) return res.status(404).json({ error: 'Team not found' });
     await rebuildManagerMap();
     res.json(result);
@@ -1183,7 +1181,7 @@ module.exports = async function registerRoutes(router, context) {
       if (guard) return;
       const { uid } = req.body;
       if (!uid) return res.status(400).json({ error: 'uid is required' });
-      const result = await teamStore.assignMember(storage, req.params.teamId, uid, req.auditActor);
+      const result = await contextTeamStore.assignMember(req.params.teamId, uid, req.auditActor);
       if (result.error) return res.status(404).json(result);
       await rebuildManagerMap();
       res.json(result);
@@ -1223,7 +1221,7 @@ module.exports = async function registerRoutes(router, context) {
         return res.status(403).json({ error: 'Not authorized for all requested people', denied });
       }
     }
-    const result = await teamStore.assignMembersBulk(storage, req.params.teamId, uids, req.auditActor);
+    const result = await contextTeamStore.assignMembersBulk(req.params.teamId, uids, req.auditActor);
     if (result.error) return res.status(404).json(result);
     await rebuildManagerMap();
     res.json(result);
@@ -1258,7 +1256,7 @@ module.exports = async function registerRoutes(router, context) {
     async function(req, res) {
       const guard = demoWriteGuard(res);
       if (guard) return;
-      const result = await teamStore.unassignMember(storage, req.params.teamId, req.params.uid, req.auditActor);
+      const result = await contextTeamStore.unassignMember(req.params.teamId, req.params.uid, req.auditActor);
       if (result.error) return res.status(404).json(result);
       await rebuildManagerMap();
       res.json(result);
@@ -1291,7 +1289,7 @@ module.exports = async function registerRoutes(router, context) {
       return res.status(400).json({ error: `Invalid scope. Must be one of: ${VALID_SCOPES.join(', ')}` });
     }
     const registry = await readFromStorage('team-data/registry.json');
-    const people = await teamStore.getUnassigned(storage, scope, req.userUid, req.isAdmin, managerMap, registry);
+    const people = await contextTeamStore.getUnassigned(scope, req.userUid, req.isAdmin, managerMap, registry);
     res.json({ people });
   });
 
@@ -1835,14 +1833,14 @@ module.exports = async function registerRoutes(router, context) {
     }
 
     // Load existing team metadata for required-field checks
-    const teamsData = await teamStore.readTeams(storage);
+    const teamsData = await contextTeamStore.readTeams();
     const team = teamsData.teams && teamsData.teams[req.params.teamId];
     const existingValues = team && team.metadata ? team.metadata : {};
 
     const { validated, warnings, errors } = await contextFieldStore.validateFieldValues('team', req.body, existingValues, { optionsResolver });
     if (errors.length > 0) return res.status(400).json({ error: errors.join('; ') });
 
-    const result = await teamStore.updateTeamFields(storage, req.params.teamId, validated, req.auditActor);
+    const result = await contextTeamStore.updateTeamFields(req.params.teamId, validated, req.auditActor);
     if (!result) return res.status(404).json({ error: 'Team not found' });
     // Return flat metadata (not full team object) + optional warnings
     const response = { ...(result.metadata || {}) };
@@ -1897,7 +1895,7 @@ module.exports = async function registerRoutes(router, context) {
       }
     }
     try {
-      const result = await teamStore.updateTeamBoards(storage, req.params.teamId, boards, req.auditActor);
+      const result = await contextTeamStore.updateTeamBoards(req.params.teamId, boards, req.auditActor);
       if (!result) return res.status(404).json({ error: 'Team not found' });
       res.json({ boards: result });
     } catch (err) {
@@ -5320,7 +5318,6 @@ module.exports = async function registerRoutes(router, context) {
       const directReportSet = permissions.getDirectReports(user.uid, registry);
       if (directReportSet.size === 0) return [];
 
-      const teamStore = require('../../../shared/server/team-store');
       const fieldExceptionsStore = require('./field-exceptions-store');
       const fieldDefs = await contextFieldStore.readFieldDefinitions();
       if (!fieldDefs) return [];
@@ -5347,7 +5344,7 @@ module.exports = async function registerRoutes(router, context) {
       }
 
       // Count incomplete teams
-      const teamsData = await teamStore.readTeams(storage);
+      const teamsData = await contextTeamStore.readTeams();
       const purview = getManagerPurview(user.uid, registry, teamsData, { includeIndirect: false });
       let incompleteTeamCount = 0;
       for (const team of purview.teams) {

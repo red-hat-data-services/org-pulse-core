@@ -6,7 +6,7 @@
 const fieldExceptionsStore = require('../field-exceptions-store');
 
 module.exports = function registerFieldExceptionRoutes(router, context) {
-  const { storage, requireTeamAdmin, requireScope, fieldStore } = context;
+  const { storage, requireTeamAdmin, requireScope, fieldStore, teamStore } = context;
   const { readFromStorage } = storage;
 
   const DEMO_MODE = process.env.DEMO_MODE === 'true';
@@ -31,8 +31,7 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
     const registry = await readFromStorage('team-data/registry.json');
     if (!registry) return [];
 
-    const teamStore = require('../../../../shared/server/team-store');
-    const teamsData = await teamStore.readTeams(storage);
+    const teamsData = await teamStore.readTeams();
 
     const managedUids = permissions.getManagedUids(req.userUid, permissions.buildManagerMap(registry));
     const purview = getManagerPurview(req.userUid, registry, teamsData, { includeIndirect: false });
@@ -160,8 +159,7 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
         return res.status(400).json({ error: `Person "${entityId}" not found in registry` });
       }
     } else {
-      const teamStore = require('../../../../shared/server/team-store');
-      const teamsData = await teamStore.readTeams(storage);
+      const teamsData = await teamStore.readTeams();
       if (!teamsData || !teamsData.teams || !teamsData.teams[entityId]) {
         return res.status(400).json({ error: `Team "${entityId}" not found` });
       }

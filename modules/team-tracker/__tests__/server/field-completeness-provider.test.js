@@ -1,4 +1,5 @@
 const { createFieldStore } = require('../../../../shared/server/field-store')
+const { createTeamStore } = require('../../../../shared/server/team-store')
 import { describe, it, expect, vi } from 'vitest'
 
 
@@ -30,6 +31,7 @@ async function setupAndGetProvider(storageData) {
 
   const storage = makeStorage(storageData)
   const fieldStore = createFieldStore(storage)
+  const teamStore = createTeamStore(storage)
   const mockRoleStore = {
     getRoles: vi.fn(() => []),
     isAdmin: vi.fn(() => false),
@@ -43,6 +45,7 @@ async function setupAndGetProvider(storageData) {
     requireScope: () => (req, res, next) => next(),
     roleStore: mockRoleStore,
     fieldStore,
+    teamStore,
     registerScopes: vi.fn(),
     registerMessageProvider(id, fn) {
       capturedProvider = { id, fn }

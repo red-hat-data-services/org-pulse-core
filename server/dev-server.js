@@ -342,6 +342,11 @@ async function startServer(options = {}) {
   }
   const fieldStore = createFieldStore(storageModule, fieldStoreOpts);
 
+  // ─── Team Store ───
+
+  const { createTeamStore } = require('../shared/server/team-store');
+  const teamStore = createTeamStore(storageModule);
+
   // ─── Swagger UI (before auth) ───
 
   const { createOpenApiSpec } = require('./openapi-config');
@@ -476,7 +481,7 @@ async function startServer(options = {}) {
 
   // ─── Module State ───
 
-  const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, fieldStore, roleRegistry, scopeRegistry, secretRegistry, dbConnection };
+  const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, fieldStore, teamStore, roleRegistry, scopeRegistry, secretRegistry, dbConnection };
   const registries = { diagnostics: diagnosticsRegistry, messages: messageRegistry, refresh: refreshRegistry, exports: exportRegistry, searchIndex: searchIndexRegistry };
 
   const persistedState = await loadModuleState(storageModule);

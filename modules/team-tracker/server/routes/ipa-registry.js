@@ -30,6 +30,7 @@ function registerIpaRegistryRoutes(router, context) {
   var storage = context.storage;
   var requireAdmin = context.requireAdmin;
   var requireScope = context.requireScope;
+  var teamStore = context.teamStore;
   var DEMO_MODE = process.env.DEMO_MODE === 'true';
 
   // Rate limiting state for LDAP search (per user, 5 req / 10s)
@@ -177,8 +178,7 @@ function registerIpaRegistryRoutes(router, context) {
 
     var teamIdToName = {};
     if (registryInAppMode) {
-      var teamStore = require('../../../../shared/server/team-store');
-      var structureData = await teamStore.readTeams(storage);
+      var structureData = await teamStore.readTeams();
       for (var tid of Object.keys(structureData.teams)) {
         teamIdToName[tid] = structureData.teams[tid].name;
       }

@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest'
  * and team-store functions with mock storage, verifying response shapes.
  */
 const { createFieldStore } = require('../../../../shared/server/field-store')
-const teamStore = require('../../../../shared/server/team-store')
+const { createTeamStore } = require('../../../../shared/server/team-store')
 
 function makeStorage(initial = {}) {
   const data = { ...initial }
@@ -145,7 +145,8 @@ describe('field routes (handler-level)', () => {
         'team', { field_tf1: 'Active' }, {}
       )
 
-      const result = await teamStore.updateTeamFields(storage, 'team_abc', validated, 'admin@test.com')
+      const teamStore = createTeamStore(storage)
+      const result = await teamStore.updateTeamFields('team_abc', validated, 'admin@test.com')
       // Simulate what the route handler does: extract metadata
       const response = { ...(result.metadata || {}) }
       if (warnings.length > 0) response._warnings = warnings
