@@ -1,6 +1,8 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
+import mongoose from 'mongoose'
 
 const { createTeamStore, extractBoardId } = require('../team-store');
+const { teamSchema } = require('../models/team');
 
 function createMockStorage(initialData = {}) {
   const store = {};
@@ -341,5 +343,270 @@ describe('updateTeamBoards', () => {
     expect(log.entries[0].action).toBe('team.boards.update');
     expect(log.entries[0].newValue[0].boardId).toBe(123);
     expect(log.entries[0].newValue[0].sprintFilter).toBe('Backend');
+  });
+});
+
+// ─── MongoDB-backed tests ───
+
+describe('team-store (MongoDB)', () => {
+  let connection;
+  let TeamModel;
+  const dbName = 'test_teams_' + process.pid;
+
+  beforeAll(async () => {
+    const uri = process.env.MONGODB_URI;
+    if (!uri) return;
+    connection = await mongoose.createConnection(uri, { dbName });
+    TeamModel = connection.model('core__teams', teamSchema, 'core__teams');
+  });
+
+  afterAll(async () => {
+    if (connection) {
+      await connection.db.dropDatabase();
+      await connection.close();
+    }
+  });
+
+  beforeEach(async () => {
+    if (TeamModel) await TeamModel.deleteMany({});
+  });
+
+  function makeMongoStore() {
+    if (!TeamModel) return null;
+    const storage = createMockStorage({});
+    const teamStore = createTeamStore(storage, { model: TeamModel });
+    return { teamStore, storage };
+  }
+
+  it.skipIf(!process.env.MONGODB_URI)('creates and reads a team', async () => {
+    const result = makeMongoStore();
+    if (!result) return;
+    const { teamStore } = result;
+
+    const team = await teamStore.createTeam('Platform', 'achen', 'admin@example.com');
+    expect(team.id).toMatch(/^team_[a-f0-9]{6}$/);
+    expect(team.name).toBe('Platform');
+    expect(team.orgKey).toBe('achen');
+    expect(team.metadata).toEqual({});
+    expect(team.boards).toEqual([]);
+
+    const data = await teamStore.readTeams();
+    expect(data.teams[team.id]).toBeTruthy();
+    expect(data.teams[team.id].name).toBe('Platform');
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('renames a team', async () => {
+    const result = makeMongoStore();
+    if (!result) return;
+    const { teamStore } = result;
+
+    const team = await teamStore.createTeam('Old', 'achen', 'admin@example.com');
+    const renamed = await teamStore.renameTeam(team.id, 'New', 'admin@example.com');
+    expect(renamed.name).toBe('New');
+
+    const data = await teamStore.readTeams();
+    expect(data.teams[team.id].name).toBe('New');
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('returns null renaming a non-existent team', async () => {
+    const result = makeMongoStore();
+    if (!result) return;
+    const { teamStore } = result;
+    expect(await teamStore.renameTeam('team_missing', 'New', 'admin@example.com')).toBeNull();
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('updates a team description', async () => {
+    const result = makeMongoStore();
+    if (!result) return;
+    const { teamStore } = result;
+
+    const team = await teamStore.createTeam('Platform', 'achen', 'admin@example.com');
+    const updated = await teamStore.updateTeamDescription(team.id, 'Backend services', 'admin@example.com');
+    expect(updated.description).toBe('Backend services');
+
+    const data = await teamStore.readTeams();
+    expect(data.teams[team.id].description).toBe('Backend services');
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('deletes a team', async () => {
+    const result = makeMongoStore();
+    if (!result) return;
+    const { teamStore } = result;
+
+    const team = await teamStore.createTeam('Platform', 'achen', 'admin@example.com');
+    const deleted = await teamStore.deleteTeam(team.id, 'admin@example.com');
+    expect(deleted).toEqual({ id: team.id, name: 'Platform' });
+
+    const data = await teamStore.readTeams();
+    expect(data.teams[team.id]).toBeUndefined();
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('writeTeams throws on the MongoDB path', async () => {
+    const result = makeMongoStore();
+    if (!result) return;
+    const { teamStore } = result;
+    await expect(teamStore.writeTeams({ teams: {} })).rejects.toThrow(/not supported/);
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('regenerates the team ID and retries on a duplicate key error', async () => {
+    const result = makeMongoStore();
+    if (!result) return;
+    const { teamStore } = result;
+
+    // Force the first generated id to collide with a pre-existing team.
+    await TeamModel.create({
+      teamId: 'team_aaaaaa',
+      name: 'Existing',
+      orgKey: 'achen',
+      metadata: {},
+      boards: []
+    });
+
+    const crypto = require('crypto');
+    const spy = vi.spyOn(crypto, 'randomBytes')
+      .mockReturnValueOnce(Buffer.from('aaaaaa', 'hex')) // initial id -> collides
+      .mockReturnValueOnce(Buffer.from('bbbbbb', 'hex')); // retry -> succeeds
+
+    try {
+      const team = await teamStore.createTeam('New Team', 'achen', 'admin@example.com');
+      expect(team.id).toBe('team_bbbbbb');
+    } finally {
+      spy.mockRestore();
+    }
+
+    const count = await TeamModel.countDocuments({});
+    expect(count).toBe(2);
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('assignMember reads the team from MongoDB and writes the registry file', async () => {
+    const result = makeMongoStore();
+    if (!result) return;
+    const { teamStore, storage } = result;
+
+    const team = await teamStore.createTeam('Platform', 'achen', 'admin@example.com');
+    storage._store['team-data/registry.json'] = {
+      people: { achen: { uid: 'achen', name: 'Alice Chen', teamIds: [] } }
+    };
+
+    const res = await teamStore.assignMember(team.id, 'achen', 'admin@example.com');
+    expect(res).toEqual({ assigned: true });
+
+    const reg = await storage.readFromStorage('team-data/registry.json');
+    expect(reg.people.achen.teamIds).toEqual([team.id]);
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('assignMember returns an error when the team is not in MongoDB', async () => {
+    const result = makeMongoStore();
+    if (!result) return;
+    const { teamStore, storage } = result;
+    storage._store['team-data/registry.json'] = {
+      people: { achen: { uid: 'achen', name: 'Alice Chen', teamIds: [] } }
+    };
+
+    const res = await teamStore.assignMember('team_missing', 'achen', 'admin@example.com');
+    expect(res).toEqual({ error: 'Team not found' });
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('unassignMember reads the team from MongoDB and writes the registry file', async () => {
+    const result = makeMongoStore();
+    if (!result) return;
+    const { teamStore, storage } = result;
+
+    const team = await teamStore.createTeam('Platform', 'achen', 'admin@example.com');
+    storage._store['team-data/registry.json'] = {
+      people: { achen: { uid: 'achen', name: 'Alice Chen', teamIds: [team.id] } }
+    };
+
+    const res = await teamStore.unassignMember(team.id, 'achen', 'admin@example.com');
+    expect(res).toEqual({ unassigned: true });
+
+    const reg = await storage.readFromStorage('team-data/registry.json');
+    expect(reg.people.achen.teamIds).toEqual([]);
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('only one of two concurrent deleteTeam calls reports success', async () => {
+    const result = makeMongoStore();
+    if (!result) return;
+    const { teamStore, storage } = result;
+
+    const team = await teamStore.createTeam('Platform', 'achen', 'admin@example.com');
+    storage._store['team-data/registry.json'] = { people: {} };
+
+    const [a, b] = await Promise.all([
+      teamStore.deleteTeam(team.id, 'admin@example.com'),
+      teamStore.deleteTeam(team.id, 'admin@example.com')
+    ]);
+
+    // Exactly one caller removed the document; the other must report null,
+    // as the file path does for a team that is already gone.
+    expect([a, b].filter(Boolean)).toHaveLength(1);
+    expect([a, b].filter(Boolean)[0]).toEqual({ id: team.id, name: 'Platform' });
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('concurrent updateTeamFields calls on different fields do not clobber each other', async () => {
+    const result = makeMongoStore();
+    if (!result) return;
+    const { teamStore } = result;
+
+    const team = await teamStore.createTeam('Platform', 'achen', 'admin@example.com');
+
+    // Both calls read the team, then write. If the write replaced the whole
+    // metadata object, the slower writer would drop the other one's field.
+    await Promise.all([
+      teamStore.updateTeamFields(team.id, { field_a: 'A' }, 'admin@example.com'),
+      teamStore.updateTeamFields(team.id, { field_b: 'B' }, 'admin@example.com')
+    ]);
+
+    const data = await teamStore.readTeams();
+    expect(data.teams[team.id].metadata).toEqual({ field_a: 'A', field_b: 'B' });
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('updateTeamFields with no fields leaves the team unchanged', async () => {
+    const result = makeMongoStore();
+    if (!result) return;
+    const { teamStore } = result;
+
+    const team = await teamStore.createTeam('Platform', 'achen', 'admin@example.com');
+    await teamStore.updateTeamFields(team.id, { field_a: 'A' }, 'admin@example.com');
+
+    const unchanged = await teamStore.updateTeamFields(team.id, {}, 'admin@example.com');
+    expect(unchanged.metadata).toEqual({ field_a: 'A' });
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('deleteTeam cleans registry references before deleting the team document', async () => {
+    const result = makeMongoStore();
+    if (!result) return;
+    const { teamStore, storage } = result;
+
+    const team = await teamStore.createTeam('Platform', 'achen', 'admin@example.com');
+    storage._store['team-data/registry.json'] = {
+      people: { achen: { uid: 'achen', name: 'Alice Chen', teamIds: [team.id] } }
+    };
+
+    const callOrder = [];
+    const originalWrite = storage.writeToStorage.bind(storage);
+    storage.writeToStorage = async (key, data) => {
+      if (key === 'team-data/registry.json') callOrder.push('registry-write');
+      return originalWrite(key, data);
+    };
+    const originalDeleteOne = TeamModel.deleteOne.bind(TeamModel);
+    const deleteOneSpy = vi.spyOn(TeamModel, 'deleteOne').mockImplementation(async (...args) => {
+      callOrder.push('team-delete');
+      return originalDeleteOne(...args);
+    });
+
+    try {
+      await teamStore.deleteTeam(team.id, 'admin@example.com');
+    } finally {
+      deleteOneSpy.mockRestore();
+    }
+
+    expect(callOrder).toEqual(['registry-write', 'team-delete']);
+
+    const reg = await storage.readFromStorage('team-data/registry.json');
+    expect(reg.people.achen.teamIds).toEqual([]);
+
+    const data = await teamStore.readTeams();
+    expect(data.teams[team.id]).toBeUndefined();
   });
 });

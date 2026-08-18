@@ -345,7 +345,12 @@ async function startServer(options = {}) {
   // ─── Team Store ───
 
   const { createTeamStore } = require('../shared/server/team-store');
-  const teamStore = createTeamStore(storageModule);
+  const teamStoreOpts = {};
+  if (dbConnection) {
+    const { teamSchema } = require('../shared/server/models/team');
+    teamStoreOpts.model = dbConnection.model('core__teams', teamSchema, 'core__teams');
+  }
+  const teamStore = createTeamStore(storageModule, teamStoreOpts);
 
   // ─── Swagger UI (before auth) ───
 
