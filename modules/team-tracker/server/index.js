@@ -1065,7 +1065,9 @@ module.exports = async function registerRoutes(router, context) {
     const { name, orgKey } = req.body;
     if (!name || !orgKey) return res.status(400).json({ error: 'name and orgKey are required' });
     if (typeof name !== 'string' || name.length > 100) return res.status(400).json({ error: 'name must be a string of 100 characters or fewer' });
-    const team = await contextTeamStore.createTeam(name.trim(), orgKey, req.auditActor);
+    const trimmedName = name.trim();
+    if (!trimmedName) return res.status(400).json({ error: 'name cannot be blank' });
+    const team = await contextTeamStore.createTeam(trimmedName, orgKey, req.auditActor);
     await rebuildManagerMap();
     res.status(201).json(team);
   });
@@ -1093,7 +1095,9 @@ module.exports = async function registerRoutes(router, context) {
     const { name } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
     if (typeof name !== 'string' || name.length > 100) return res.status(400).json({ error: 'name must be a string of 100 characters or fewer' });
-    const team = await contextTeamStore.renameTeam(req.params.teamId, name.trim(), req.auditActor);
+    const trimmedName = name.trim();
+    if (!trimmedName) return res.status(400).json({ error: 'name cannot be blank' });
+    const team = await contextTeamStore.renameTeam(req.params.teamId, trimmedName, req.auditActor);
     if (!team) return res.status(404).json({ error: 'Team not found' });
     res.json(team);
   });
