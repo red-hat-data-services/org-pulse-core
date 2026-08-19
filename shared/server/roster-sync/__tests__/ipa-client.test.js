@@ -133,6 +133,41 @@ describe('searchPeople', () => {
     expect(filter).toContain('a\\2ab\\28c\\29')
     expect(filter).not.toContain('a*b(c)')
   })
+
+  it('returns partial results on SizeLimitExceededError', async () => {
+    var entries = [
+      { uid: 'jdoe', cn: 'John Doe', mail: 'jdoe@test.com', title: 'Engineer' },
+      { uid: 'jsmith', cn: 'Jane Smith', mail: 'jsmith@test.com', title: 'Manager' }
+    ]
+    var client = {
+      search: vi.fn(function(_baseDn, _opts, cb) {
+        var events = {}
+        cb(null, {
+          on: function(event, handler) {
+            events[event] = handler
+            if (event === 'end') {
+              setTimeout(function() {
+                for (var i = 0; i < entries.length; i++) {
+                  events.searchEntry({
+                    attributes: Object.keys(entries[i]).map(function(k) {
+                      return { type: k, values: [entries[i][k]] }
+                    })
+                  })
+                }
+                var err = new Error('Size Limit Exceeded')
+                err.name = 'SizeLimitExceededError'
+                events.error(err)
+              }, 0)
+            }
+          }
+        })
+      })
+    }
+    var results = await searchPeople(client, 'dc=test', 'j', 2)
+    expect(results).toHaveLength(2)
+    expect(results[0].uid).toBe('jdoe')
+    expect(results[1].uid).toBe('jsmith')
+  })
 })
 
 describe('extractAllGithubCandidates', () => {

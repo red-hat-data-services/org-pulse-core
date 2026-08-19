@@ -156,7 +156,11 @@ function searchEntries(client, baseDn, filter, attrs, options) {
         entries.push(obj);
       });
       res.on('error', function(err) {
-        reject(err);
+        if (err.name === 'SizeLimitExceededError') {
+          resolve(entries);
+        } else {
+          reject(err);
+        }
       });
       res.on('end', function() {
         resolve(entries);
