@@ -62,6 +62,10 @@
               <span v-html="highlightMatch(formatLabel(item))" />
               <span class="scope-chip-btn inline-flex items-center px-1.5 py-0.5 ml-1.5 text-[10px] font-medium rounded-md align-middle leading-none">Module</span>
             </span>
+            <span v-else-if="item.avatarSrc" class="text-gray-700 inline-flex items-center">
+              <img :src="item.avatarSrc" :alt="item.label" class="w-4 h-4 mr-2 rounded-full flex-shrink-0" />
+              <span v-html="highlightMatch(formatLabel(item))" />
+            </span>
             <span v-else class="text-gray-700" v-html="highlightMatch(formatLabel(item))" />
             <span v-if="item.matchedKeyword" class="text-gray-400 text-xs ml-1.5" v-html="'— ' + highlightMatch(truncateAroundMatch(item.matchedKeyword))" />
           </span>
@@ -138,6 +142,21 @@ function setItemRef(el, index) {
   if (el) itemRefs[index] = el
 }
 
+const pinnedItems = computed(() => {
+  const items = []
+  if (props.manifests.some(m => m.slug === 'chatbot')) {
+    items.push({
+      type: 'action',
+      id: 'open-ai-assistant',
+      label: 'AI Assistant',
+      sublabel: 'Ask about your team\'s data',
+      avatarSrc: '/bot-avatar.png',
+      keywords: ['ai', 'assistant', 'chat', 'chatbot', 'bot', 'ask']
+    })
+  }
+  return items
+})
+
 const {
   searchQuery,
   selectedIndex,
@@ -157,7 +176,8 @@ const {
   isManager: computed(() => props.isManager),
   roles: computed(() => props.roles),
   teamDataSource: computed(() => props.teamDataSource),
-  searchIndexItems: computed(() => props.searchIndexItems)
+  searchIndexItems: computed(() => props.searchIndexItems),
+  pinnedItems
 })
 
 function escapeHtml(text) {

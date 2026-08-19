@@ -623,6 +623,7 @@ export default {
       else if (actionId === 'go-about') window.location.hash = '#/about'
       else if (actionId === 'go-home') window.location.hash = '#/'
       else if (actionId === 'go-api-tokens') window.location.hash = '#/api-tokens'
+      else if (actionId === 'open-ai-assistant') window.dispatchEvent(new CustomEvent('open-ai-assistant'))
     },
 
     async fetchSearchIndex() {

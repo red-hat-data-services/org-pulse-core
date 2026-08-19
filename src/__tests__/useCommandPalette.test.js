@@ -65,7 +65,8 @@ function createPalette(overrides = {}) {
     isManager: ref(overrides.isManager ?? false),
     roles: ref(overrides.roles ?? []),
     teamDataSource: ref(overrides.teamDataSource ?? ''),
-    searchIndexItems: ref(overrides.searchIndexItems ?? [])
+    searchIndexItems: ref(overrides.searchIndexItems ?? []),
+    pinnedItems: ref(overrides.pinnedItems ?? [])
   })
 }
 
@@ -979,6 +980,57 @@ describe('useCommandPalette', () => {
       const viewIds = moduleSearch.map(r => r.viewId)
       expect(viewIds).toContain('home')
       expect(viewIds).toContain('people')
+    })
+  })
+
+  describe('pinned items', () => {
+    beforeEach(() => {
+      localStorage.removeItem('orgpulse_search_history')
+    })
+
+    const AI_PINNED = {
+      type: 'action',
+      id: 'open-ai-assistant',
+      label: 'AI Assistant',
+      sublabel: 'Ask about your team\'s data',
+      avatarSrc: '/bot-avatar.png',
+      keywords: ['ai', 'assistant', 'chat', 'chatbot', 'bot', 'ask']
+    }
+
+    it('pinned items appear first when query is empty', () => {
+      const { filteredResults } = createPalette({ pinnedItems: [AI_PINNED] })
+      expect(filteredResults.value.length).toBe(1)
+      expect(filteredResults.value[0].id).toBe('open-ai-assistant')
+      expect(filteredResults.value[0].label).toBe('AI Assistant')
+    })
+
+    it('pinned items appear before history when query is empty', () => {
+      localStorage.removeItem('orgpulse_search_history')
+      const { saveQuery, filteredResults } = createPalette({ pinnedItems: [AI_PINNED] })
+      saveQuery('people')
+      saveQuery('teams')
+      expect(filteredResults.value[0].id).toBe('open-ai-assistant')
+      expect(filteredResults.value[1].type).toBe('history')
+      expect(filteredResults.value[1].label).toBe('teams')
+    })
+
+    it('pinned items are searchable by keywords', () => {
+      const { searchQuery, filteredResults } = createPalette({ pinnedItems: [AI_PINNED] })
+      searchQuery.value = 'chat'
+      const match = filteredResults.value.find(r => r.id === 'open-ai-assistant')
+      expect(match).toBeDefined()
+    })
+
+    it('pinned items are searchable by label', () => {
+      const { searchQuery, filteredResults } = createPalette({ pinnedItems: [AI_PINNED] })
+      searchQuery.value = 'ai assistant'
+      const match = filteredResults.value.find(r => r.id === 'open-ai-assistant')
+      expect(match).toBeDefined()
+    })
+
+    it('no pinned items when pinnedItems is empty', () => {
+      const { filteredResults } = createPalette({ pinnedItems: [] })
+      expect(filteredResults.value).toEqual([])
     })
   })
 

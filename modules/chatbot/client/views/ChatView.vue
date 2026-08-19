@@ -182,7 +182,7 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { useChat } from '../composables/useChat.js'
@@ -226,6 +226,18 @@ function toggleTrace(index) {
 function toggleChat() {
   open.value = !open.value
 }
+
+function handleOpenFromPalette() {
+  open.value = true
+}
+
+onMounted(() => {
+  window.addEventListener('open-ai-assistant', handleOpenFromPalette)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('open-ai-assistant', handleOpenFromPalette)
+})
 
 function handleSubmit() {
   if (!input.value.trim() || isStreaming.value) return
