@@ -94,7 +94,7 @@ function persistHistory(history, scope) {
   try { localStorage.setItem(historyKey(scope), JSON.stringify(history)) } catch { /* storage unavailable */ }
 }
 
-export function useCommandPalette({ manifests, isAdmin, roles, isTeamAdmin, isManager, teamDataSource, searchIndexItems }) {
+export function useCommandPalette({ manifests, isAdmin, roles, isTeamAdmin, isManager, teamDataSource, searchIndexItems, pinnedItems }) {
   const searchQuery = ref('')
   const selectedIndex = ref(0)
   const searchHistory = ref(loadHistory())
@@ -153,8 +153,10 @@ export function useCommandPalette({ manifests, isAdmin, roles, isTeamAdmin, isMa
     keywords: []
   }))
 
+  const resolvedPinnedItems = computed(() => pinnedItems?.value ?? pinnedItems ?? [])
+
   const allItems = computed(() => {
-    return [...pageItems.value, ...discoveredItems, ...dataItems.value, ...ACTIONS]
+    return [...resolvedPinnedItems.value, ...pageItems.value, ...discoveredItems, ...dataItems.value, ...ACTIONS]
   })
 
   const searchCapableViews = computed(() => {
@@ -250,7 +252,7 @@ export function useCommandPalette({ manifests, isAdmin, roles, isTeamAdmin, isMa
 
     const q = searchQuery.value.trim()
     if (!q) {
-      return buildHistoryItems(searchHistory.value)
+      return [...resolvedPinnedItems.value, ...buildHistoryItems(searchHistory.value)]
     }
 
     const searchQ = q
