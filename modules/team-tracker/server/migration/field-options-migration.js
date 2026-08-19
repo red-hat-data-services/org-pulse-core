@@ -9,8 +9,6 @@
  */
 
 const fieldOptionsStore = require('../field-options-store');
-const { createFieldStore } = require('../../../../shared/server/field-store');
-const { createTeamStore } = require('../../../../shared/server/team-store');
 const { appendAuditEntry } = require('../../../../shared/server/audit-log');
 
 const REGISTRY_KEY = 'team-data/registry.json';
@@ -19,12 +17,15 @@ const REGISTRY_KEY = 'team-data/registry.json';
  * Preview what a migration would do without executing it.
  * @param {object} storage
  * @param {string} sourceFieldId - The field definition ID to extract values from
+ * @param {object} stores - Store instances shared with the rest of the app (required)
+ * @param {object} stores.fieldStore - Field store instance from the module context
+ * @param {object} stores.teamStore - Team store instance from the module context
  * @returns {{ field, scope, uniqueValues, recordCount } | { error }}
  */
-async function previewMigration(storage, sourceFieldId) {
-  const fieldStore = createFieldStore(storage);
-  // TODO(mongodb-migration): accept an injected store so this uses the same backend as the app
-  const teamStore = createTeamStore(storage);
+async function previewMigration(storage, sourceFieldId, { fieldStore, teamStore } = {}) {
+  if (!fieldStore || !teamStore) {
+    throw new Error('previewMigration requires an injected fieldStore and teamStore (from context) — do not construct file-backed stores here');
+  }
   const fieldDefs = await fieldStore.readFieldDefinitions();
 
   // Find the source field in either scope
@@ -90,12 +91,15 @@ async function previewMigration(storage, sourceFieldId) {
  * @param {string} [params.counterpartLabel] - Label for the counterpart field
  * @param {boolean} [params.seedFromMembers] - Seed counterpart team field from person members
  * @param {string} actorEmail
+ * @param {object} stores - Store instances shared with the rest of the app (required)
+ * @param {object} stores.fieldStore - Field store instance from the module context
+ * @param {object} stores.teamStore - Team store instance from the module context
  */
-async function executeMigration(storage, params, actorEmail) {
+async function executeMigration(storage, params, actorEmail, { fieldStore, teamStore } = {}) {
+  if (!fieldStore || !teamStore) {
+    throw new Error('executeMigration requires an injected fieldStore and teamStore (from context) — do not construct file-backed stores here');
+  }
   const { sourceFieldId, optionSetName, optionSetLabel, createCounterpart, counterpartLabel, seedFromMembers } = params;
-  const fieldStore = createFieldStore(storage);
-  // TODO(mongodb-migration): accept an injected store so this uses the same backend as the app
-  const teamStore = createTeamStore(storage);
 
   // Validate option set doesn't already exist
   const existing = await fieldOptionsStore.readFieldOptions(storage, optionSetName);
@@ -104,7 +108,7 @@ async function executeMigration(storage, params, actorEmail) {
   }
 
   // Preview to get values and validate
-  const preview = await previewMigration(storage, sourceFieldId);
+  const preview = await previewMigration(storage, sourceFieldId, { fieldStore, teamStore });
   if (preview.error) return preview;
 
   const summary = {
@@ -144,7 +148,9 @@ async function executeMigration(storage, params, actorEmail) {
         summary.valuesConverted = converted;
       }
     }
-  } else {
+  } else if (!teamStore.usesDatabase) {
+    // File path: unchanged from pre-migration behavior. Do not "improve" this —
+    // it is the production code path and must stay byte-for-byte identical.
     const teamsData = await teamStore.readTeams();
     let converted = 0;
     for (const team of Object.values(teamsData.teams || {})) {
@@ -156,6 +162,31 @@ async function executeMigration(storage, params, actorEmail) {
     }
     if (converted > 0) {
       await storage.writeToStorage('team-data/teams.json', teamsData);
+      summary.valuesConverted = converted;
+    }
+  } else {
+    // MongoDB path: the same wholesale-blob write above would silently lose
+    // this update, since teamStore.writeTeams() throws when a model is present
+    // (see team-store.js). Route the conversion through the store's own
+    // per-field mutation instead, one team at a time.
+    //
+    // This appends one team.field.update audit entry per converted team,
+    // which the file path above does not do (that path only gets the single
+    // migration.field-to-options entry appended at the end of this function).
+    // That divergence is deliberate and confined to the database path: see
+    // team-store.js's deleteTeam for the established precedent of documenting
+    // an intentional MongoDB-vs-file behavior difference rather than forcing
+    // parity that the underlying storage model can't support.
+    const teamsData = await teamStore.readTeams();
+    let converted = 0;
+    for (const [teamId, team] of Object.entries(teamsData.teams || {})) {
+      const val = team.metadata?.[sourceFieldId];
+      if (val != null && typeof val === 'string') {
+        await teamStore.updateTeamFields(teamId, { [sourceFieldId]: [val.trim()] }, actorEmail);
+        converted++;
+      }
+    }
+    if (converted > 0) {
       summary.valuesConverted = converted;
     }
   }

@@ -2032,7 +2032,7 @@ module.exports = async function registerRoutes(router, context) {
       const config = await rosterSyncConfig.loadConfig(storage);
       if (!config) return res.status(400).json({ error: 'No config found' });
       const fieldOverrides = req.body?.fieldOverrides || null;
-      const result = await migrateToInApp(storage, config, req.auditActor, fieldOverrides);
+      const result = await migrateToInApp(storage, config, req.auditActor, fieldOverrides, { fieldStore: contextFieldStore, teamStore: contextTeamStore });
       if (result.migrated) {
         config._migratedToInApp = new Date().toISOString();
         await rosterSyncConfig.saveConfig(storage, config);
@@ -2072,7 +2072,7 @@ module.exports = async function registerRoutes(router, context) {
       if (!fieldId || typeof fieldId !== 'string') {
         return res.status(400).json({ error: 'fieldId query parameter is required' });
       }
-      const result = await fieldOptionsMigration.previewMigration(storage, fieldId);
+      const result = await fieldOptionsMigration.previewMigration(storage, fieldId, { fieldStore: contextFieldStore, teamStore: contextTeamStore });
       if (result.error) return res.status(400).json({ error: result.error });
       res.json(result);
     } catch (err) {
@@ -2104,7 +2104,7 @@ module.exports = async function registerRoutes(router, context) {
       }
       const result = await fieldOptionsMigration.executeMigration(storage, {
         sourceFieldId, optionSetName, optionSetLabel, createCounterpart, counterpartLabel, seedFromMembers
-      }, req.auditActor);
+      }, req.auditActor, { fieldStore: contextFieldStore, teamStore: contextTeamStore });
       if (result.error) return res.status(400).json({ error: result.error });
       res.json(result);
     } catch (err) {

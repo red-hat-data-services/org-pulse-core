@@ -820,7 +820,8 @@ function createTeamStore(storage, options = {}) {
     unassignMember,
     getUnassigned,
     updateTeamFields,
-    updateTeamBoards
+    updateTeamBoards,
+    usesDatabase: !!Model
   };
 }
 
@@ -829,6 +830,8 @@ module.exports = {
   extractBoardId,
   generateTeamId,
   MAX_DESCRIPTION_LENGTH,
+  MAX_BOARDS,
+  MAX_URL_LENGTH,
   TEAMS_KEY,
   REGISTRY_KEY
 };

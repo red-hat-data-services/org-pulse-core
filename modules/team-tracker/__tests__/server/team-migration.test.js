@@ -1,6 +1,11 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest'
+import mongoose from 'mongoose'
 
 const { buildTeamMap, migrateToInApp, previewMigration } = require('../../../../shared/server/team-migration')
+const { createFieldStore, MAX_ALLOWED_VALUES, MAX_ALLOWED_VALUE_LENGTH } = require('../../../../shared/server/field-store')
+const { createTeamStore, MAX_URL_LENGTH } = require('../../../../shared/server/team-store')
+const { teamSchema } = require('../../../../shared/server/models/team')
+const { fieldDefinitionSchema } = require('../../../../shared/server/models/field-definition')
 
 function makeStorage(initial = {}) {
   const data = { ...initial }
@@ -16,6 +21,10 @@ function makeStorage(initial = {}) {
   }
 }
 
+function makeStores(storage) {
+  return { fieldStore: createFieldStore(storage), teamStore: createTeamStore(storage) }
+}
+
 function baseRegistry() {
   return {
     meta: { generatedAt: '2026-01-01T00:00:00.000Z', provider: 'test', orgRoots: ['org1'] },
@@ -25,6 +34,23 @@ function baseRegistry() {
       carol: { uid: 'carol', name: 'Carol Davis', status: 'active', orgRoot: 'org1', _teamGrouping: 'Serving', productManager: 'Eve White' },
       dave: { uid: 'dave', name: 'Dave Lee', status: 'active', orgRoot: 'org1', _teamGrouping: 'Serving', productManager: 'Eve White' },
       eve: { uid: 'eve', name: 'Eve White', status: 'active', orgRoot: 'org1', _teamGrouping: 'Platform,Serving', productManager: 'Eve White' }
+    }
+  }
+}
+
+// Registry ordered so buildTeamMap's Map iterates "Alpha" before "Beta"
+// (insertion order follows Object.entries(registry.people) order). Alpha has
+// a single distinct value for the `focus` field; Beta has two — so a
+// team-scoped free-text field gets auto-promoted to multiValue partway
+// through the per-team rollup, exercising the file-vs-database divergence
+// documented in migrateToInAppDatabase's docblock.
+function orderedFixtureRegistry() {
+  return {
+    meta: { generatedAt: '2026-01-01T00:00:00.000Z', provider: 'test', orgRoots: ['org1'] },
+    people: {
+      alphaPerson: { uid: 'alphaPerson', name: 'Alpha Person', status: 'active', orgRoot: 'org1', _teamGrouping: 'Alpha', focus: 'X' },
+      betaPerson1: { uid: 'betaPerson1', name: 'Beta One', status: 'active', orgRoot: 'org1', _teamGrouping: 'Beta', focus: 'Y' },
+      betaPerson2: { uid: 'betaPerson2', name: 'Beta Two', status: 'active', orgRoot: 'org1', _teamGrouping: 'Beta', focus: 'Z' }
     }
   }
 }
@@ -157,7 +183,7 @@ describe('migrateToInApp', () => {
     const registry = baseRegistry()
     const storage = makeMigrationStorage(registry)
     const config = { teamStructure: { customFields: [] } }
-    const result = await migrateToInApp(storage, config, 'admin@test.com', [])
+    const result = await migrateToInApp(storage, config, 'admin@test.com', [], makeStores(storage))
 
     expect(result.migrated).toBe(true)
     expect(result.teams).toBe(2)
@@ -167,11 +193,35 @@ describe('migrateToInApp', () => {
     expect(Object.keys(teams).length).toBe(2)
   })
 
+  it('throws when fieldStore/teamStore are not injected', async () => {
+    const registry = baseRegistry()
+    const storage = makeMigrationStorage(registry)
+    const config = { teamStructure: { customFields: [] } }
+    await expect(migrateToInApp(storage, config, 'admin@test.com', [])).rejects.toThrow(/requires an injected/)
+  })
+
+  it('reads and writes through the injected teamStore instance rather than a new file-backed store', async () => {
+    const registry = baseRegistry()
+    const storage = makeMigrationStorage(registry)
+    const config = { teamStructure: { customFields: [] } }
+
+    const realTeamStore = createTeamStore(storage)
+    const teamStore = {
+      readTeams: vi.fn((...args) => realTeamStore.readTeams(...args))
+    }
+    const fieldStore = createFieldStore(storage)
+
+    const result = await migrateToInApp(storage, config, 'admin@test.com', [], { fieldStore, teamStore })
+
+    expect(teamStore.readTeams).toHaveBeenCalled()
+    expect(result.migrated).toBe(true)
+  })
+
   it('skips if already migrated', async () => {
     const registry = baseRegistry()
     const storage = makeMigrationStorage(registry)
     const config = { _migratedToInApp: '2026-01-01', teamStructure: { customFields: [] } }
-    const result = await migrateToInApp(storage, config, 'admin@test.com', [])
+    const result = await migrateToInApp(storage, config, 'admin@test.com', [], makeStores(storage))
     expect(result.migrated).toBe(false)
   })
 
@@ -184,7 +234,7 @@ describe('migrateToInApp', () => {
       }
     }
     const overrides = [{ key: 'productManager', type: 'person-reference-linked', multiValue: false, scope: 'team' }]
-    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides)
+    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, makeStores(storage))
 
     expect(result.fields).toBe(1)
 
@@ -211,7 +261,7 @@ describe('migrateToInApp', () => {
       }
     }
     const overrides = [{ key: 'focus', type: 'free-text', multiValue: false, scope: 'team' }]
-    await migrateToInApp(storage, config, 'admin@test.com', overrides)
+    await migrateToInApp(storage, config, 'admin@test.com', overrides, makeStores(storage))
 
     const teams = storage._data['team-data/teams.json'].teams
     const fieldDefs = storage._data['team-data/field-definitions.json']
@@ -232,7 +282,7 @@ describe('migrateToInApp', () => {
       }
     }
     const overrides = [{ key: 'productManager', type: 'person-reference-linked', multiValue: false, scope: 'team' }]
-    await migrateToInApp(storage, config, 'admin@test.com', overrides)
+    await migrateToInApp(storage, config, 'admin@test.com', overrides, makeStores(storage))
 
     const fieldDefs = storage._data['team-data/field-definitions.json']
     // multiValue should be auto-promoted to true
@@ -244,6 +294,31 @@ describe('migrateToInApp', () => {
     expect(Array.isArray(platform.metadata[fieldId])).toBe(true)
   })
 
+  it('leaves earlier teams as a scalar when a later team triggers multiValue promotion (file path quirk)', async () => {
+    const registry = orderedFixtureRegistry()
+    const storage = makeMigrationStorage(registry)
+    const config = { teamStructure: { customFields: [{ key: 'focus', displayLabel: 'Focus' }] } }
+    const overrides = [{ key: 'focus', type: 'free-text', multiValue: false, scope: 'team' }]
+    await migrateToInApp(storage, config, 'admin@test.com', overrides, makeStores(storage))
+
+    const teams = storage._data['team-data/teams.json'].teams
+    const fieldDefs = storage._data['team-data/field-definitions.json']
+    const fieldId = fieldDefs.teamFields[0].id
+
+    // Overall the field ends up promoted...
+    expect(fieldDefs.teamFields[0].multiValue).toBe(true)
+
+    // ...but Alpha was rolled up before Beta triggered the promotion, so it
+    // was left as a plain scalar instead of a one-element array.
+    const alpha = Object.values(teams).find(t => t.name === 'Alpha')
+    expect(alpha.metadata[fieldId]).toBe('X')
+    expect(Array.isArray(alpha.metadata[fieldId])).toBe(false)
+
+    const beta = Object.values(teams).find(t => t.name === 'Beta')
+    expect(Array.isArray(beta.metadata[fieldId])).toBe(true)
+    expect(beta.metadata[fieldId].sort()).toEqual(['Y', 'Z'])
+  })
+
   it('does NOT write to _appFields for team-scoped fields', async () => {
     const registry = baseRegistry()
     const storage = makeMigrationStorage(registry)
@@ -253,7 +328,7 @@ describe('migrateToInApp', () => {
       }
     }
     const overrides = [{ key: 'productManager', type: 'person-reference-linked', multiValue: false, scope: 'team' }]
-    await migrateToInApp(storage, config, 'admin@test.com', overrides)
+    await migrateToInApp(storage, config, 'admin@test.com', overrides, makeStores(storage))
 
     const reg = storage._data['team-data/registry.json']
     const fieldDefs = storage._data['team-data/field-definitions.json']
@@ -276,7 +351,7 @@ describe('migrateToInApp', () => {
       }
     }
     const overrides = [{ key: 'productManager', type: 'person-reference-linked', multiValue: false, scope: 'team' }]
-    await migrateToInApp(storage, config, 'admin@test.com', overrides)
+    await migrateToInApp(storage, config, 'admin@test.com', overrides, makeStores(storage))
 
     const reg = storage._data['team-data/registry.json']
     // Original flat value should still be present
@@ -294,7 +369,7 @@ describe('migrateToInApp', () => {
       }
     })
     const config = { teamStructure: { customFields: [] } }
-    const result = await migrateToInApp(storage, config, 'admin@test.com', [])
+    const result = await migrateToInApp(storage, config, 'admin@test.com', [], makeStores(storage))
 
     // Should create only 1 new team (Serving), not Platform
     expect(result.teams).toBe(1)
@@ -314,7 +389,7 @@ describe('migrateToInApp', () => {
       }
     }
     const overrides = [{ key: 'productManager', type: 'free-text', multiValue: false, scope: 'person' }]
-    await migrateToInApp(storage, config, 'admin@test.com', overrides)
+    await migrateToInApp(storage, config, 'admin@test.com', overrides, makeStores(storage))
 
     // Exactly 1 write each for teams.json, registry.json, field-definitions.json
     expect(storage._writes['team-data/teams.json']).toBe(1)
@@ -339,7 +414,7 @@ describe('migrateToInApp', () => {
         }
       })
       const config = { teamStructure: { customFields: [] } }
-      const result = await migrateToInApp(storage, config, 'admin@test.com', [])
+      const result = await migrateToInApp(storage, config, 'admin@test.com', [], makeStores(storage))
 
       expect(result.boardsMigrated).toBe(3)
 
@@ -363,7 +438,7 @@ describe('migrateToInApp', () => {
         }
       })
       const config = { teamStructure: { customFields: [] } }
-      const result = await migrateToInApp(storage, config, 'admin@test.com', [])
+      const result = await migrateToInApp(storage, config, 'admin@test.com', [], makeStores(storage))
       expect(result.boardsMigrated).toBe(1)
     })
 
@@ -372,7 +447,7 @@ describe('migrateToInApp', () => {
       const storage = makeMigrationStorage(registry)
       // No teams-metadata.json
       const config = { teamStructure: { customFields: [] } }
-      const result = await migrateToInApp(storage, config, 'admin@test.com', [])
+      const result = await migrateToInApp(storage, config, 'admin@test.com', [], makeStores(storage))
       expect(result.boardsMigrated).toBe(0)
     })
 
@@ -388,7 +463,7 @@ describe('migrateToInApp', () => {
         }
       })
       const config = { teamStructure: { customFields: [] } }
-      const result = await migrateToInApp(storage, config, 'admin@test.com', [])
+      const result = await migrateToInApp(storage, config, 'admin@test.com', [], makeStores(storage))
       expect(result.boardsMigrated).toBe(0)
     })
 
@@ -413,7 +488,7 @@ describe('migrateToInApp', () => {
         }
       })
       const config = { teamStructure: { customFields: [] } }
-      const result = await migrateToInApp(storage, config, 'admin@test.com', [])
+      const result = await migrateToInApp(storage, config, 'admin@test.com', [], makeStores(storage))
 
       // Only the two https:// boards should be migrated
       expect(result.boardsMigrated).toBe(2)
@@ -424,4 +499,350 @@ describe('migrateToInApp', () => {
       expect(platform.boards[1].url).toBe('https://jira.example.com/board/2')
     })
   })
+
+  it('regression guard: with file-backed stores, still writes the teams.json and field-definitions.json blobs', async () => {
+    const registry = baseRegistry()
+    const storage = makeMigrationStorage(registry)
+    const config = {
+      teamStructure: {
+        customFields: [{ key: 'productManager', displayLabel: 'PM' }]
+      }
+    }
+    const overrides = [{ key: 'productManager', type: 'free-text', multiValue: false, scope: 'person' }]
+    const stores = makeStores(storage)
+    expect(stores.teamStore.usesDatabase).toBe(false)
+    expect(stores.fieldStore.usesDatabase).toBe(false)
+
+    await migrateToInApp(storage, config, 'admin@test.com', overrides, stores)
+
+    expect(storage._writes['team-data/teams.json']).toBe(1)
+    expect(storage._writes['team-data/field-definitions.json']).toBe(1)
+    expect(storage._writes['team-data/registry.json']).toBe(1)
+  })
+})
+
+// ─── MongoDB-backed migrateToInApp ───
+
+describe('migrateToInApp (MongoDB team + field stores)', () => {
+  let connection
+  let TeamModel
+  let FieldModel
+  const dbName = 'test_team_migration_' + process.pid
+
+  function makeMigrationStorage(registry, extraData = {}) {
+    return makeStorage({
+      'team-data/registry.json': registry,
+      'team-data/config.json': { orgRoots: [{ uid: 'org1', displayName: 'Org One' }] },
+      'audit-log.json': { entries: [] },
+      ...extraData
+    })
+  }
+
+  beforeAll(async () => {
+    const uri = process.env.MONGODB_URI
+    if (!uri) return
+    connection = await mongoose.createConnection(uri, { dbName })
+    TeamModel = connection.model('core__teams', teamSchema, 'core__teams')
+    FieldModel = connection.model('core__field_definitions', fieldDefinitionSchema, 'core__field_definitions')
+  })
+
+  afterAll(async () => {
+    if (connection) {
+      await connection.db.dropDatabase()
+      await connection.close()
+    }
+  })
+
+  beforeEach(async () => {
+    if (TeamModel) await TeamModel.deleteMany({})
+    if (FieldModel) await FieldModel.deleteMany({})
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('creates teams and fields through the stores, never writing the teams.json/field-definitions.json blobs', async () => {
+    const registry = baseRegistry()
+    const storage = makeMigrationStorage(registry)
+    const config = {
+      teamStructure: {
+        customFields: [{ key: 'productManager', displayLabel: 'PM' }]
+      }
+    }
+    const overrides = [{ key: 'productManager', type: 'free-text', multiValue: false, scope: 'team' }]
+
+    const teamStore = createTeamStore(storage, { model: TeamModel })
+    const fieldStore = createFieldStore(storage, { model: FieldModel })
+    expect(teamStore.usesDatabase).toBe(true)
+    expect(fieldStore.usesDatabase).toBe(true)
+
+    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore })
+
+    expect(result.migrated).toBe(true)
+    expect(result.teams).toBe(2)
+    expect(result.fields).toBe(1)
+
+    // Never fell back to the whole-blob writes.
+    expect(storage._data['team-data/teams.json']).toBeUndefined()
+    expect(storage._data['team-data/field-definitions.json']).toBeUndefined()
+    // Registry has no model yet, so it still gets exactly one blob write.
+    expect(storage._writes['team-data/registry.json']).toBe(1)
+
+    const teams = await TeamModel.find({}).lean()
+    expect(teams.map(t => t.name).sort()).toEqual(['Platform', 'Serving'])
+
+    const fields = await FieldModel.find({}).lean()
+    expect(fields).toHaveLength(1)
+    expect(fields[0].scope).toBe('team')
+    expect(fields[0].label).toBe('PM')
+
+    const platform = teams.find(t => t.name === 'Platform')
+    expect(platform.metadata[fields[0].fieldId]).toBeDefined()
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('reuses an existing team found in the database (dedup)', async () => {
+    const registry = baseRegistry()
+    const storage = makeMigrationStorage(registry)
+    await TeamModel.create({ teamId: 'team_exist1', name: 'Platform', orgKey: 'org1', metadata: {}, boards: [], createdAt: '2026-01-01', createdBy: 'admin@test.com' })
+
+    const config = { teamStructure: { customFields: [] } }
+    const teamStore = createTeamStore(storage, { model: TeamModel })
+    const fieldStore = createFieldStore(storage, { model: FieldModel })
+
+    const result = await migrateToInApp(storage, config, 'admin@test.com', [], { fieldStore, teamStore })
+
+    // Only Serving should be newly created; Platform is reused.
+    expect(result.teams).toBe(1)
+    const teams = await TeamModel.find({}).lean()
+    expect(teams).toHaveLength(2)
+    expect(teams.find(t => t.name === 'Platform').teamId).toBe('team_exist1')
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('promotes multiValue consistently across every team, including ones processed before the promotion (divergence from file path)', async () => {
+    const registry = orderedFixtureRegistry()
+    const storage = makeMigrationStorage(registry)
+    const config = { teamStructure: { customFields: [{ key: 'focus', displayLabel: 'Focus' }] } }
+    const overrides = [{ key: 'focus', type: 'free-text', multiValue: false, scope: 'team' }]
+
+    const teamStore = createTeamStore(storage, { model: TeamModel })
+    const fieldStore = createFieldStore(storage, { model: FieldModel })
+
+    await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore })
+
+    const fields = await FieldModel.find({}).lean()
+    expect(fields[0].multiValue).toBe(true)
+    const fieldId = fields[0].fieldId
+
+    const teams = await TeamModel.find({}).lean()
+    const alpha = teams.find(t => t.name === 'Alpha')
+    const beta = teams.find(t => t.name === 'Beta')
+
+    // Unlike the file path, Alpha (rolled up before the promotion) is ALSO
+    // stored as an array — the database path computes every team's values
+    // before creating the field definition.
+    expect(Array.isArray(alpha.metadata[fieldId])).toBe(true)
+    expect(alpha.metadata[fieldId]).toEqual(['X'])
+    expect(beta.metadata[fieldId].sort()).toEqual(['Y', 'Z'])
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('propagates values into person _appFields for person-scoped fields', async () => {
+    const registry = baseRegistry()
+    const storage = makeMigrationStorage(registry)
+    const config = { teamStructure: { customFields: [{ key: 'productManager', displayLabel: 'PM' }] } }
+    const overrides = [{ key: 'productManager', type: 'free-text', multiValue: false, scope: 'person' }]
+
+    const teamStore = createTeamStore(storage, { model: TeamModel })
+    const fieldStore = createFieldStore(storage, { model: FieldModel })
+
+    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore })
+    expect(result.fields).toBe(1)
+
+    const fields = await FieldModel.find({}).lean()
+    expect(fields[0].scope).toBe('person')
+    const fieldId = fields[0].fieldId
+
+    const reg = storage._data['team-data/registry.json']
+    expect(reg.people.alice._appFields[fieldId]).toBe('Bob Smith')
+    expect(reg.people.eve._appFields[fieldId]).toBe('Eve White')
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('does not duplicate field definitions when the migration is re-run (retry idempotency)', async () => {
+    const registry = baseRegistry()
+    const storage = makeMigrationStorage(registry)
+    const config = { teamStructure: { customFields: [{ key: 'productManager', displayLabel: 'PM' }] } }
+    const overrides = [{ key: 'productManager', type: 'free-text', multiValue: false, scope: 'team' }]
+
+    const teamStore = createTeamStore(storage, { model: TeamModel })
+    const fieldStore = createFieldStore(storage, { model: FieldModel })
+
+    const first = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore })
+    expect(first.fields).toBe(1)
+
+    // Simulate a retry: config._migratedToInApp was never persisted (e.g. the
+    // process crashed after Step 2 but before the caller recorded success).
+    const second = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore })
+    expect(second.fields).toBe(0)
+
+    const fields = await FieldModel.find({}).lean()
+    expect(fields).toHaveLength(1)
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('does not abort the migration when a team has a board violating the store limits', async () => {
+    const registry = baseRegistry()
+    const oversizedUrl = 'https://jira.example.com/board?' + 'x'.repeat(MAX_URL_LENGTH)
+    const storage = makeMigrationStorage(registry, {
+      'org-roster/teams-metadata.json': {
+        teams: [
+          { org: 'Org One', name: 'Platform', boardUrls: [oversizedUrl, 'https://jira.example.com/board/2'] },
+          { org: 'Org One', name: 'Serving', boardUrls: ['https://jira.example.com/board/3'] }
+        ],
+        boardNames: {}
+      }
+    })
+    const config = { teamStructure: { customFields: [] } }
+
+    const teamStore = createTeamStore(storage, { model: TeamModel })
+    const fieldStore = createFieldStore(storage, { model: FieldModel })
+
+    const result = await migrateToInApp(storage, config, 'admin@test.com', [], { fieldStore, teamStore })
+
+    // Migration completes for both teams despite Platform's oversized board url.
+    expect(result.migrated).toBe(true)
+    expect(result.teams).toBe(2)
+    expect(result.boardsMigrated).toBe(2)
+
+    const teams = await TeamModel.find({}).lean()
+    const platform = teams.find(t => t.name === 'Platform')
+    expect(platform.boards).toHaveLength(1)
+    expect(platform.boards[0].url).toBe('https://jira.example.com/board/2')
+
+    const serving = teams.find(t => t.name === 'Serving')
+    expect(serving.boards).toHaveLength(1)
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('falls back to free-text when a constrained field has more distinct values than allowedValues permits (F1)', async () => {
+    const people = {}
+    for (let i = 0; i < MAX_ALLOWED_VALUES + 5; i++) {
+      const uid = `p${i}`
+      people[uid] = { uid, name: `Person ${i}`, status: 'active', orgRoot: 'org1', _teamGrouping: 'Platform', dept: `Dept-${i}` }
+    }
+    const registry = { meta: { generatedAt: '2026-01-01T00:00:00.000Z', provider: 'test', orgRoots: ['org1'] }, people }
+    const storage = makeMigrationStorage(registry)
+    const config = { teamStructure: { customFields: [{ key: 'dept', displayLabel: 'Department' }] } }
+    const overrides = [{ key: 'dept', type: 'constrained', multiValue: false, scope: 'person' }]
+
+    const teamStore = createTeamStore(storage, { model: TeamModel })
+    const fieldStore = createFieldStore(storage, { model: FieldModel })
+
+    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore })
+
+    // Migration completes rather than throwing mid-Step-2.
+    expect(result.migrated).toBe(true)
+    expect(result.fields).toBe(1)
+
+    const fields = await FieldModel.find({}).lean()
+    expect(fields[0].type).toBe('free-text')
+    expect(fields[0].allowedValues == null).toBe(true)
+    const fieldId = fields[0].fieldId
+
+    // Every distinct value is preserved on the person records, not truncated.
+    const reg = storage._data['team-data/registry.json']
+    expect(reg.people.p0._appFields[fieldId]).toBe('Dept-0')
+    expect(reg.people.p104._appFields[fieldId]).toBe('Dept-104')
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('falls back to free-text when a constrained field has a value exceeding the max allowed-value length (F1)', async () => {
+    const longValue = 'x'.repeat(MAX_ALLOWED_VALUE_LENGTH + 1)
+    const registry = {
+      meta: { generatedAt: '2026-01-01T00:00:00.000Z', provider: 'test', orgRoots: ['org1'] },
+      people: {
+        alice: { uid: 'alice', name: 'Alice Chen', status: 'active', orgRoot: 'org1', _teamGrouping: 'Platform', dept: longValue },
+        bob: { uid: 'bob', name: 'Bob Smith', status: 'active', orgRoot: 'org1', _teamGrouping: 'Platform', dept: 'Short' }
+      }
+    }
+    const storage = makeMigrationStorage(registry)
+    const config = { teamStructure: { customFields: [{ key: 'dept', displayLabel: 'Department' }] } }
+    const overrides = [{ key: 'dept', type: 'constrained', multiValue: false, scope: 'person' }]
+
+    const teamStore = createTeamStore(storage, { model: TeamModel })
+    const fieldStore = createFieldStore(storage, { model: FieldModel })
+
+    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore })
+    expect(result.migrated).toBe(true)
+
+    const fields = await FieldModel.find({}).lean()
+    expect(fields[0].type).toBe('free-text')
+
+    const reg = storage._data['team-data/registry.json']
+    expect(reg.people.alice._appFields[fields[0].fieldId]).toBe(longValue)
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('does not adopt an admin-created field definition with a colliding label (F2)', async () => {
+    const registry = baseRegistry()
+    const storage = makeMigrationStorage(registry)
+
+    const fieldStore = createFieldStore(storage, { model: FieldModel })
+    const teamStore = createTeamStore(storage, { model: TeamModel })
+
+    // Admin pre-creates a team field labeled "Component" (no sourceKey).
+    const adminField = await fieldStore.createFieldDefinition('team', { label: 'Component', type: 'free-text', multiValue: false }, 'admin@test.com')
+    await TeamModel.create({
+      teamId: 'team_exist1', name: 'Platform', orgKey: 'org1',
+      metadata: { [adminField.id]: 'AdminValue' }, boards: [],
+      createdAt: '2026-01-01', createdBy: 'admin@test.com'
+    })
+
+    const config = { teamStructure: { customFields: [{ key: 'component', displayLabel: 'Component' }] } }
+    const overrides = [{ key: 'component', type: 'free-text', multiValue: false, scope: 'team' }]
+
+    // Give the migrated field data so it actually writes team metadata.
+    registry.people.alice.component = 'Widgets'
+    registry.people.bob.component = 'Widgets'
+
+    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore })
+
+    // A new field definition was created; the admin's was not reused.
+    expect(result.fields).toBe(1)
+    const fields = await FieldModel.find({}).lean()
+    expect(fields).toHaveLength(2)
+    const migratedField = fields.find(f => f.fieldId !== adminField.id)
+    expect(migratedField.sourceKey).toBe('component')
+
+    // The admin's field definition and its team data are untouched.
+    const stillAdminField = fields.find(f => f.fieldId === adminField.id)
+    expect(stillAdminField.sourceKey == null).toBe(true)
+    const platform = await TeamModel.findOne({ teamId: 'team_exist1' }).lean()
+    expect(platform.metadata[adminField.id]).toBe('AdminValue')
+    expect(platform.metadata[migratedField.fieldId]).toBe('Widgets')
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('reuses a migration-created definition\'s own multiValue rather than a freshly recomputed one (F2 point 4)', async () => {
+    const registry = baseRegistry()
+    registry.people.alice.productManager = 'Bob Smith, Eve White'
+    const storage = makeMigrationStorage(registry)
+
+    const fieldStore = createFieldStore(storage, { model: FieldModel })
+    const teamStore = createTeamStore(storage, { model: TeamModel })
+
+    // Simulate a field this migration created on a previous run, but this
+    // time the caller passes multiValue: false in the overrides.
+    const existing = await fieldStore.createFieldDefinition(
+      'person',
+      { label: 'PM', type: 'free-text', multiValue: true, sourceKey: 'productManager' },
+      'admin@test.com'
+    )
+
+    const config = { teamStructure: { customFields: [{ key: 'productManager', displayLabel: 'PM' }] } }
+    const overrides = [{ key: 'productManager', type: 'free-text', multiValue: false, scope: 'person' }]
+
+    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore })
+
+    // No new field created — the sourceKey-tagged one was reused.
+    expect(result.fields).toBe(0)
+    const fields = await FieldModel.find({}).lean()
+    expect(fields).toHaveLength(1)
+
+    // Value shape follows the stored definition's multiValue (true), not
+    // this run's override (false): the comma-delimited value is split.
+    const reg = storage._data['team-data/registry.json']
+    expect(reg.people.alice._appFields[existing.id]).toEqual(['Bob Smith', 'Eve White'])
+  })
+
 })

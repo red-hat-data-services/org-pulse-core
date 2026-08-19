@@ -15,8 +15,8 @@
  * @property {Function} requireRole    - Factory: requireRole(role) returns Express middleware
  * @property {Function} requireScope   - Factory returning Express middleware for API token scope check
  * @property {object} roleStore        - Role store instance (getRole, setRole, etc.)
- * @property {object} fieldStore       - Field store instance (readFieldDefinitions, createFieldDefinition, etc.)
- * @property {object} teamStore        - Team store instance (readTeams, createTeam, etc.)
+ * @property {object} fieldStore       - Field store instance (readFieldDefinitions, createFieldDefinition, etc.; also exposes `usesDatabase: boolean`)
+ * @property {object} teamStore        - Team store instance (readTeams, createTeam, etc.; also exposes `usesDatabase: boolean`)
  * @property {object} [roleRegistry]   - Role registry for registerRole
  * @property {object} [scopeRegistry]  - Scope registry for registerScopes
  * @property {object} [secretRegistry] - Secret registry for module secrets

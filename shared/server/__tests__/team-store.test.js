@@ -346,6 +346,14 @@ describe('updateTeamBoards', () => {
   });
 });
 
+describe('usesDatabase', () => {
+  it('is false when no model is provided', () => {
+    const storage = createMockStorage({});
+    const teamStore = createTeamStore(storage);
+    expect(teamStore.usesDatabase).toBe(false);
+  });
+});
+
 // ─── MongoDB-backed tests ───
 
 describe('team-store (MongoDB)', () => {
@@ -446,6 +454,13 @@ describe('team-store (MongoDB)', () => {
     if (!result) return;
     const { teamStore } = result;
     await expect(teamStore.writeTeams({ teams: {} })).rejects.toThrow(/not supported/);
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('usesDatabase is true when a model is provided', async () => {
+    const result = makeMongoStore();
+    if (!result) return;
+    const { teamStore } = result;
+    expect(teamStore.usesDatabase).toBe(true);
   });
 
   it.skipIf(!process.env.MONGODB_URI)('regenerates the team ID and retries on a duplicate key error', async () => {

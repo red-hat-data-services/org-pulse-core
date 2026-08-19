@@ -4,7 +4,8 @@
  * and teamStructure.customFields config to field-definitions.json with _appFields.
  */
 
-const { REGISTRY_KEY } = require('./team-store');
+const { REGISTRY_KEY, MAX_BOARDS, MAX_URL_LENGTH } = require('./team-store');
+const { validateAllowedValues, MAX_ALLOWED_VALUES, MAX_ALLOWED_VALUE_LENGTH } = require('./field-store');
 const { appendAuditEntry } = require('./audit-log');
 const { mergePerson } = require('./roster-sync/lifecycle');
 
@@ -410,9 +411,16 @@ async function previewMigration(storage, config) {
  * @param {object} config - roster-sync config (must have teamDataSource === 'in-app')
  * @param {string} actorEmail
  * @param {Array<{key: string, type: string, multiValue: boolean, scope?: string}>} [fieldOverrides] - per-field type overrides
+ * @param {object} stores - Store instances shared with the rest of the app (required)
+ * @param {object} stores.fieldStore - Field store instance from the module context
+ * @param {object} stores.teamStore - Team store instance from the module context
  * @returns {{ migrated: boolean, teams: number, fields: number, assignments: number, boardsMigrated: number }}
  */
-async function migrateToInApp(storage, config, actorEmail, fieldOverrides) {
+async function migrateToInApp(storage, config, actorEmail, fieldOverrides, { fieldStore, teamStore } = {}) {
+  if (!fieldStore || !teamStore) {
+    throw new Error('migrateToInApp requires an injected fieldStore and teamStore (from context) — do not construct file-backed stores here');
+  }
+
   // Already migrated — skip
   if (config._migratedToInApp) {
     return { migrated: false, teams: 0, fields: 0, assignments: 0, boardsMigrated: 0 };
@@ -423,14 +431,27 @@ async function migrateToInApp(storage, config, actorEmail, fieldOverrides) {
     return { migrated: false, teams: 0, fields: 0, assignments: 0, boardsMigrated: 0 };
   }
 
+  // dev-server.js wires both stores' `model` option off the same
+  // `dbConnection` check, so they are always on the same backend — branch
+  // on just one.
+  if (!teamStore.usesDatabase) {
+    return migrateToInAppFile(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore });
+  }
+  return migrateToInAppDatabase(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore });
+}
+
+/**
+ * File-backed implementation of migrateToInApp. Unchanged from before the
+ * dual-path split — this is the production code path today and must stay
+ * byte-for-byte identical (same generated ids, same batched audit entries,
+ * same wholesale blob writes).
+ */
+async function migrateToInAppFile(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore }) {
   // ─── Read all data once ───
-  const { createTeamStore, generateTeamId, TEAMS_KEY } = require('./team-store');
-  const { createFieldStore, FIELD_DEFS_KEY } = require('./field-store');
+  const { generateTeamId, TEAMS_KEY } = require('./team-store');
+  const { FIELD_DEFS_KEY } = require('./field-store');
   const { getOrgDisplayNames } = require('./roster-sync/config');
 
-  const fieldStore = createFieldStore(storage);
-  // TODO(mongodb-migration): accept an injected store so this uses the same backend as the app
-  const teamStore = createTeamStore(storage);
   const teamsData = await teamStore.readTeams();
   const fieldDefs = await fieldStore.readFieldDefinitions();
 
@@ -773,6 +794,412 @@ async function migrateToInApp(storage, config, actorEmail, fieldOverrides) {
   for (const entry of auditEntries) {
     await appendAuditEntry(storage, entry);
   }
+
+  return { migrated: true, teams: teamsCreated, fields: fieldsCreated, assignments: assignmentsCreated, boardsMigrated };
+}
+
+/**
+ * Database-backed implementation of migrateToInApp. Same overall algorithm as
+ * migrateToInAppFile (LDAP resolution, team grouping, board matching, custom
+ * field extraction), but persists teams and field definitions through the
+ * stores' own CRUD instead of building whole-blob objects and dumping them
+ * via storage.writeToStorage — teamStore.writeTeams() throws on the MongoDB
+ * path (see team-store.js), and the equivalent would silently drop field
+ * definitions too, so the blob-write shortcut is not available here.
+ *
+ * The registry (team assignments on people, and _appFields for person-scoped
+ * fields) has no model yet and stays a single storage.writeToStorage(REGISTRY_KEY)
+ * write at the end, exactly like the file path.
+ *
+ * Documented divergences from the file path, confined to this path only
+ * (see team-store.js's deleteTeam for the established precedent of
+ * documenting an intentional divergence rather than forcing parity the
+ * storage model can't support):
+ *   - teamStore.createTeam / fieldStore.createFieldDefinition generate their
+ *     own ids (unlike the file path's in-memory generateTeamId/generateFieldId
+ *     calls). This only affects the literal id string, not which teams/fields
+ *     get created — every entry in the same team grouping / customFieldsConfig
+ *     produces one team/field on both paths.
+ *   - team.create / field.create audit entries are appended immediately by
+ *     the store methods, rather than batched at the end like the file path.
+ *   - team.field.update audit entries fire once per team per team-scoped
+ *     custom field (via teamStore.updateTeamFields), and team.boards.update
+ *     audit entries fire once per team that has boards (via
+ *     teamStore.updateTeamBoards). The file path emits neither — it writes
+ *     team.metadata and team.boards directly into the in-memory blob and
+ *     only records the batched team.create/field.create/migration entries.
+ *     Both scale with roster size (teams × team-scoped fields, and teams
+ *     with boards, respectively).
+ *   - For a team-scoped field promoted to multiValue partway through the
+ *     per-team rollup, the file path leaves earlier teams (processed before
+ *     the promotion) with a single value instead of a one-element array — an
+ *     ordering quirk of building the field definition and team metadata in
+ *     the same left-to-right pass. This path computes every team's rolled-up
+ *     values before creating the field definition, so the final multiValue
+ *     setting is applied consistently to all teams. This is a deliberate
+ *     improvement, not an attempt to reproduce the file path's quirk.
+ *   - A `constrained` field whose computed allowedValues would fail
+ *     fieldStore's validateAllowedValues (too many distinct values, or a
+ *     value too long) falls back to `free-text` here instead of throwing.
+ *     The file path never validates allowedValues at all, so it accepts
+ *     such fields unconditionally; this path can't reuse that shortcut
+ *     because createFieldDefinition validates. Falling back rather than
+ *     truncating preserves every value the roster actually holds.
+ *   - Field definitions created by this migration are tagged with
+ *     `sourceKey` (the customFieldsConfig key) so a retry can dedup against
+ *     them without matching on label, which could otherwise adopt an
+ *     admin-created field definition with a colliding label. The file path
+ *     has no such field and no such risk — it always creates a fresh field
+ *     definition object in memory rather than looking one up.
+ */
+async function migrateToInAppDatabase(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore }) {
+  const { getOrgDisplayNames } = require('./roster-sync/config');
+
+  const overrideMap = {};
+  if (Array.isArray(fieldOverrides)) {
+    for (const fo of fieldOverrides) {
+      overrideMap[fo.key] = { type: fo.type || 'free-text', multiValue: !!fo.multiValue, scope: fo.scope || 'person' };
+    }
+  }
+
+  const nameToUid = buildNameToUid(registry);
+  const customFieldsConfig = config.teamStructure?.customFields;
+
+  // ─── Step 0: LDAP resolution for person-reference fields (same as file path) ───
+  let ldapConn = null;
+  const personRefKeys = [];
+  if (Array.isArray(customFieldsConfig)) {
+    for (const cfConfig of customFieldsConfig) {
+      const override = overrideMap[cfConfig.key] || {};
+      if ((override.type || 'free-text') === 'person-reference-linked') {
+        personRefKeys.push(cfConfig.key);
+      }
+    }
+  }
+
+  if (personRefKeys.length > 0) {
+    const allNames = new Set();
+    for (const person of Object.values(registry.people)) {
+      if (person.status !== 'active') continue;
+      for (const key of personRefKeys) {
+        const val = person[key];
+        if (val && typeof val === 'string') {
+          for (const part of val.split(/[,/]/).map(s => s.trim()).filter(Boolean)) {
+            allNames.add(part);
+          }
+        }
+      }
+    }
+
+    const unmatchedNames = [];
+    for (const name of allNames) {
+      if (nameToUid[name.toLowerCase().trim()]) continue;
+      const resolved = resolvePersonNames(name, nameToUid);
+      if (resolved.length === 0) {
+        unmatchedNames.push(name);
+      }
+    }
+
+    if (unmatchedNames.length > 0) {
+      try {
+        ldapConn = tryCreateLdapConnection();
+        if (ldapConn) {
+          const ipaClient = require('./roster-sync/ipa-client');
+          await ipaClient.bindClient(ldapConn.client, ldapConn.config.bindDn, ldapConn.config.bindPassword);
+          const ldapResult = await resolveNamesViaLdap(unmatchedNames, nameToUid, registry, ldapConn);
+          console.log('[migration] LDAP resolved ' + ldapResult.resolved.length + ' names, ' +
+            ldapResult.unresolved.length + ' still unresolved');
+        }
+      } catch (err) {
+        console.warn('[migration] LDAP name resolution failed:', err.message);
+      } finally {
+        if (ldapConn && ldapConn.client) {
+          ldapConn.client.unbind(function() {});
+        }
+      }
+    }
+  }
+
+  // ─── Step 1: Migrate teams from _teamGrouping, via store CRUD ───
+
+  const teamMap = buildTeamMap(registry);
+  const existingTeamsData = await teamStore.readTeams();
+
+  let teamsCreated = 0;
+  let assignmentsCreated = 0;
+
+  for (const person of Object.values(registry.people)) {
+    if (!Array.isArray(person.teamIds)) person.teamIds = [];
+  }
+
+  const existingTeamsByKey = {};
+  for (const [id, team] of Object.entries(existingTeamsData.teams)) {
+    existingTeamsByKey[`${team.orgKey}::${team.name.toLowerCase()}`] = { ...team, id };
+  }
+
+  const compositeToTeamId = {};
+
+  for (const [compositeKey, entry] of teamMap.entries()) {
+    const existing = existingTeamsByKey[compositeKey];
+    let teamId;
+
+    if (existing) {
+      teamId = existing.id;
+    } else {
+      const created = await teamStore.createTeam(entry.name, entry.orgKey, actorEmail);
+      teamId = created.id;
+      teamsCreated++;
+    }
+
+    for (const uid of entry.uids) {
+      const person = registry.people[uid];
+      if (person && !person.teamIds.includes(teamId)) {
+        person.teamIds.push(teamId);
+        assignmentsCreated++;
+      }
+    }
+
+    compositeToTeamId[compositeKey] = teamId;
+  }
+
+  // ─── Step 1.5: Migrate boards from teams-metadata.json ───
+
+  let boardsMigrated = 0;
+  const metaData = await storage.readFromStorage('org-roster/teams-metadata.json');
+
+  if (metaData && metaData.teams) {
+    const orgDisplayNames = await getOrgDisplayNames(storage);
+    const boardNames = metaData.boardNames || {};
+    const metaTeams = metaData.teams;
+
+    for (const [compositeKey, entry] of teamMap.entries()) {
+      const teamId = compositeToTeamId[compositeKey];
+      if (!teamId) continue;
+
+      const displayName = orgDisplayNames[entry.orgKey] || entry.orgKey;
+
+      const metaMatch = metaTeams.find(mt =>
+        mt.org.toLowerCase() === displayName.toLowerCase() &&
+        mt.name.toLowerCase() === entry.name.toLowerCase()
+      );
+
+      if (metaMatch && Array.isArray(metaMatch.boardUrls) && metaMatch.boardUrls.length > 0) {
+        const boards = [];
+        for (const url of metaMatch.boardUrls) {
+          if (typeof url === 'string' && (url.startsWith('https://') || url.startsWith('http://'))) {
+            // teamStore.updateTeamBoards throws on a url over MAX_URL_LENGTH
+            // (the file path has no such limit). Pre-filter rather than catch,
+            // so a bad board is skipped instead of aborting the whole
+            // migration partway through, without masking a genuine bug.
+            if (url.length > MAX_URL_LENGTH) {
+              console.warn(`[migration] Skipping board with url exceeding ${MAX_URL_LENGTH} characters: ${url.slice(0, 80)}...`);
+              continue;
+            }
+            boards.push({ url, name: boardNames[url] || '' });
+          } else {
+            console.warn(`[migration] Skipping board with invalid URL scheme: ${url}`);
+          }
+        }
+        // teamStore.updateTeamBoards also throws if the boards array exceeds
+        // MAX_BOARDS. Cap it here for the same reason as above.
+        if (boards.length > MAX_BOARDS) {
+          console.warn(`[migration] Team "${entry.name}" has ${boards.length} boards, exceeding the maximum of ${MAX_BOARDS}; keeping the first ${MAX_BOARDS}`);
+          boards.length = MAX_BOARDS;
+        }
+        if (boards.length > 0) {
+          await teamStore.updateTeamBoards(teamId, boards, actorEmail);
+          boardsMigrated += boards.length;
+        }
+      }
+    }
+  }
+
+  // ─── Step 2: Migrate custom fields ───
+
+  let fieldsCreated = 0;
+
+  // Build a lookup of existing field definitions created by a previous run
+  // of this migration, for dedup on retry (match key, reuse on hit).
+  // Matched on `sourceKey` (the customFieldsConfig key this migration wrote
+  // it from), not label — an admin-created field has sourceKey: null and so
+  // can never be matched here, however its label compares to a migrated
+  // field's label. Matching on label previously let the migration adopt an
+  // admin's field definition and overwrite its data.
+  const existingFieldDefs = await fieldStore.readFieldDefinitions();
+  const existingFieldsByKey = {};
+  for (const f of existingFieldDefs.personFields || []) {
+    if (f.deleted || !f.sourceKey) continue;
+    existingFieldsByKey[`person::${f.sourceKey}`] = f;
+  }
+  for (const f of existingFieldDefs.teamFields || []) {
+    if (f.deleted || !f.sourceKey) continue;
+    existingFieldsByKey[`team::${f.sourceKey}`] = f;
+  }
+
+  if (Array.isArray(customFieldsConfig) && customFieldsConfig.length > 0) {
+    for (const cfConfig of customFieldsConfig) {
+      const override = overrideMap[cfConfig.key] || {};
+      let fieldType = override.type || 'free-text';
+      let multiValue = override.multiValue || false;
+      const scope = override.scope || 'person';
+
+      const allIndividualValues = new Set();
+      const rawEntries = []; // { person, uid, rawValue }
+
+      for (const [uid, person] of Object.entries(registry.people)) {
+        if (person.status !== 'active') continue;
+        const value = person[cfConfig.key];
+        if (value !== undefined && value !== null && value !== '') {
+          rawEntries.push({ person, uid, rawValue: value });
+          if (multiValue && typeof value === 'string' && /[,/]/.test(value)) {
+            for (const part of value.split(/[,/]/).map(s => s.trim()).filter(Boolean)) {
+              allIndividualValues.add(part);
+            }
+          } else {
+            allIndividualValues.add(String(value));
+          }
+        }
+      }
+
+      const fieldLabel = cfConfig.displayLabel || cfConfig.key;
+
+      let allowedValues = null;
+      if (fieldType === 'constrained') {
+        const candidateAllowedValues = [...allIndividualValues].sort();
+        const avError = validateAllowedValues(candidateAllowedValues);
+        if (avError) {
+          // fieldStore.createFieldDefinition throws on invalid allowedValues
+          // (over MAX_ALLOWED_VALUES entries, an entry over
+          // MAX_ALLOWED_VALUE_LENGTH chars, or an empty/non-string entry).
+          // The file path never validates, so a high-cardinality column
+          // that migrates fine there would throw here mid-Step-2, after
+          // teams and earlier fields are already committed — and since
+          // _migratedToInApp is never set, a retry dies at the same point
+          // every time. Truncating candidateAllowedValues would dodge the
+          // throw but silently drop values people's records actually hold,
+          // which coerceFieldValue/validateFieldValues would then reject on
+          // the next read. Falling back to free-text keeps every value.
+          console.warn(`[migration] Field "${fieldLabel}" (${candidateAllowedValues.length} distinct values) cannot be constrained (${avError}, limits: ${MAX_ALLOWED_VALUES} values / ${MAX_ALLOWED_VALUE_LENGTH} chars each); falling back to free-text to preserve all values`);
+          fieldType = 'free-text';
+        } else {
+          allowedValues = candidateAllowedValues;
+        }
+      }
+
+      const fieldDefInput = {
+        label: fieldLabel,
+        type: fieldType,
+        required: false,
+        visible: cfConfig.visible !== false,
+        primaryDisplay: cfConfig.primaryDisplay || false,
+        allowedValues
+      };
+      const dedupKey = `${scope}::${cfConfig.key}`;
+      const existingField = existingFieldsByKey[dedupKey];
+
+      if (scope === 'team') {
+        // Compute rolled-up per-team values BEFORE creating the field
+        // definition (see the divergence note in this function's docblock).
+        const teamValues = {}; // teamId -> array of distinct values
+
+        for (const [compositeKey, entry] of teamMap.entries()) {
+          const teamId = compositeToTeamId[compositeKey];
+          if (!teamId) continue;
+
+          const distinctValues = new Set();
+          for (const uid of entry.uids) {
+            const person = registry.people[uid];
+            if (!person) continue;
+            const val = person[cfConfig.key];
+            if (val !== undefined && val !== null && val !== '') {
+              if (fieldType === 'person-reference-linked') {
+                const resolved = resolvePersonNames(val, nameToUid);
+                for (const r of resolved) distinctValues.add(r);
+              } else if (multiValue && typeof val === 'string' && /[,/]/.test(val)) {
+                for (const part of val.split(/[,/]/).map(s => s.trim()).filter(Boolean)) {
+                  distinctValues.add(part);
+                }
+              } else {
+                distinctValues.add(String(val));
+              }
+            }
+          }
+
+          if (distinctValues.size === 0) continue;
+          const valuesArray = [...distinctValues];
+          if (valuesArray.length > 1) multiValue = true;
+          teamValues[teamId] = valuesArray;
+        }
+
+        let fieldId;
+        let effectiveMultiValue;
+        if (existingField) {
+          // Retry: an equivalent field definition already exists (matched
+          // on sourceKey, see Step 2's dedup lookup above) — reuse it
+          // instead of creating a duplicate. Use its own stored multiValue
+          // rather than what this run just recomputed, so the value shape
+          // written below can't disagree with the definition (see the
+          // comment above coerceFieldValue's callers in field-store.js).
+          fieldId = existingField.id;
+          effectiveMultiValue = existingField.multiValue;
+        } else {
+          const created = await fieldStore.createFieldDefinition('team', { ...fieldDefInput, multiValue, sourceKey: cfConfig.key }, actorEmail);
+          fieldId = created.id;
+          existingFieldsByKey[dedupKey] = { ...fieldDefInput, id: fieldId, multiValue, deleted: false, sourceKey: cfConfig.key };
+          fieldsCreated++;
+          effectiveMultiValue = multiValue;
+        }
+
+        for (const [teamId, valuesArray] of Object.entries(teamValues)) {
+          await teamStore.updateTeamFields(teamId, {
+            [fieldId]: effectiveMultiValue ? valuesArray : valuesArray[0]
+          }, actorEmail);
+        }
+      } else {
+        // ─── Person-scoped field handling ───
+        let fieldId;
+        let effectiveMultiValue;
+        if (existingField) {
+          // Retry: reuse the existing definition (see Step 2's dedup lookup
+          // above), and use its stored multiValue for the same reason as
+          // the team-scoped branch above.
+          fieldId = existingField.id;
+          effectiveMultiValue = existingField.multiValue;
+        } else {
+          const created = await fieldStore.createFieldDefinition('person', { ...fieldDefInput, multiValue, sourceKey: cfConfig.key }, actorEmail);
+          fieldId = created.id;
+          existingFieldsByKey[dedupKey] = { ...fieldDefInput, id: fieldId, multiValue, deleted: false, sourceKey: cfConfig.key };
+          fieldsCreated++;
+          effectiveMultiValue = multiValue;
+        }
+
+        for (const { person, rawValue } of rawEntries) {
+          if (!person._appFields) person._appFields = {};
+
+          if (fieldType === 'person-reference-linked') {
+            const resolved = resolvePersonNames(rawValue, nameToUid);
+            person._appFields[fieldId] = effectiveMultiValue ? resolved : (resolved[0] || null);
+          } else if (effectiveMultiValue && typeof rawValue === 'string' && /[,/]/.test(rawValue)) {
+            person._appFields[fieldId] = rawValue.split(/[,/]/).map(s => s.trim()).filter(Boolean);
+          } else {
+            person._appFields[fieldId] = rawValue;
+          }
+        }
+      }
+    }
+  }
+
+  // ─── Step 3: Persist the registry. Teams and field definitions were
+  // already persisted per-entity above through the stores. ───
+  await storage.writeToStorage(REGISTRY_KEY, registry);
+
+  await appendAuditEntry(storage, {
+    action: 'migration.sheets_to_inapp',
+    actor: actorEmail,
+    entityType: 'system',
+    entityId: 'migration',
+    detail: `Migrated from Sheets: ${teamsCreated} teams, ${fieldsCreated} fields, ${assignmentsCreated} assignments, ${boardsMigrated} boards`
+  });
 
   return { migrated: true, teams: teamsCreated, fields: fieldsCreated, assignments: assignmentsCreated, boardsMigrated };
 }
