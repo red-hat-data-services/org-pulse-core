@@ -782,7 +782,7 @@ module.exports = async function registerRoutes(router, context) {
   // ─── Routes: Team Structure Management ───
 
   const { MAX_DESCRIPTION_LENGTH: TEAM_MAX_DESCRIPTION_LENGTH } = require('../../../shared/server/team-store');
-  const auditLog = require('../../../shared/server/audit-log');
+  const auditLog = context.auditLog;
   const fieldOptionsStore = require('./field-options-store');
   const { migrateToInApp, previewMigration } = require('../../../shared/server/team-migration');
 
@@ -1632,7 +1632,7 @@ module.exports = async function registerRoutes(router, context) {
     const valErr = validateFieldOptionValues(values);
     if (valErr) return res.status(400).json({ error: valErr });
     try {
-      const result = await fieldOptionsStore.replaceValues(storage, safeName, values, label, req.auditActor);
+      const result = await fieldOptionsStore.replaceValues(storage, safeName, values, label, req.auditActor, auditLog);
       res.json(result);
     } catch (err) {
       const status = err.message.includes('managed by external source') ? 409 : 500;
@@ -1673,7 +1673,7 @@ module.exports = async function registerRoutes(router, context) {
       return res.status(400).json({ error: `Adding ${values.length} values would exceed maximum of ${MAX_FIELD_OPTION_VALUES} (current: ${currentCount})` });
     }
     try {
-      const result = await fieldOptionsStore.addValues(storage, safeName, values, req.auditActor);
+      const result = await fieldOptionsStore.addValues(storage, safeName, values, req.auditActor, auditLog);
       res.json(result);
     } catch (err) {
       const status = err.message.includes('managed by external source') ? 409 : 500;
@@ -1708,7 +1708,7 @@ module.exports = async function registerRoutes(router, context) {
     const valErr = validateFieldOptionValues(values);
     if (valErr) return res.status(400).json({ error: valErr });
     try {
-      const result = await fieldOptionsStore.removeValues(storage, safeName, values, req.auditActor);
+      const result = await fieldOptionsStore.removeValues(storage, safeName, values, req.auditActor, auditLog);
       if (!result) return res.status(404).json({ error: 'Field option set not found' });
       res.json(result);
     } catch (err) {
@@ -1757,7 +1757,7 @@ module.exports = async function registerRoutes(router, context) {
     if (!trimmed) return res.status(400).json({ error: 'newValue cannot be empty' });
     if (trimmed.length > 200) return res.status(400).json({ error: 'newValue must be 200 characters or fewer' });
     try {
-      const result = await fieldOptionsStore.renameValue(storage, safeName, oldValue.trim(), trimmed, req.auditActor);
+      const result = await fieldOptionsStore.renameValue(storage, safeName, oldValue.trim(), trimmed, req.auditActor, auditLog);
       if (!result) return res.status(404).json({ error: 'Field option set not found' });
       res.json(result);
     } catch (err) {
@@ -1971,7 +1971,7 @@ module.exports = async function registerRoutes(router, context) {
       limit,
       offset
     };
-    const result = await auditLog.queryAuditLog(storage, filters);
+    const result = await auditLog.queryAuditLog(filters);
 
     // For non-admin managers, filter entries to only their managed subtree
     if (!req.isAdmin && req.userUid) {
@@ -2032,7 +2032,7 @@ module.exports = async function registerRoutes(router, context) {
       const config = await rosterSyncConfig.loadConfig(storage);
       if (!config) return res.status(400).json({ error: 'No config found' });
       const fieldOverrides = req.body?.fieldOverrides || null;
-      const result = await migrateToInApp(storage, config, req.auditActor, fieldOverrides, { fieldStore: contextFieldStore, teamStore: contextTeamStore });
+      const result = await migrateToInApp(storage, config, req.auditActor, fieldOverrides, { fieldStore: contextFieldStore, teamStore: contextTeamStore, auditLog });
       if (result.migrated) {
         config._migratedToInApp = new Date().toISOString();
         await rosterSyncConfig.saveConfig(storage, config);
@@ -2104,7 +2104,7 @@ module.exports = async function registerRoutes(router, context) {
       }
       const result = await fieldOptionsMigration.executeMigration(storage, {
         sourceFieldId, optionSetName, optionSetLabel, createCounterpart, counterpartLabel, seedFromMembers
-      }, req.auditActor, { fieldStore: contextFieldStore, teamStore: contextTeamStore });
+      }, req.auditActor, { fieldStore: contextFieldStore, teamStore: contextTeamStore, auditLog });
       if (result.error) return res.status(400).json({ error: result.error });
       res.json(result);
     } catch (err) {
@@ -2389,7 +2389,7 @@ module.exports = async function registerRoutes(router, context) {
         await fieldOptionsStore.writeFieldOptions(storage, safeName, data);
       }
 
-      await auditLog.appendAuditEntry(storage, {
+      await auditLog.appendAuditEntry({
         action: 'field-options.migrate-values',
         actor: req.auditActor,
         entityType: 'field-options',
@@ -2683,7 +2683,7 @@ module.exports = async function registerRoutes(router, context) {
         orgId,
         siteId,
         label: req.body.label
-      });
+      }, auditLog);
       res.json(result);
     } catch (err) {
       const status = err.message.includes('Unsupported') || err.message.includes('required') ? 400 : 502;
@@ -2760,7 +2760,7 @@ module.exports = async function registerRoutes(router, context) {
     }
 
     try {
-      const result = await fieldOptionsSync.syncOptionSet(storage, jiraRequest, safeName);
+      const result = await fieldOptionsSync.syncOptionSet(storage, jiraRequest, safeName, auditLog);
       _fieldOptionsSyncState[safeName] = { lastSuccessAt: new Date().toISOString() };
       res.json(result);
     } catch (err) {
@@ -5123,7 +5123,7 @@ module.exports = async function registerRoutes(router, context) {
       description: 'Syncs externally-linked field option sets (e.g., Jira components).',
       handler: async function() {
         if (DEMO_MODE) return { status: 'skipped', reason: 'demo mode' };
-        return await fieldOptionsSync.syncAllLinked(storage, jiraRequest);
+        return await fieldOptionsSync.syncAllLinked(storage, jiraRequest, auditLog);
       }
     });
   }

@@ -69,6 +69,7 @@ function buildContext(registryOverrides = {}) {
     gitSync: {},
     exportRegistry: { getAll: () => [] },
     messageRegistry: { registerProvider: () => {} },
+    auditLog: { appendAuditEntry: vi.fn(async () => {}), queryAuditLog: vi.fn(async () => ({ entries: [], total: 0 })) },
   }
   return { context, refreshRegistry, runOne }
 }

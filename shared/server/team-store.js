@@ -7,7 +7,6 @@
  */
 
 const crypto = require('crypto');
-const { appendAuditEntry } = require('./audit-log');
 const { getStorageMutex } = require('./storage-mutex');
 
 async function acquireMultiLock(keys) {
@@ -81,10 +80,15 @@ const MAX_DESCRIPTION_LENGTH = 2000;
  * @param {object} storage - Storage module with readFromStorage/writeToStorage
  * @param {object} [options={}] - Options
  * @param {object} [options.model] - Optional Mongoose Team model for MongoDB path
+ * @param {object} options.auditLog - Audit log instance (from the module context). Required — no fallback.
  * @returns {object} Team store API
  */
 function createTeamStore(storage, options = {}) {
   const Model = options.model || null;
+  if (!options.auditLog) {
+    throw new Error('createTeamStore requires options.auditLog (from the module context) — there is no fallback');
+  }
+  const { appendAuditEntry } = options.auditLog;
 
   // Map a Mongo document to the file-shaped team object.
   function toTeamShape(doc) {
@@ -178,7 +182,7 @@ function createTeamStore(storage, options = {}) {
         }
       }
 
-      await appendAuditEntry(storage, {
+      await appendAuditEntry({
         action: 'team.create',
         actor: actorEmail,
         entityType: 'team',
@@ -211,7 +215,7 @@ function createTeamStore(storage, options = {}) {
       data.teams[id] = team;
       await writeTeamsFile(data);
 
-      await appendAuditEntry(storage, {
+      await appendAuditEntry({
         action: 'team.create',
         actor: actorEmail,
         entityType: 'team',
@@ -244,7 +248,7 @@ function createTeamStore(storage, options = {}) {
       // Concurrent delete between the existence check and the update.
       if (!doc) return null;
 
-      await appendAuditEntry(storage, {
+      await appendAuditEntry({
         action: 'team.rename',
         actor: actorEmail,
         entityType: 'team',
@@ -269,7 +273,7 @@ function createTeamStore(storage, options = {}) {
       team.name = newName;
       await writeTeamsFile(data);
 
-      await appendAuditEntry(storage, {
+      await appendAuditEntry({
         action: 'team.rename',
         actor: actorEmail,
         entityType: 'team',
@@ -334,7 +338,7 @@ function createTeamStore(storage, options = {}) {
       const { deletedCount } = await Model.deleteOne({ teamId });
       if (!deletedCount) return null;
 
-      await appendAuditEntry(storage, {
+      await appendAuditEntry({
         action: 'team.delete',
         actor: actorEmail,
         entityType: 'team',
@@ -377,7 +381,7 @@ function createTeamStore(storage, options = {}) {
         }
       }
 
-      await appendAuditEntry(storage, {
+      await appendAuditEntry({
         action: 'team.delete',
         actor: actorEmail,
         entityType: 'team',
@@ -421,7 +425,7 @@ function createTeamStore(storage, options = {}) {
       person.teamIds.push(teamId);
       await storage.writeToStorage(REGISTRY_KEY, registry);
 
-      await appendAuditEntry(storage, {
+      await appendAuditEntry({
         action: 'person.team.assign',
         actor: actorEmail,
         entityType: 'person',
@@ -469,7 +473,7 @@ function createTeamStore(storage, options = {}) {
         person.teamIds.push(teamId);
         assigned.push(uid);
 
-        await appendAuditEntry(storage, {
+        await appendAuditEntry({
           action: 'person.team.assign',
           actor: actorEmail,
           entityType: 'person',
@@ -516,7 +520,7 @@ function createTeamStore(storage, options = {}) {
       person.teamIds.splice(idx, 1);
       await storage.writeToStorage(REGISTRY_KEY, registry);
 
-      await appendAuditEntry(storage, {
+      await appendAuditEntry({
         action: 'person.team.unassign',
         actor: actorEmail,
         entityType: 'person',
@@ -593,7 +597,7 @@ function createTeamStore(storage, options = {}) {
       // Concurrent delete between the existence check and the update.
       if (!doc) return null;
 
-      await appendAuditEntry(storage, {
+      await appendAuditEntry({
         action: 'team.description.update',
         actor: actorEmail,
         entityType: 'team',
@@ -617,7 +621,7 @@ function createTeamStore(storage, options = {}) {
       team.description = description || null;
       await writeTeamsFile(data);
 
-      await appendAuditEntry(storage, {
+      await appendAuditEntry({
         action: 'team.description.update',
         actor: actorEmail,
         entityType: 'team',
@@ -665,7 +669,7 @@ function createTeamStore(storage, options = {}) {
         const oldValue = existingMetadata[fieldId] || null;
         $set[`metadata.${fieldId}`] = value;
 
-        await appendAuditEntry(storage, {
+        await appendAuditEntry({
           action: 'team.field.update',
           actor: actorEmail,
           entityType: 'team',
@@ -707,7 +711,7 @@ function createTeamStore(storage, options = {}) {
         const oldValue = team.metadata[fieldId] || null;
         team.metadata[fieldId] = value;
 
-        await appendAuditEntry(storage, {
+        await appendAuditEntry({
           action: 'team.field.update',
           actor: actorEmail,
           entityType: 'team',
@@ -767,7 +771,7 @@ function createTeamStore(storage, options = {}) {
       // Concurrent delete between the existence check and the update.
       if (!doc) return null;
 
-      await appendAuditEntry(storage, {
+      await appendAuditEntry({
         action: 'team.boards.update',
         actor: actorEmail,
         entityType: 'team',
@@ -792,7 +796,7 @@ function createTeamStore(storage, options = {}) {
       team.boards = normalized;
       await writeTeamsFile(data);
 
-      await appendAuditEntry(storage, {
+      await appendAuditEntry({
         action: 'team.boards.update',
         actor: actorEmail,
         entityType: 'team',

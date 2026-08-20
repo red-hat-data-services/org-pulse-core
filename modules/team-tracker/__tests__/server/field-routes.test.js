@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest'
  * and team-store functions with mock storage, verifying response shapes.
  */
 const { createFieldStore } = require('../../../../shared/server/field-store')
+const { createAuditLog } = require('../../../../shared/server/audit-log')
 const { createTeamStore } = require('../../../../shared/server/team-store')
 
 function makeStorage(initial = {}) {
@@ -60,7 +61,7 @@ describe('field routes (handler-level)', () => {
   describe('field definition CRUD', () => {
     it('creates a field with multiValue', async () => {
       const storage = makeFullStorage()
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       const field = await fieldStore.createFieldDefinition('person', {
         label: 'Skills', type: 'constrained', multiValue: true, allowedValues: ['Go', 'Rust']
       }, 'admin@test.com')
@@ -71,7 +72,7 @@ describe('field routes (handler-level)', () => {
 
     it('updates a field via PATCH', async () => {
       const storage = makeFullStorage()
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       const result = await fieldStore.updateFieldDefinition('person', 'field_c1', {
         label: 'Updated Component', multiValue: true
       }, 'admin@test.com')
@@ -82,14 +83,14 @@ describe('field routes (handler-level)', () => {
 
     it('soft-deletes a field', async () => {
       const storage = makeFullStorage()
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       const result = await fieldStore.softDeleteField('person', 'field_c1', 'admin@test.com')
       expect(result.deleted).toBe(true)
     })
 
     it('reads all field definitions', async () => {
       const storage = makeFullStorage()
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       const defs = await fieldStore.readFieldDefinitions()
       expect(defs.personFields).toHaveLength(2)
       expect(defs.teamFields).toHaveLength(1)
@@ -99,7 +100,7 @@ describe('field routes (handler-level)', () => {
   describe('person field value PATCH with validation', () => {
     it('validates and returns result with _warnings for required fields', async () => {
       const storage = makeFullStorage()
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       const existingValues = {}
 
       const { validated, warnings, errors } = await fieldStore.validateFieldValues(
@@ -116,7 +117,7 @@ describe('field routes (handler-level)', () => {
 
     it('returns 400-level errors for unknown fields', async () => {
       const storage = makeFullStorage()
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       const { errors } = await fieldStore.validateFieldValues(
         'person', { field_unknown: 'x' }, {}
       )
@@ -125,7 +126,7 @@ describe('field routes (handler-level)', () => {
 
     it('coerces values for constrained multi-value fields', async () => {
       const storage = makeFullStorage()
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       // First make field_c1 multiValue
       await fieldStore.updateFieldDefinition('person', 'field_c1', { multiValue: true }, 'admin@test.com')
 
@@ -139,13 +140,13 @@ describe('field routes (handler-level)', () => {
   describe('team field value PATCH returns flat metadata', () => {
     it('returns team.metadata (not full team object)', async () => {
       const storage = makeFullStorage()
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
 
       const { validated, warnings } = await fieldStore.validateFieldValues(
         'team', { field_tf1: 'Active' }, {}
       )
 
-      const teamStore = createTeamStore(storage)
+      const teamStore = createTeamStore(storage, { auditLog: createAuditLog(storage) })
       const result = await teamStore.updateTeamFields('team_abc', validated, 'admin@test.com')
       // Simulate what the route handler does: extract metadata
       const response = { ...(result.metadata || {}) }

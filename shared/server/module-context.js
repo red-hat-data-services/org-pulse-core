@@ -17,6 +17,7 @@
  * @property {object} roleStore        - Role store instance (getRole, setRole, etc.)
  * @property {object} fieldStore       - Field store instance (readFieldDefinitions, createFieldDefinition, etc.; also exposes `usesDatabase: boolean`)
  * @property {object} teamStore        - Team store instance (readTeams, createTeam, etc.; also exposes `usesDatabase: boolean`)
+ * @property {object} auditLog         - Audit log instance (appendAuditEntry, queryAuditLog)
  * @property {object} [roleRegistry]   - Role registry for registerRole
  * @property {object} [scopeRegistry]  - Scope registry for registerScopes
  * @property {object} [secretRegistry] - Secret registry for module secrets
@@ -47,6 +48,7 @@
  * @property {object} roleStore        - Role store instance
  * @property {object} fieldStore       - Field store instance
  * @property {object} teamStore        - Team store instance
+ * @property {object} auditLog         - Audit log instance
  * @property {Function} registerDiagnostics - Register a diagnostics function for admin health checks
  * @property {Function} registerMessageProvider - Register a message provider (id, fn)
  * @property {Function} registerRefresh - Register a refresh handler (id, config)
@@ -100,6 +102,7 @@ function buildModuleContext(coreServices, slug, registries = {}) {
     roleStore: coreServices.roleStore,
     fieldStore: coreServices.fieldStore,
     teamStore: coreServices.teamStore,
+    auditLog: coreServices.auditLog,
 
     registerRole: roleRegistry
       ? function (id, config) {
@@ -209,6 +212,9 @@ function createTestContext(overrides = {}) {
 
   const { createFieldStore } = require('./field-store')
   const { createTeamStore } = require('./team-store')
+  const { createAuditLog } = require('./audit-log')
+
+  const testAuditLog = createAuditLog(testStorage)
 
   const defaults = {
     storage: testStorage,
@@ -223,8 +229,9 @@ function createTestContext(overrides = {}) {
       removeRole: noop,
       getAllRoles: function () { return {} }
     },
-    fieldStore: createFieldStore(testStorage, {}),
-    teamStore: createTeamStore(testStorage),
+    fieldStore: createFieldStore(testStorage, { auditLog: testAuditLog }),
+    teamStore: createTeamStore(testStorage, { auditLog: testAuditLog }),
+    auditLog: testAuditLog,
     registerDiagnostics: noop,
     registerMessageProvider: noop,
     registerRefresh: noop,

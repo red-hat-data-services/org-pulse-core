@@ -325,6 +325,19 @@ async function startServer(options = {}) {
     const { roleAssignmentSchema } = require('../shared/server/models/role');
     roleStoreOpts.model = dbConnection.model('core__roles', roleAssignmentSchema, 'core__roles');
   }
+  // ─── Audit Log ───
+  // Constructed before the role/field/team stores below — they all require
+  // an injected audit log instance.
+
+  const { createAuditLog } = require('../shared/server/audit-log');
+  const auditLogOpts = {};
+  if (dbConnection) {
+    const { auditEntrySchema } = require('../shared/server/models/audit-entry');
+    auditLogOpts.model = dbConnection.model('core__audit_entries', auditEntrySchema, 'core__audit_entries');
+  }
+  const auditLog = createAuditLog(storageModule, auditLogOpts);
+  roleStoreOpts.auditLog = auditLog;
+
   const roleStore = createRoleStore(readFromStorage, writeToStorage, roleStoreOpts);
   const { authMiddleware, requireAuth, requireAdmin, requireTeamAdmin, requireRole, requireScope, seedRoles } = createAuthMiddleware(readFromStorage, writeToStorage, {
     tokenValidator: apiTokens,
@@ -335,7 +348,7 @@ async function startServer(options = {}) {
   // ─── Field Store ───
 
   const { createFieldStore } = require('../shared/server/field-store');
-  const fieldStoreOpts = {};
+  const fieldStoreOpts = { auditLog };
   if (dbConnection) {
     const { fieldDefinitionSchema } = require('../shared/server/models/field-definition');
     fieldStoreOpts.model = dbConnection.model('core__field_definitions', fieldDefinitionSchema, 'core__field_definitions');
@@ -345,7 +358,7 @@ async function startServer(options = {}) {
   // ─── Team Store ───
 
   const { createTeamStore } = require('../shared/server/team-store');
-  const teamStoreOpts = {};
+  const teamStoreOpts = { auditLog };
   if (dbConnection) {
     const { teamSchema } = require('../shared/server/models/team');
     teamStoreOpts.model = dbConnection.model('core__teams', teamSchema, 'core__teams');
@@ -415,6 +428,7 @@ async function startServer(options = {}) {
     requireScope,
     blockDuringImpersonation,
     roleStore,
+    auditLog,
     roleRegistry,
     scopeRegistry,
     secretRegistry,
@@ -486,7 +500,7 @@ async function startServer(options = {}) {
 
   // ─── Module State ───
 
-  const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, fieldStore, teamStore, roleRegistry, scopeRegistry, secretRegistry, dbConnection };
+  const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, fieldStore, teamStore, auditLog, roleRegistry, scopeRegistry, secretRegistry, dbConnection };
   const registries = { diagnostics: diagnosticsRegistry, messages: messageRegistry, refresh: refreshRegistry, exports: exportRegistry, searchIndex: searchIndexRegistry };
 
   const persistedState = await loadModuleState(storageModule);

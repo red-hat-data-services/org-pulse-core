@@ -3,8 +3,6 @@
  * Supports both MongoDB (via Mongoose model) and file-based storage.
  */
 
-const auditLog = require('./audit-log');
-
 const ROLES_FILE = 'roles.json';
 const ALLOWLIST_FILE = 'allowlist.json';
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
@@ -33,6 +31,10 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
     : () => null;
   const roleRegistry = options.roleRegistry || null;
   const RoleModel = options.model || null;
+  if (!options.auditLog) {
+    throw new Error('createRoleStore requires options.auditLog (from the module context) — there is no fallback');
+  }
+  const { appendAuditEntry } = options.auditLog;
 
   // Mutex for file-based path only — MongoDB uses atomic operations
   const filesMutex = RoleModel ? null : (() => {
@@ -145,7 +147,7 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
         }
       }
 
-      await auditLog.appendAuditEntry({ readFromStorage, writeToStorage }, {
+      await appendAuditEntry({
         action: 'role.assign',
         actor,
         entityType: 'user',
@@ -176,7 +178,7 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
         entry.assignedAt = new Date().toISOString();
         await writeRolesFile(data);
 
-        await auditLog.appendAuditEntry({ readFromStorage, writeToStorage }, {
+        await appendAuditEntry({
           action: 'role.assign',
           actor,
           entityType: 'user',
@@ -240,7 +242,7 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
           await RoleModel.deleteOne({ email: normalized });
         }
 
-        await auditLog.appendAuditEntry({ readFromStorage, writeToStorage }, {
+        await appendAuditEntry({
           action: 'role.revoke',
           actor,
           entityType: 'user',
@@ -269,7 +271,7 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
         await RoleModel.deleteOne({ email: normalized });
       }
 
-      await auditLog.appendAuditEntry({ readFromStorage, writeToStorage }, {
+      await appendAuditEntry({
         action: 'role.revoke',
         actor,
         entityType: 'user',
@@ -305,7 +307,7 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
 
       await writeRolesFile(data);
 
-      await auditLog.appendAuditEntry({ readFromStorage, writeToStorage }, {
+      await appendAuditEntry({
         action: 'role.revoke',
         actor,
         entityType: 'user',

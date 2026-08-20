@@ -5,7 +5,6 @@
  */
 
 const crypto = require('crypto');
-const auditLog = require('./audit-log');
 const { getStorageMutex } = require('./storage-mutex');
 
 const FIELD_DEFS_KEY = 'team-data/field-definitions.json';
@@ -61,10 +60,15 @@ function coerceFieldValue(value, fieldDef) {
  * @param {object} storage - Storage module with readFromStorage/writeToStorage
  * @param {object} [options={}] - Options
  * @param {object} [options.model] - Optional Mongoose FieldDefinition model for MongoDB path
+ * @param {object} options.auditLog - Audit log instance (from the module context). Required — no fallback.
  * @returns {object} Field store API
  */
 function createFieldStore(storage, options = {}) {
   const Model = options.model || null;
+  if (!options.auditLog) {
+    throw new Error('createFieldStore requires options.auditLog (from the module context) — there is no fallback');
+  }
+  const auditLog = options.auditLog;
 
   // Mutex for file-based path only — MongoDB uses atomic operations
   const filesMutex = Model ? null : getStorageMutex(FIELD_DEFS_KEY);
@@ -217,7 +221,7 @@ function createFieldStore(storage, options = {}) {
       }
 
       // Audit log (file-backed)
-      await auditLog.appendAuditEntry(storage, {
+      await auditLog.appendAuditEntry({
         action: 'field.create',
         actor: actorEmail,
         entityType: 'field',
@@ -257,7 +261,7 @@ function createFieldStore(storage, options = {}) {
       fields.push(field);
       await writeFieldDefinitionsFile(data);
 
-      await auditLog.appendAuditEntry(storage, {
+      await auditLog.appendAuditEntry({
         action: 'field.create',
         actor: actorEmail,
         entityType: 'field',
@@ -308,7 +312,7 @@ function createFieldStore(storage, options = {}) {
         const doc = await Model.findOne({ fieldId, scope }).lean();
         if (!doc) return null;
 
-        await auditLog.appendAuditEntry(storage, {
+        await auditLog.appendAuditEntry({
           action: 'field.update',
           actor: actorEmail,
           entityType: 'field',
@@ -341,7 +345,7 @@ function createFieldStore(storage, options = {}) {
       if (!doc) return null;
 
       // Audit log (file-backed)
-      await auditLog.appendAuditEntry(storage, {
+      await auditLog.appendAuditEntry({
         action: 'field.update',
         actor: actorEmail,
         entityType: 'field',
@@ -373,7 +377,7 @@ function createFieldStore(storage, options = {}) {
 
       await writeFieldDefinitionsFile(data);
 
-      await auditLog.appendAuditEntry(storage, {
+      await auditLog.appendAuditEntry({
         action: 'field.update',
         actor: actorEmail,
         entityType: 'field',
@@ -406,7 +410,7 @@ function createFieldStore(storage, options = {}) {
       if (!doc) return null;
 
       // Audit log (file-backed)
-      await auditLog.appendAuditEntry(storage, {
+      await auditLog.appendAuditEntry({
         action: 'field.delete',
         actor: actorEmail,
         entityType: 'field',
@@ -429,7 +433,7 @@ function createFieldStore(storage, options = {}) {
       field.deleted = true;
       await writeFieldDefinitionsFile(data);
 
-      await auditLog.appendAuditEntry(storage, {
+      await auditLog.appendAuditEntry({
         action: 'field.delete',
         actor: actorEmail,
         entityType: 'field',
@@ -464,7 +468,7 @@ function createFieldStore(storage, options = {}) {
       }
 
       // Audit log (file-backed)
-      await auditLog.appendAuditEntry(storage, {
+      await auditLog.appendAuditEntry({
         action: 'field.reorder',
         actor: actorEmail,
         entityType: 'field',
@@ -497,7 +501,7 @@ function createFieldStore(storage, options = {}) {
       data[key] = fields.sort((a, b) => a.order - b.order);
       await writeFieldDefinitionsFile(data);
 
-      await auditLog.appendAuditEntry(storage, {
+      await auditLog.appendAuditEntry({
         action: 'field.reorder',
         actor: actorEmail,
         entityType: 'field',
@@ -599,7 +603,7 @@ function createFieldStore(storage, options = {}) {
         const oldValue = person._appFields[fieldId] || null;
         person._appFields[fieldId] = value;
 
-        await auditLog.appendAuditEntry(storage, {
+        await auditLog.appendAuditEntry({
           action: 'person.field.update',
           actor: actorEmail,
           entityType: 'person',

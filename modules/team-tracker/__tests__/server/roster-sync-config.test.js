@@ -1,4 +1,5 @@
 const { createFieldStore } = require('../../../../shared/server/field-store')
+const { createAuditLog } = require('../../../../shared/server/audit-log')
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import express from 'express'
 import http from 'http'
@@ -64,7 +65,7 @@ async function createTestApp() {
   // Register the team-tracker routes
   const registerRoutes = require('../../server/index.js')
   const router = express.Router()
-  const fieldStore = createFieldStore({ readFromStorage, writeToStorage })
+  const fieldStore = createFieldStore({ readFromStorage, writeToStorage }, { auditLog: createAuditLog({ readFromStorage, writeToStorage }) })
 
   // Provide minimal context with requireAdmin middleware
   const context = {
