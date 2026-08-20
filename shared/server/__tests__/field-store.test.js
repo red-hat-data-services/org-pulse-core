@@ -349,6 +349,13 @@ describe('field-store (file-backed)', () => {
   });
 });
 
+describe('usesDatabase', () => {
+  it('is false when no model is provided', () => {
+    const { fieldStore } = makeStore();
+    expect(fieldStore.usesDatabase).toBe(false);
+  });
+});
+
 // ─── MongoDB-backed tests ───
 
 describe('field-store (MongoDB)', () => {
@@ -380,6 +387,13 @@ describe('field-store (MongoDB)', () => {
     const fieldStore = createFieldStore(storage, { model: FieldModel });
     return { fieldStore, storage };
   }
+
+  it.skipIf(!process.env.MONGODB_URI)('usesDatabase is true when a model is provided', async () => {
+    const result = makeMongoStore();
+    if (!result) return;
+    const { fieldStore } = result;
+    expect(fieldStore.usesDatabase).toBe(true);
+  });
 
   it.skipIf(!process.env.MONGODB_URI)('creates and reads field definitions', async () => {
     const result = makeMongoStore();

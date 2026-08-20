@@ -1,8 +1,11 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest'
+import mongoose from 'mongoose'
 
 
 const { previewMigration, executeMigration } = require('../../server/migration/field-options-migration')
 const { createFieldStore } = require('../../../../shared/server/field-store')
+const { createTeamStore } = require('../../../../shared/server/team-store')
+const { teamSchema } = require('../../../../shared/server/models/team')
 
 function makeStorage(initial = {}) {
   const data = { ...initial }
@@ -16,6 +19,10 @@ function makeStorage(initial = {}) {
     },
     _data: data
   }
+}
+
+function makeStores(storage) {
+  return { fieldStore: createFieldStore(storage), teamStore: createTeamStore(storage) }
 }
 
 function baseStorageData() {
@@ -70,7 +77,7 @@ describe('field-options-migration', () => {
   describe('previewMigration', () => {
     it('extracts unique values from person field', async () => {
       const storage = makeStorage(baseStorageData())
-      const result = await previewMigration(storage, 'field_comp')
+      const result = await previewMigration(storage, 'field_comp', makeStores(storage))
 
       expect(result.error).toBeUndefined()
       expect(result.scope).toBe('person')
@@ -91,7 +98,7 @@ describe('field-options-migration', () => {
       data['team-data/teams.json'].teams.team_2.metadata.field_region = 'EMEA'
       const storage = makeStorage(data)
 
-      const result = await previewMigration(storage, 'field_region')
+      const result = await previewMigration(storage, 'field_region', makeStores(storage))
       expect(result.scope).toBe('team')
       expect(result.uniqueValues).toEqual(['APAC', 'EMEA'])
       expect(result.recordCount).toBe(2)
@@ -99,7 +106,7 @@ describe('field-options-migration', () => {
 
     it('returns error for nonexistent field', async () => {
       const storage = makeStorage(baseStorageData())
-      const result = await previewMigration(storage, 'field_nonexistent')
+      const result = await previewMigration(storage, 'field_nonexistent', makeStores(storage))
       expect(result.error).toBe('Field not found')
     })
 
@@ -108,7 +115,7 @@ describe('field-options-migration', () => {
       data['team-data/field-definitions.json'].personFields[0].optionsRef = 'components'
       const storage = makeStorage(data)
 
-      const result = await previewMigration(storage, 'field_comp')
+      const result = await previewMigration(storage, 'field_comp', makeStores(storage))
       expect(result.error).toBe('Field already linked to a field option set')
     })
 
@@ -117,7 +124,7 @@ describe('field-options-migration', () => {
       data['team-data/registry.json'].people.person1._appFields.field_comp = ['Platform Core', 'Infra']
       const storage = makeStorage(data)
 
-      const result = await previewMigration(storage, 'field_comp')
+      const result = await previewMigration(storage, 'field_comp', makeStores(storage))
       expect(result.uniqueValues).toContain('Platform Core')
       expect(result.uniqueValues).toContain('Infra')
       expect(result.uniqueValues).toContain('ML Models')
@@ -128,8 +135,27 @@ describe('field-options-migration', () => {
       data['team-data/field-definitions.json'].personFields[0].deleted = true
       const storage = makeStorage(data)
 
-      const result = await previewMigration(storage, 'field_comp')
+      const result = await previewMigration(storage, 'field_comp', makeStores(storage))
       expect(result.error).toBe('Field not found')
+    })
+
+    it('throws when fieldStore/teamStore are not injected', async () => {
+      const storage = makeStorage(baseStorageData())
+      await expect(previewMigration(storage, 'field_comp')).rejects.toThrow(/requires an injected/)
+    })
+
+    it('reads through the injected fieldStore instance rather than a new file-backed store', async () => {
+      const storage = makeStorage(baseStorageData())
+      const realFieldStore = createFieldStore(storage)
+      const fieldStore = {
+        readFieldDefinitions: vi.fn((...args) => realFieldStore.readFieldDefinitions(...args))
+      }
+      const teamStore = createTeamStore(storage)
+
+      const result = await previewMigration(storage, 'field_comp', { fieldStore, teamStore })
+
+      expect(fieldStore.readFieldDefinitions).toHaveBeenCalled()
+      expect(result.field.id).toBe('field_comp')
     })
   })
 
@@ -140,7 +166,7 @@ describe('field-options-migration', () => {
         sourceFieldId: 'field_comp',
         optionSetName: 'components',
         optionSetLabel: 'Components'
-      }, 'admin@test.com')
+      }, 'admin@test.com', makeStores(storage))
 
       expect(result.error).toBeUndefined()
       expect(result.optionSetCreated).toBe('components')
@@ -157,10 +183,10 @@ describe('field-options-migration', () => {
         sourceFieldId: 'field_comp',
         optionSetName: 'components',
         optionSetLabel: 'Components'
-      }, 'admin@test.com')
+      }, 'admin@test.com', makeStores(storage))
 
-      const _fieldStore = createFieldStore(storage);
-      const defs = await _fieldStore.readFieldDefinitions()
+      const { fieldStore } = makeStores(storage)
+      const defs = await fieldStore.readFieldDefinitions()
       const field = defs.personFields.find(f => f.id === 'field_comp')
       expect(field.type).toBe('constrained')
       expect(field.multiValue).toBe(true)
@@ -173,7 +199,7 @@ describe('field-options-migration', () => {
         sourceFieldId: 'field_comp',
         optionSetName: 'components',
         optionSetLabel: 'Components'
-      }, 'admin@test.com')
+      }, 'admin@test.com', makeStores(storage))
 
       const registry = storage._data['team-data/registry.json']
       expect(registry.people.person1._appFields.field_comp).toEqual(['Platform Core'])
@@ -188,11 +214,11 @@ describe('field-options-migration', () => {
         optionSetLabel: 'Components',
         createCounterpart: true,
         counterpartLabel: 'Team Components'
-      }, 'admin@test.com')
+      }, 'admin@test.com', makeStores(storage))
 
       expect(result.counterpartFieldCreated).toBe(true)
-      const _fieldStore = createFieldStore(storage);
-      const defs = await _fieldStore.readFieldDefinitions()
+      const { fieldStore } = makeStores(storage)
+      const defs = await fieldStore.readFieldDefinitions()
       const teamField = defs.teamFields.find(f => f.optionsRef === 'components')
       expect(teamField).toBeDefined()
       expect(teamField.label).toBe('Team Components')
@@ -208,12 +234,12 @@ describe('field-options-migration', () => {
         optionSetLabel: 'Components',
         createCounterpart: true,
         seedFromMembers: true
-      }, 'admin@test.com')
+      }, 'admin@test.com', makeStores(storage))
 
       expect(result.teamsSeeded).toBe(2)
       const teams = storage._data['team-data/teams.json']
-      const _fieldStore = createFieldStore(storage);
-      const defs = await _fieldStore.readFieldDefinitions()
+      const { fieldStore } = makeStores(storage)
+      const defs = await fieldStore.readFieldDefinitions()
       const teamField = defs.teamFields.find(f => f.optionsRef === 'components')
 
       // team_1 has person1 (Platform Core) and person2 (ML Models)
@@ -233,7 +259,7 @@ describe('field-options-migration', () => {
         sourceFieldId: 'field_comp',
         optionSetName: 'components',
         optionSetLabel: 'Components'
-      }, 'admin@test.com')
+      }, 'admin@test.com', makeStores(storage))
 
       expect(result.error).toMatch(/already exists/)
     })
@@ -244,7 +270,7 @@ describe('field-options-migration', () => {
         sourceFieldId: 'field_nonexistent',
         optionSetName: 'test',
         optionSetLabel: 'Test'
-      }, 'admin@test.com')
+      }, 'admin@test.com', makeStores(storage))
 
       expect(result.error).toBe('Field not found')
     })
@@ -255,7 +281,7 @@ describe('field-options-migration', () => {
         sourceFieldId: 'field_comp',
         optionSetName: 'components',
         optionSetLabel: 'Components'
-      }, 'admin@test.com')
+      }, 'admin@test.com', makeStores(storage))
 
       const audit = storage._data['audit-log.json']
       const entry = audit.entries.find(e => e.action === 'migration.field-to-options')
@@ -279,19 +305,141 @@ describe('field-options-migration', () => {
         sourceFieldId: 'field_region',
         optionSetName: 'regions',
         optionSetLabel: 'Regions'
-      }, 'admin@test.com')
+      }, 'admin@test.com', makeStores(storage))
 
       expect(result.valuesExtracted).toBe(2)
       expect(result.sourceFieldUpdated).toBe(true)
 
-      const _fieldStore = createFieldStore(storage);
-      const defs = await _fieldStore.readFieldDefinitions()
+      const { fieldStore } = makeStores(storage)
+      const defs = await fieldStore.readFieldDefinitions()
       const field = defs.teamFields.find(f => f.id === 'field_region')
       expect(field.optionsRef).toBe('regions')
 
       // String values converted to arrays
       const teams = storage._data['team-data/teams.json']
       expect(teams.teams.team_1.metadata.field_region).toEqual(['APAC'])
+    })
+
+    it('throws when fieldStore/teamStore are not injected', async () => {
+      const storage = makeStorage(baseStorageData())
+      await expect(executeMigration(storage, {
+        sourceFieldId: 'field_comp',
+        optionSetName: 'components',
+        optionSetLabel: 'Components'
+      }, 'admin@test.com')).rejects.toThrow(/requires an injected/)
+    })
+
+    it('writes through the injected teamStore instance for team-scoped conversions', async () => {
+      const data = baseStorageData()
+      data['team-data/field-definitions.json'].teamFields.push({
+        id: 'field_region', label: 'Region', type: 'free-text', multiValue: false,
+        required: false, visible: true, primaryDisplay: false, allowedValues: null,
+        deleted: false, order: 1, createdAt: '2026-01-01', createdBy: 'admin@test.com'
+      })
+      data['team-data/teams.json'].teams.team_1.metadata.field_region = 'APAC'
+      data['team-data/teams.json'].teams.team_2.metadata.field_region = 'EMEA'
+      const storage = makeStorage(data)
+
+      const realTeamStore = createTeamStore(storage)
+      const teamStore = {
+        readTeams: vi.fn((...args) => realTeamStore.readTeams(...args)),
+        updateTeamFields: vi.fn((...args) => realTeamStore.updateTeamFields(...args))
+      }
+      const fieldStore = createFieldStore(storage)
+
+      const result = await executeMigration(storage, {
+        sourceFieldId: 'field_region',
+        optionSetName: 'regions',
+        optionSetLabel: 'Regions'
+      }, 'admin@test.com', { fieldStore, teamStore })
+
+      expect(result.valuesExtracted).toBe(2)
+      expect(teamStore.readTeams).toHaveBeenCalled()
+    })
+
+    it('regression guard: with a file-backed teamStore, still writes the teams.json blob for team-scope conversion', async () => {
+      const data = baseStorageData()
+      data['team-data/field-definitions.json'].teamFields.push({
+        id: 'field_region', label: 'Region', type: 'free-text', multiValue: false,
+        required: false, visible: true, primaryDisplay: false, allowedValues: null,
+        deleted: false, order: 1, createdAt: '2026-01-01', createdBy: 'admin@test.com'
+      })
+      data['team-data/teams.json'].teams.team_1.metadata.field_region = 'APAC'
+      data['team-data/teams.json'].teams.team_2.metadata.field_region = 'EMEA'
+      const storage = makeStorage(data)
+      const stores = makeStores(storage)
+      expect(stores.teamStore.usesDatabase).toBe(false)
+
+      await executeMigration(storage, {
+        sourceFieldId: 'field_region',
+        optionSetName: 'regions',
+        optionSetLabel: 'Regions'
+      }, 'admin@test.com', stores)
+
+      expect(storage.writeToStorage).toHaveBeenCalledWith('team-data/teams.json', expect.anything())
+      const teams = storage._data['team-data/teams.json']
+      expect(teams.teams.team_1.metadata.field_region).toEqual(['APAC'])
+      expect(teams.teams.team_2.metadata.field_region).toEqual(['EMEA'])
+    })
+  })
+
+  // ─── MongoDB-backed team-scope conversion ───
+
+  describe('executeMigration (MongoDB team store)', () => {
+    let connection
+    let TeamModel
+    const dbName = 'test_field_opts_migration_' + process.pid
+
+    beforeAll(async () => {
+      const uri = process.env.MONGODB_URI
+      if (!uri) return
+      connection = await mongoose.createConnection(uri, { dbName })
+      TeamModel = connection.model('core__teams', teamSchema, 'core__teams')
+    })
+
+    afterAll(async () => {
+      if (connection) {
+        await connection.db.dropDatabase()
+        await connection.close()
+      }
+    })
+
+    beforeEach(async () => {
+      if (TeamModel) await TeamModel.deleteMany({})
+    })
+
+    it.skipIf(!process.env.MONGODB_URI)('converts team-scope values via updateTeamFields instead of writing the teams.json blob', async () => {
+      const data = baseStorageData()
+      delete data['team-data/teams.json']
+      data['team-data/field-definitions.json'].teamFields.push({
+        id: 'field_region', label: 'Region', type: 'free-text', multiValue: false,
+        required: false, visible: true, primaryDisplay: false, allowedValues: null,
+        deleted: false, order: 1, createdAt: '2026-01-01', createdBy: 'admin@test.com'
+      })
+      const storage = makeStorage(data)
+
+      const teamStore = createTeamStore(storage, { model: TeamModel })
+      const team1 = await TeamModel.create({ teamId: 'team_1', name: 'Platform', orgKey: 'org1', metadata: { field_region: 'APAC' }, createdAt: '2026-01-01', createdBy: 'admin@test.com' })
+      const team2 = await TeamModel.create({ teamId: 'team_2', name: 'ML Team', orgKey: 'org1', metadata: { field_region: 'EMEA' }, createdAt: '2026-01-01', createdBy: 'admin@test.com' })
+      const fieldStore = createFieldStore(storage)
+
+      expect(teamStore.usesDatabase).toBe(true)
+
+      const result = await executeMigration(storage, {
+        sourceFieldId: 'field_region',
+        optionSetName: 'regions',
+        optionSetLabel: 'Regions'
+      }, 'admin@test.com', { fieldStore, teamStore })
+
+      expect(result.error).toBeUndefined()
+      expect(result.valuesConverted).toBe(2)
+      // Never wrote the whole-blob teams.json — the DB path must not fall back to it.
+      expect(storage._data['team-data/teams.json']).toBeUndefined()
+
+      const updated1 = await TeamModel.findOne({ teamId: team1.teamId }).lean()
+      const updated2 = await TeamModel.findOne({ teamId: team2.teamId }).lean()
+      expect(updated1.metadata.field_region).toEqual(['APAC'])
+      expect(updated2.metadata.field_region).toEqual(['EMEA'])
     })
   })
 })

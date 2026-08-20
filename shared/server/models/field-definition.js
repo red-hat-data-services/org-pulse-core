@@ -14,6 +14,12 @@ const fieldDefinitionSchema = new mongoose.Schema({
   deleted: { type: Boolean, default: false },
   order: { type: Number },
   allowedValues: { type: [String], default: undefined },
+  // Provenance marker for definitions created by the Sheets-to-in-app
+  // migration (holds the source customFields config key). Null for
+  // admin-created definitions. Additive — the file-based format has no
+  // equivalent property. Used to dedup on migration retry without matching
+  // on label, which could otherwise adopt an admin-created field.
+  sourceKey: { type: String, default: null, index: true },
   createdAt: { type: String },
   createdBy: { type: String }
 }, {

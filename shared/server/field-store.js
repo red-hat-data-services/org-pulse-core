@@ -84,6 +84,7 @@ function createFieldStore(storage, options = {}) {
       helpText: doc.helpText,
       allowedValues: doc.allowedValues == null ? null : doc.allowedValues,
       optionsRef: doc.optionsRef,
+      sourceKey: doc.sourceKey == null ? null : doc.sourceKey,
       deleted: doc.deleted,
       order: doc.order,
       createdAt: doc.createdAt,
@@ -189,6 +190,10 @@ function createFieldStore(storage, options = {}) {
             helpText: definition.helpText || null,
             allowedValues: definition.allowedValues || null,
             optionsRef: definition.optionsRef || null,
+            // Provenance marker for migration-created definitions, threaded
+            // through in the Mongoose branch only — the file branch never
+            // stores this property (see field-definition.js schema comment).
+            sourceKey: definition.sourceKey || null,
             deleted: false,
             order,
             createdAt: new Date().toISOString(),
@@ -618,7 +623,8 @@ function createFieldStore(storage, options = {}) {
     softDeleteField,
     reorderFields,
     updatePersonFields,
-    validateFieldValues
+    validateFieldValues,
+    usesDatabase: !!Model
   };
 }
 
@@ -627,5 +633,7 @@ module.exports = {
   coerceFieldValue,
   validateAllowedValues,
   FIELD_DEFS_KEY,
-  VALID_FIELD_TYPES
+  VALID_FIELD_TYPES,
+  MAX_ALLOWED_VALUES,
+  MAX_ALLOWED_VALUE_LENGTH
 };
