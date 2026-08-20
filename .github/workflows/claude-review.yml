@@ -236,7 +236,7 @@ jobs:
       - name: Claude Code Review
         if: steps.check-paths.outputs.needs_review == 'true' && steps.context.outputs.is_fork != 'true' && steps.fork-guard.outputs.is_fork != 'true'
         id: claude-review
-        uses: anthropics/claude-code-action@v1.0.189
+        uses: anthropics/claude-code-action@v1.0.193
         with:
           use_vertex: "true"
           track_progress: true
@@ -307,7 +307,7 @@ jobs:
       - name: Claude Code Review (Read-Only)
         if: steps.check-paths.outputs.needs_review == 'true' && steps.context.outputs.is_fork == 'true' && github.event_name == 'pull_request_target'
         id: claude-review-fork
-        uses: anthropics/claude-code-action@v1.0.189
+        uses: anthropics/claude-code-action@v1.0.193
         with:
           use_vertex: "true"
           github_token: ${{ secrets.GITHUB_TOKEN }}
