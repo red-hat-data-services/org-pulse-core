@@ -63,7 +63,7 @@
               <span class="scope-chip-btn inline-flex items-center px-1.5 py-0.5 ml-1.5 text-[10px] font-medium rounded-md align-middle leading-none">Module</span>
             </span>
             <span v-else-if="item.avatarSrc" class="text-gray-700 inline-flex items-center">
-              <img :src="item.avatarSrc" :alt="item.label" class="w-4 h-4 mr-2 rounded-full flex-shrink-0" />
+              <img :src="item.avatarSrc" :alt="item.label" class="w-7 h-7 mr-2 rounded-full flex-shrink-0" />
               <span v-html="highlightMatch(formatLabel(item))" />
             </span>
             <span v-else class="text-gray-700" v-html="highlightMatch(formatLabel(item))" />
