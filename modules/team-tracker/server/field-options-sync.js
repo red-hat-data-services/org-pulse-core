@@ -198,9 +198,10 @@ function sourceLabel(sourceConfig) {
  * @param {string} [linkConfig.orgId] - Atlassian org ID (required for teams)
  * @param {string} [linkConfig.siteId] - Cloud site ID (optional, for teams)
  * @param {string} [linkConfig.label] - Display label for the option set
+ * @param {object} auditLog - Audit log instance from the module context. Required — no fallback.
  * @returns {Promise<object>} Sync result
  */
-async function linkToJira(storage, jiraRequest, optionSetName, linkConfig) {
+async function linkToJira(storage, jiraRequest, optionSetName, linkConfig, auditLog) {
   const { entityType, label } = linkConfig;
 
   if (!entityType || !SUPPORTED_ENTITY_TYPES.includes(entityType)) {
@@ -230,7 +231,7 @@ async function linkToJira(storage, jiraRequest, optionSetName, linkConfig) {
     values,
     label: label || undefined,
     richValues
-  });
+  }, auditLog);
 
   // Store the source config for future syncs
   const data = await fieldOptionsStore.readFieldOptions(storage, optionSetName);
@@ -287,9 +288,10 @@ async function unlinkFromJira(storage, optionSetName) {
  * @param {object} storage
  * @param {function} jiraRequest
  * @param {string} optionSetName
+ * @param {object} auditLog - Audit log instance from the module context. Required — no fallback.
  * @returns {Promise<object>} Sync result
  */
-async function syncOptionSet(storage, jiraRequest, optionSetName) {
+async function syncOptionSet(storage, jiraRequest, optionSetName, auditLog) {
   const data = await fieldOptionsStore.readFieldOptions(storage, optionSetName);
   if (!data || !data.source || !data.sourceConfig) {
     throw new Error('Option set "' + optionSetName + '" is not linked to an external source');
@@ -303,7 +305,7 @@ async function syncOptionSet(storage, jiraRequest, optionSetName) {
     sourceProject: sourceLabel(sc),
     values,
     richValues
-  });
+  }, auditLog);
 
   return {
     optionSet: optionSetName,
@@ -320,9 +322,10 @@ async function syncOptionSet(storage, jiraRequest, optionSetName) {
  *
  * @param {object} storage
  * @param {function} jiraRequest
+ * @param {object} auditLog - Audit log instance from the module context. Required — no fallback.
  * @returns {Promise<object>} Summary of all sync operations
  */
-async function syncAllLinked(storage, jiraRequest) {
+async function syncAllLinked(storage, jiraRequest, auditLog) {
   const allSets = await fieldOptionsStore.listFieldOptions(storage);
   const linked = allSets.filter(s => s.source);
 
@@ -333,7 +336,7 @@ async function syncAllLinked(storage, jiraRequest) {
   const results = [];
   for (const set of linked) {
     try {
-      const result = await syncOptionSet(storage, jiraRequest, set.name);
+      const result = await syncOptionSet(storage, jiraRequest, set.name, auditLog);
       results.push({ name: set.name, status: 'success', ...result });
     } catch (err) {
       console.error('[field-options-sync] Failed to sync "' + set.name + '":', err.message);

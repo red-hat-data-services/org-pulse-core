@@ -14,6 +14,7 @@ import { describe, it, expect, vi } from 'vitest'
 
 const fieldOptionsStore = require('../../server/field-options-store')
 const fieldOptionsSync = require('../../server/field-options-sync')
+const { createAuditLog } = require('../../../../shared/server/audit-log')
 
 function makeStorage(initial = {}) {
   const data = { ...initial }
@@ -646,7 +647,7 @@ describe('end-to-end: link, detect orphans, migrate', () => {
 
     const linkResult = await fieldOptionsSync.linkToJira(storage, jiraRequest, 'component', {
       projectKey: 'RHAI', entityType: 'components'
-    })
+    }, createAuditLog(storage))
     expect(linkResult.linked).toBe(true)
 
     // Step 2: Verify orphans were detected

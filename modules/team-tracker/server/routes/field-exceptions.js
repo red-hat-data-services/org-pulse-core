@@ -6,7 +6,7 @@
 const fieldExceptionsStore = require('../field-exceptions-store');
 
 module.exports = function registerFieldExceptionRoutes(router, context) {
-  const { storage, requireTeamAdmin, requireScope, fieldStore, teamStore } = context;
+  const { storage, requireTeamAdmin, requireScope, fieldStore, teamStore, auditLog } = context;
   const { readFromStorage } = storage;
 
   const DEMO_MODE = process.env.DEMO_MODE === 'true';
@@ -182,7 +182,8 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
     const { exception, created } = await fieldExceptionsStore.createException(
       storage,
       { entityType, entityId, fieldId, reason: reason.trim() },
-      actorEmail
+      actorEmail,
+      auditLog
     );
 
     res.status(created ? 201 : 200).json({ exception });
@@ -215,7 +216,7 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
     if (guarded) return;
 
     const actorEmail = req.userEmail || 'unknown';
-    const removed = await fieldExceptionsStore.removeException(storage, req.params.id, actorEmail);
+    const removed = await fieldExceptionsStore.removeException(storage, req.params.id, actorEmail, auditLog);
 
     if (!removed) {
       return res.status(404).json({ error: 'Exception not found' });

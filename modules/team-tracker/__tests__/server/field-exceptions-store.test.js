@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 
 const fieldExceptionsStore = require('../../server/field-exceptions-store')
+const { createAuditLog } = require('../../../../shared/server/audit-log')
 
 function makeStorage(initial = {}) {
   const data = { ...initial }
@@ -113,7 +114,8 @@ describe('field-exceptions-store', () => {
       const { exception, created } = await fieldExceptionsStore.createException(
         storage,
         { entityType: 'person', entityId: 'alice', fieldId: 'field_f1', reason: 'test reason' },
-        'admin@test.com'
+        'admin@test.com',
+        createAuditLog(storage)
       )
       expect(created).toBe(true)
       expect(exception.id).toMatch(/^fex_[0-9a-f]{8}$/)
@@ -140,7 +142,8 @@ describe('field-exceptions-store', () => {
       const { exception, created } = await fieldExceptionsStore.createException(
         storage,
         { entityType: 'person', entityId: 'alice', fieldId: 'field_f1', reason: 'new reason' },
-        'admin@test.com'
+        'admin@test.com',
+        createAuditLog(storage)
       )
       expect(created).toBe(false)
       expect(exception.id).toBe('fex_existing') // Same ID
@@ -157,7 +160,8 @@ describe('field-exceptions-store', () => {
       await fieldExceptionsStore.createException(
         storage,
         { entityType: 'team', entityId: 'team_a', fieldId: '__boards__', reason: 'no boards' },
-        'admin@test.com'
+        'admin@test.com',
+        createAuditLog(storage)
       )
       const log = storage._data['audit-log.json']
       expect(log.entries).toHaveLength(1)
@@ -174,7 +178,8 @@ describe('field-exceptions-store', () => {
       await fieldExceptionsStore.createException(
         storage,
         { entityType: 'team', entityId: 'team_a', fieldId: '__boards__', reason: 'new' },
-        'admin@test.com'
+        'admin@test.com',
+        createAuditLog(storage)
       )
       const log = storage._data['audit-log.json']
       expect(log.entries).toHaveLength(1)
@@ -190,7 +195,7 @@ describe('field-exceptions-store', () => {
           exceptions: [{ id: 'fex_abc', entityType: 'person', entityId: 'alice', fieldId: 'field_f1', reason: 'test', createdAt: '2026-01-01', createdBy: 'a@t.com' }]
         }
       })
-      const removed = await fieldExceptionsStore.removeException(storage, 'fex_abc', 'admin@test.com')
+      const removed = await fieldExceptionsStore.removeException(storage, 'fex_abc', 'admin@test.com', createAuditLog(storage))
       expect(removed).toBeTruthy()
       expect(removed.id).toBe('fex_abc')
 
@@ -200,7 +205,7 @@ describe('field-exceptions-store', () => {
 
     it('returns null for non-existent ID', async () => {
       const storage = storageWithAuditLog({ 'team-data/field-exceptions.json': { version: 1, exceptions: [] } })
-      const removed = await fieldExceptionsStore.removeException(storage, 'fex_nope', 'admin@test.com')
+      const removed = await fieldExceptionsStore.removeException(storage, 'fex_nope', 'admin@test.com', createAuditLog(storage))
       expect(removed).toBeNull()
     })
 
@@ -211,10 +216,21 @@ describe('field-exceptions-store', () => {
           exceptions: [{ id: 'fex_abc', entityType: 'person', entityId: 'alice', fieldId: 'field_f1', reason: 'test', createdAt: '2026-01-01', createdBy: 'a@t.com' }]
         }
       })
-      await fieldExceptionsStore.removeException(storage, 'fex_abc', 'admin@test.com')
+      await fieldExceptionsStore.removeException(storage, 'fex_abc', 'admin@test.com', createAuditLog(storage))
       const log = storage._data['audit-log.json']
       expect(log.entries).toHaveLength(1)
       expect(log.entries[0].action).toBe('field-exception.remove')
+    })
+
+    it('throws immediately when auditLog is missing', async () => {
+      const storage = storageWithAuditLog()
+      await expect(fieldExceptionsStore.createException(
+        storage,
+        { entityType: 'person', entityId: 'alice', fieldId: 'field_f1', reason: 'test' },
+        'admin@test.com'
+      )).rejects.toThrow(/requires an injected auditLog/)
+      await expect(fieldExceptionsStore.removeException(storage, 'fex_abc', 'admin@test.com'))
+        .rejects.toThrow(/requires an injected auditLog/)
     })
   })
 

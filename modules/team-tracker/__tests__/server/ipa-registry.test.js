@@ -311,10 +311,11 @@ describe('LDAP import route logic', () => {
   })
 
   it('writes audit log entry on import', async () => {
-    const { appendAuditEntry } = require('../../../../shared/server/audit-log')
+    const { createAuditLog } = require('../../../../shared/server/audit-log')
     const storage = makeStorage({ 'audit-log.json': { entries: [], maxEntries: 100 } })
+    const { appendAuditEntry } = createAuditLog(storage)
 
-    await appendAuditEntry(storage, {
+    await appendAuditEntry({
       action: 'person.ldap-import',
       actor: 'admin@test.com',
       entityType: 'person',

@@ -9,7 +9,6 @@
  */
 
 const fieldOptionsStore = require('../field-options-store');
-const { appendAuditEntry } = require('../../../../shared/server/audit-log');
 
 const REGISTRY_KEY = 'team-data/registry.json';
 
@@ -94,10 +93,11 @@ async function previewMigration(storage, sourceFieldId, { fieldStore, teamStore 
  * @param {object} stores - Store instances shared with the rest of the app (required)
  * @param {object} stores.fieldStore - Field store instance from the module context
  * @param {object} stores.teamStore - Team store instance from the module context
+ * @param {object} stores.auditLog - Audit log instance from the module context
  */
-async function executeMigration(storage, params, actorEmail, { fieldStore, teamStore } = {}) {
-  if (!fieldStore || !teamStore) {
-    throw new Error('executeMigration requires an injected fieldStore and teamStore (from context) — do not construct file-backed stores here');
+async function executeMigration(storage, params, actorEmail, { fieldStore, teamStore, auditLog } = {}) {
+  if (!fieldStore || !teamStore || !auditLog) {
+    throw new Error('executeMigration requires an injected fieldStore, teamStore and auditLog (from context) — do not construct file-backed stores here');
   }
   const { sourceFieldId, optionSetName, optionSetLabel, createCounterpart, counterpartLabel, seedFromMembers } = params;
 
@@ -121,7 +121,7 @@ async function executeMigration(storage, params, actorEmail, { fieldStore, teamS
   };
 
   // Step 1: Create the field option set from extracted values
-  await fieldOptionsStore.replaceValues(storage, optionSetName, preview.uniqueValues, optionSetLabel, actorEmail);
+  await fieldOptionsStore.replaceValues(storage, optionSetName, preview.uniqueValues, optionSetLabel, actorEmail, auditLog);
 
   // Step 2: Update the source field to link to the option set
   await fieldStore.updateFieldDefinition(preview.scope, sourceFieldId, {
@@ -240,7 +240,7 @@ async function executeMigration(storage, params, actorEmail, { fieldStore, teamS
     }
   }
 
-  await appendAuditEntry(storage, {
+  await auditLog.appendAuditEntry({
     action: 'migration.field-to-options',
     actor: actorEmail,
     entityType: 'migration',

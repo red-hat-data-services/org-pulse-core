@@ -4,6 +4,7 @@ import mongoose from 'mongoose'
 
 const { previewMigration, executeMigration } = require('../../server/migration/field-options-migration')
 const { createFieldStore } = require('../../../../shared/server/field-store')
+const { createAuditLog } = require('../../../../shared/server/audit-log')
 const { createTeamStore } = require('../../../../shared/server/team-store')
 const { teamSchema } = require('../../../../shared/server/models/team')
 
@@ -22,7 +23,8 @@ function makeStorage(initial = {}) {
 }
 
 function makeStores(storage) {
-  return { fieldStore: createFieldStore(storage), teamStore: createTeamStore(storage) }
+  const auditLog = createAuditLog(storage)
+  return { fieldStore: createFieldStore(storage, { auditLog }), teamStore: createTeamStore(storage, { auditLog }), auditLog }
 }
 
 function baseStorageData() {
@@ -146,11 +148,11 @@ describe('field-options-migration', () => {
 
     it('reads through the injected fieldStore instance rather than a new file-backed store', async () => {
       const storage = makeStorage(baseStorageData())
-      const realFieldStore = createFieldStore(storage)
+      const realFieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       const fieldStore = {
         readFieldDefinitions: vi.fn((...args) => realFieldStore.readFieldDefinitions(...args))
       }
-      const teamStore = createTeamStore(storage)
+      const teamStore = createTeamStore(storage, { auditLog: createAuditLog(storage) })
 
       const result = await previewMigration(storage, 'field_comp', { fieldStore, teamStore })
 
@@ -340,18 +342,19 @@ describe('field-options-migration', () => {
       data['team-data/teams.json'].teams.team_2.metadata.field_region = 'EMEA'
       const storage = makeStorage(data)
 
-      const realTeamStore = createTeamStore(storage)
+      const auditLog = createAuditLog(storage)
+      const realTeamStore = createTeamStore(storage, { auditLog })
       const teamStore = {
         readTeams: vi.fn((...args) => realTeamStore.readTeams(...args)),
         updateTeamFields: vi.fn((...args) => realTeamStore.updateTeamFields(...args))
       }
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog })
 
       const result = await executeMigration(storage, {
         sourceFieldId: 'field_region',
         optionSetName: 'regions',
         optionSetLabel: 'Regions'
-      }, 'admin@test.com', { fieldStore, teamStore })
+      }, 'admin@test.com', { fieldStore, teamStore, auditLog })
 
       expect(result.valuesExtracted).toBe(2)
       expect(teamStore.readTeams).toHaveBeenCalled()
@@ -418,10 +421,11 @@ describe('field-options-migration', () => {
       })
       const storage = makeStorage(data)
 
-      const teamStore = createTeamStore(storage, { model: TeamModel })
+      const auditLog = createAuditLog(storage)
+      const teamStore = createTeamStore(storage, { model: TeamModel, auditLog })
       const team1 = await TeamModel.create({ teamId: 'team_1', name: 'Platform', orgKey: 'org1', metadata: { field_region: 'APAC' }, createdAt: '2026-01-01', createdBy: 'admin@test.com' })
       const team2 = await TeamModel.create({ teamId: 'team_2', name: 'ML Team', orgKey: 'org1', metadata: { field_region: 'EMEA' }, createdAt: '2026-01-01', createdBy: 'admin@test.com' })
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog })
 
       expect(teamStore.usesDatabase).toBe(true)
 
@@ -429,7 +433,7 @@ describe('field-options-migration', () => {
         sourceFieldId: 'field_region',
         optionSetName: 'regions',
         optionSetLabel: 'Regions'
-      }, 'admin@test.com', { fieldStore, teamStore })
+      }, 'admin@test.com', { fieldStore, teamStore, auditLog })
 
       expect(result.error).toBeUndefined()
       expect(result.valuesConverted).toBe(2)

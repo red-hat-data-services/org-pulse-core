@@ -1,4 +1,5 @@
 const { createFieldStore } = require('../../../../shared/server/field-store')
+const { createAuditLog } = require('../../../../shared/server/audit-log')
 import { describe, it, expect, vi } from 'vitest'
 
 
@@ -28,7 +29,7 @@ async function setupRoutes(storageData) {
   }
 
   const storage = makeStorage(storageData)
-  const fieldStore = createFieldStore(storage)
+  const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
   const context = {
     storage,
     requireAdmin: (req, res, next) => next(),

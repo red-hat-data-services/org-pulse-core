@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
 const { createFieldStore } = require('../../../../shared/server/field-store')
+const { createAuditLog } = require('../../../../shared/server/audit-log')
 
 function makeStorage(initial = {}) {
   const data = { ...initial }
@@ -28,7 +29,7 @@ describe('field-store module integration', () => {
   describe('createFieldDefinition', () => {
     it('creates a free-text field', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       const field = await fieldStore.createFieldDefinition('person', {
         label: 'Focus Area', type: 'free-text'
       }, 'admin@test.com')
@@ -43,7 +44,7 @@ describe('field-store module integration', () => {
 
     it('creates a constrained field with multiValue', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       const field = await fieldStore.createFieldDefinition('person', {
         label: 'Skills', type: 'constrained', multiValue: true, allowedValues: ['Go', 'Rust']
       }, 'admin@test.com')
@@ -55,7 +56,7 @@ describe('field-store module integration', () => {
 
     it('allows multiValue on free-text fields', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       const field = await fieldStore.createFieldDefinition('person', {
         label: 'Notes', type: 'free-text', multiValue: true
       }, 'admin@test.com')
@@ -65,7 +66,7 @@ describe('field-store module integration', () => {
 
     it('allows multiValue on person-reference-linked fields', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       const field = await fieldStore.createFieldDefinition('person', {
         label: 'Leads', type: 'person-reference-linked', multiValue: true
       }, 'admin@test.com')
@@ -75,7 +76,7 @@ describe('field-store module integration', () => {
 
     it('rejects invalid allowedValues (not array)', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       await expect(fieldStore.createFieldDefinition('person', {
           label: 'Bad', type: 'constrained', allowedValues: 'not-an-array'
         }, 'admin@test.com')).rejects.toThrow('allowedValues must be an array')
@@ -83,7 +84,7 @@ describe('field-store module integration', () => {
 
     it('rejects allowedValues with non-string entries', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       await expect(fieldStore.createFieldDefinition('person', {
           label: 'Bad', type: 'constrained', allowedValues: [1, 2, 3]
         }, 'admin@test.com')).rejects.toThrow('Each allowedValues entry must be a string')
@@ -91,7 +92,7 @@ describe('field-store module integration', () => {
 
     it('rejects empty allowedValues entries', async () => {
       const storage = makeStorageWithFieldDefs({ personFields: [], teamFields: [] })
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       await expect(fieldStore.createFieldDefinition('person', {
           label: 'Bad', type: 'constrained', allowedValues: ['', 'valid']
         }, 'admin@test.com')).rejects.toThrow('allowedValues entries cannot be empty strings')
@@ -104,7 +105,7 @@ describe('field-store module integration', () => {
         personFields: [{ id: 'field_abc', label: 'Old', type: 'free-text', visible: true, order: 0, deleted: false }],
         teamFields: []
       })
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       const updated = await fieldStore.updateFieldDefinition('person', 'field_abc', {
         label: 'New Label', visible: false
       }, 'admin@test.com')
@@ -120,7 +121,7 @@ describe('field-store module integration', () => {
         personFields: [{ id: 'field_abc', label: 'Test', deleted: false, order: 0 }],
         teamFields: []
       })
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       const deleted = await fieldStore.softDeleteField('person', 'field_abc', 'admin@test.com')
 
       expect(deleted.deleted).toBe(true)
@@ -137,7 +138,7 @@ describe('field-store module integration', () => {
         ],
         teamFields: []
       })
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       await fieldStore.reorderFields('person', ['field_c', 'field_a', 'field_b'], 'admin@test.com')
 
       const defs = await fieldStore.readFieldDefinitions()
@@ -155,7 +156,7 @@ describe('field-store module integration', () => {
         ],
         teamFields: []
       })
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       const result = await fieldStore.validateFieldValues('person', {}, {}, {})
 
       expect(result.warnings).toContainEqual(expect.stringContaining('Required'))
@@ -174,7 +175,7 @@ describe('field-store module integration', () => {
         ],
         teamFields: []
       })
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       const result = await fieldStore.validateFieldValues('person', { field_a: 'invalid' }, {}, {})
 
       expect(result.warnings.length).toBeGreaterThan(0)
@@ -193,7 +194,7 @@ describe('field-store module integration', () => {
         ],
         teamFields: []
       })
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       const result = await fieldStore.validateFieldValues(
         'person', { field_comp: ['Anything'] }
       )
@@ -215,7 +216,7 @@ describe('field-store module integration', () => {
         ],
         teamFields: []
       })
-      const fieldStore = createFieldStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
       const resolver = () => null
       const result = await fieldStore.validateFieldValues(
         'person', { field_comp: ['Anything'] }, {}, { optionsResolver: resolver }

@@ -10,7 +10,6 @@ const { getAllPeople } = require('../../../../shared/server/roster');
 const { loadConfig, getOrgDisplayNames } = require('../../../../shared/server/roster-sync/config');
 const { runConsolidatedSync, isSyncInProgress: isConsolidatedSyncInProgress } = require('../../../../shared/server/roster-sync/consolidated-sync');
 
-const { appendAuditEntry } = require('../../../../shared/server/audit-log');
 const { mergePerson } = require('../../../../shared/server/roster-sync/lifecycle');
 
 const REGISTRY_KEY = 'team-data/registry.json';
@@ -31,6 +30,7 @@ function registerIpaRegistryRoutes(router, context) {
   var requireAdmin = context.requireAdmin;
   var requireScope = context.requireScope;
   var teamStore = context.teamStore;
+  var auditLog = context.auditLog;
   var DEMO_MODE = process.env.DEMO_MODE === 'true';
 
   // Rate limiting state for LDAP search (per user, 5 req / 10s)
@@ -775,7 +775,7 @@ function registerIpaRegistryRoutes(router, context) {
 
         // Audit log
         var actorEmail = req.auditActor || req.userEmail || 'unknown';
-        await appendAuditEntry(storage, {
+        await auditLog.appendAuditEntry({
           action: 'person.ldap-import',
           actor: actorEmail,
           entityType: 'person',

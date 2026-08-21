@@ -1,3 +1,4 @@
+const { createAuditLog } = require('../audit-log')
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest'
 import mongoose from 'mongoose'
 
@@ -22,7 +23,7 @@ function makeStore(opts = {}) {
   if (initialFieldDefs) initial[FIELD_DEFS_KEY] = initialFieldDefs;
 
   const storage = createMockStorage(initial);
-  const fieldStore = createFieldStore(storage, {});
+  const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) });
   return { fieldStore, storage };
 }
 
@@ -356,6 +357,14 @@ describe('usesDatabase', () => {
   });
 });
 
+describe('createFieldStore auditLog requirement', () => {
+  it('throws immediately when options.auditLog is missing', () => {
+    const storage = createMockStorage();
+    expect(() => createFieldStore(storage)).toThrow(/requires options\.auditLog/);
+    expect(() => createFieldStore(storage, {})).toThrow(/requires options\.auditLog/);
+  });
+});
+
 // ─── MongoDB-backed tests ───
 
 describe('field-store (MongoDB)', () => {
@@ -384,7 +393,7 @@ describe('field-store (MongoDB)', () => {
   function makeMongoStore() {
     if (!FieldModel) return null;
     const storage = createMockStorage({});
-    const fieldStore = createFieldStore(storage, { model: FieldModel });
+    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog: createAuditLog(storage) });
     return { fieldStore, storage };
   }
 

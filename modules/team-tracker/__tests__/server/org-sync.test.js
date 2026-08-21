@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const rosterSyncConfig = require('../../../../shared/server/roster-sync/config')
 const googleSheets = require('../../../../shared/server/google-sheets')
 const { createFieldStore } = require('../../../../shared/server/field-store')
+const { createAuditLog } = require('../../../../shared/server/audit-log')
 
 const {
   deriveTeamsFromPeople,
@@ -174,7 +175,7 @@ describe('runSync', () => {
       ]
     )
     const storage = makeStorage(data)
-    const fieldStore = createFieldStore(storage)
+    const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
 
     const result = await runSync(storage, null, {}, {}, fieldStore)
     expect(result.status).toBe('success')
@@ -194,7 +195,7 @@ describe('runSync', () => {
       ]
     )
     const storage = makeStorage(data)
-    const fieldStore = createFieldStore(storage)
+    const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
     fetchRawSheetSpy.mockRejectedValue(new Error('Sheet not found'))
 
     const result = await runSync(storage, 'sheet123', { teamBoardsTab: 'Missing Tab' }, {}, fieldStore)
@@ -214,7 +215,7 @@ describe('runSync', () => {
       ]
     )
     const storage = makeStorage(data)
-    const fieldStore = createFieldStore(storage)
+    const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
 
     await runSync(storage, null, {}, {}, fieldStore)
 

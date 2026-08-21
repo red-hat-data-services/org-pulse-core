@@ -4,7 +4,6 @@
  * Module-scoped to team-tracker (not shared/) per stability contract.
  */
 
-const { appendAuditEntry } = require('../../../shared/server/audit-log');
 const { getStorageMutex } = require('../../../shared/server/storage-mutex');
 
 const FIELD_OPTIONS_DIR = 'team-data/field-options';
@@ -64,7 +63,10 @@ async function getValues(storage, name) {
  * Add values to a field option set. Creates the option set if it does not exist.
  * Rejects writes to externally-managed option sets.
  */
-async function addValues(storage, name, values, actorEmail) {
+async function addValues(storage, name, values, actorEmail, auditLog) {
+  if (!auditLog) {
+    throw new Error('addValues requires an injected auditLog (from the module context) — there is no fallback');
+  }
   const mutex = getStorageMutex(optionsKey(name));
   return mutex.runExclusive(async () => {
     let options = await readFieldOptions(storage, name);
@@ -92,7 +94,7 @@ async function addValues(storage, name, values, actorEmail) {
       options.updatedBy = actorEmail;
       await writeFieldOptions(storage, name, options);
 
-      await appendAuditEntry(storage, {
+      await auditLog.appendAuditEntry({
         action: 'field-options.add',
         actor: actorEmail,
         entityType: 'field-options',
@@ -109,7 +111,10 @@ async function addValues(storage, name, values, actorEmail) {
  * Replace all values in a field option set.
  * Rejects writes to externally-managed option sets (source !== undefined).
  */
-async function replaceValues(storage, name, values, label, actorEmail) {
+async function replaceValues(storage, name, values, label, actorEmail, auditLog) {
+  if (!auditLog) {
+    throw new Error('replaceValues requires an injected auditLog (from the module context) — there is no fallback');
+  }
   const mutex = getStorageMutex(optionsKey(name));
   return mutex.runExclusive(async () => {
     const existing = await readFieldOptions(storage, name);
@@ -126,7 +131,7 @@ async function replaceValues(storage, name, values, label, actorEmail) {
     };
     await writeFieldOptions(storage, name, options);
 
-    await appendAuditEntry(storage, {
+    await auditLog.appendAuditEntry({
       action: 'field-options.replace',
       actor: actorEmail,
       entityType: 'field-options',
@@ -153,7 +158,10 @@ async function replaceValues(storage, name, values, label, actorEmail) {
  * @param {object} [opts.richValues] - Keyed by value name, contains enriched data
  * @returns {{ orphanedValues: string[], added: string[], removed: string[] }}
  */
-async function syncFromExternal(storage, name, opts) {
+async function syncFromExternal(storage, name, opts, auditLog) {
+  if (!auditLog) {
+    throw new Error('syncFromExternal requires an injected auditLog (from the module context) — there is no fallback');
+  }
   const mutex = getStorageMutex(optionsKey(name));
   return mutex.runExclusive(async () => {
     const { source, sourceProject, values, label, richValues } = opts;
@@ -196,7 +204,7 @@ async function syncFromExternal(storage, name, opts) {
     await writeFieldOptions(storage, name, options);
 
     if (added.length > 0 || removed.length > 0) {
-      await appendAuditEntry(storage, {
+      await auditLog.appendAuditEntry({
         action: 'field-options.external-sync',
         actor: source + '-sync',
         entityType: 'field-options',
@@ -275,7 +283,10 @@ async function findReferencedValues(storage, optionSetName, candidates) {
  * Remove values from a field option set.
  * Rejects writes to externally-managed option sets.
  */
-async function removeValues(storage, name, valuesToRemove, actorEmail) {
+async function removeValues(storage, name, valuesToRemove, actorEmail, auditLog) {
+  if (!auditLog) {
+    throw new Error('removeValues requires an injected auditLog (from the module context) — there is no fallback');
+  }
   const mutex = getStorageMutex(optionsKey(name));
   return mutex.runExclusive(async () => {
     const options = await readFieldOptions(storage, name);
@@ -294,7 +305,7 @@ async function removeValues(storage, name, valuesToRemove, actorEmail) {
       options.updatedBy = actorEmail;
       await writeFieldOptions(storage, name, options);
 
-      await appendAuditEntry(storage, {
+      await auditLog.appendAuditEntry({
         action: 'field-options.remove',
         actor: actorEmail,
         entityType: 'field-options',
@@ -318,7 +329,10 @@ async function removeValues(storage, name, valuesToRemove, actorEmail) {
  * @param {string} actorEmail
  * @returns {{ updated: number }|null} Count of person+team records updated, or null if set not found
  */
-async function renameValue(storage, name, oldValue, newValue, actorEmail) {
+async function renameValue(storage, name, oldValue, newValue, actorEmail, auditLog) {
+  if (!auditLog) {
+    throw new Error('renameValue requires an injected auditLog (from the module context) — there is no fallback');
+  }
   const release = await acquireMultiLock([
     optionsKey(name),
     'team-data/registry.json',
@@ -411,7 +425,7 @@ async function renameValue(storage, name, oldValue, newValue, actorEmail) {
       }
     }
 
-    await appendAuditEntry(storage, {
+    await auditLog.appendAuditEntry({
       action: 'field-options.rename',
       actor: actorEmail,
       entityType: 'field-options',

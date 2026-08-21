@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  */
 
 const { createFieldStore } = require('../../../../shared/server/field-store')
+const { createAuditLog } = require('../../../../shared/server/audit-log')
 const { createTeamStore } = require('../../../../shared/server/team-store')
 const rosterSyncConfig = require('../../../../shared/server/roster-sync/config')
 
@@ -69,8 +70,9 @@ function setupRoutes(storage, opts = {}) {
   }
 
   const registeredSearchHandler = { fn: null }
-  const fieldStore = createFieldStore(storage)
-  const teamStore = createTeamStore(storage)
+  const auditLog = createAuditLog(storage)
+  const fieldStore = createFieldStore(storage, { auditLog })
+  const teamStore = createTeamStore(storage, { auditLog })
   const context = {
     storage,
     requireAdmin: (req, res, next) => next(),
@@ -80,6 +82,7 @@ function setupRoutes(storage, opts = {}) {
       : undefined,
     fieldStore,
     teamStore,
+    auditLog,
     secrets: {}
   }
 

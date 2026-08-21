@@ -6,7 +6,6 @@
 
 const { REGISTRY_KEY, MAX_BOARDS, MAX_URL_LENGTH } = require('./team-store');
 const { validateAllowedValues, MAX_ALLOWED_VALUES, MAX_ALLOWED_VALUE_LENGTH } = require('./field-store');
-const { appendAuditEntry } = require('./audit-log');
 const { mergePerson } = require('./roster-sync/lifecycle');
 
 /**
@@ -414,11 +413,12 @@ async function previewMigration(storage, config) {
  * @param {object} stores - Store instances shared with the rest of the app (required)
  * @param {object} stores.fieldStore - Field store instance from the module context
  * @param {object} stores.teamStore - Team store instance from the module context
+ * @param {object} stores.auditLog - Audit log instance from the module context
  * @returns {{ migrated: boolean, teams: number, fields: number, assignments: number, boardsMigrated: number }}
  */
-async function migrateToInApp(storage, config, actorEmail, fieldOverrides, { fieldStore, teamStore } = {}) {
-  if (!fieldStore || !teamStore) {
-    throw new Error('migrateToInApp requires an injected fieldStore and teamStore (from context) — do not construct file-backed stores here');
+async function migrateToInApp(storage, config, actorEmail, fieldOverrides, { fieldStore, teamStore, auditLog } = {}) {
+  if (!fieldStore || !teamStore || !auditLog) {
+    throw new Error('migrateToInApp requires an injected fieldStore, teamStore and auditLog (from context) — do not construct file-backed stores here');
   }
 
   // Already migrated — skip
@@ -435,9 +435,9 @@ async function migrateToInApp(storage, config, actorEmail, fieldOverrides, { fie
   // `dbConnection` check, so they are always on the same backend — branch
   // on just one.
   if (!teamStore.usesDatabase) {
-    return migrateToInAppFile(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore });
+    return migrateToInAppFile(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore, auditLog });
   }
-  return migrateToInAppDatabase(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore });
+  return migrateToInAppDatabase(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore, auditLog });
 }
 
 /**
@@ -446,7 +446,7 @@ async function migrateToInApp(storage, config, actorEmail, fieldOverrides, { fie
  * byte-for-byte identical (same generated ids, same batched audit entries,
  * same wholesale blob writes).
  */
-async function migrateToInAppFile(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore }) {
+async function migrateToInAppFile(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore, auditLog }) {
   // ─── Read all data once ───
   const { generateTeamId, TEAMS_KEY } = require('./team-store');
   const { FIELD_DEFS_KEY } = require('./field-store');
@@ -792,7 +792,7 @@ async function migrateToInAppFile(storage, config, actorEmail, fieldOverrides, r
   });
 
   for (const entry of auditEntries) {
-    await appendAuditEntry(storage, entry);
+    await auditLog.appendAuditEntry(entry);
   }
 
   return { migrated: true, teams: teamsCreated, fields: fieldsCreated, assignments: assignmentsCreated, boardsMigrated };
@@ -852,7 +852,7 @@ async function migrateToInAppFile(storage, config, actorEmail, fieldOverrides, r
  *     has no such field and no such risk — it always creates a fresh field
  *     definition object in memory rather than looking one up.
  */
-async function migrateToInAppDatabase(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore }) {
+async function migrateToInAppDatabase(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore, auditLog }) {
   const { getOrgDisplayNames } = require('./roster-sync/config');
 
   const overrideMap = {};
@@ -1193,7 +1193,7 @@ async function migrateToInAppDatabase(storage, config, actorEmail, fieldOverride
   // already persisted per-entity above through the stores. ───
   await storage.writeToStorage(REGISTRY_KEY, registry);
 
-  await appendAuditEntry(storage, {
+  await auditLog.appendAuditEntry({
     action: 'migration.sheets_to_inapp',
     actor: actorEmail,
     entityType: 'system',
