@@ -4,6 +4,8 @@ import mongoose from 'mongoose'
 
 const { createTeamStore, extractBoardId } = require('../team-store');
 const { teamSchema } = require('../models/team');
+const { createRegistryStore } = require('../registry-store');
+const { registryEntrySchema } = require('../models/registry-entry');
 
 function createMockStorage(initialData = {}) {
   const store = {};
@@ -633,4 +635,133 @@ describe('team-store (MongoDB)', () => {
     const data = await teamStore.readTeams();
     expect(data.teams[team.id]).toBeUndefined();
   });
+});
+
+// ─── MongoDB-backed tests: team AND registry both on the database path ───
+
+describe('team-store (MongoDB team + MongoDB registry)', () => {
+  let connection;
+  let TeamModel;
+  let RegistryModel;
+  const dbName = 'test_teams_registry_' + process.pid;
+
+  beforeAll(async () => {
+    const uri = process.env.MONGODB_URI;
+    if (!uri) return;
+    connection = await mongoose.createConnection(uri, { dbName });
+    TeamModel = connection.model('core__teams', teamSchema, 'core__teams');
+    RegistryModel = connection.model('core__registry_entries', registryEntrySchema, 'core__registry_entries');
+  });
+
+  afterAll(async () => {
+    if (connection) {
+      await connection.db.dropDatabase();
+      await connection.close();
+    }
+  });
+
+  beforeEach(async () => {
+    if (TeamModel) await TeamModel.deleteMany({});
+    if (RegistryModel) await RegistryModel.deleteMany({});
+  });
+
+  function makeStores() {
+    if (!TeamModel) return null;
+    const storage = createMockStorage({});
+    const registryStore = createRegistryStore(storage, { model: RegistryModel });
+    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog: createAuditLog(storage), registryStore });
+    return { teamStore, registryStore, storage };
+  }
+
+  it.skipIf(!process.env.MONGODB_URI)('assignMember persists teamIds to the registry collection, not the file', async () => {
+    const result = makeStores();
+    if (!result) return;
+    const { teamStore, registryStore, storage } = result;
+
+    const team = await teamStore.createTeam('Platform', 'achen', 'admin@example.com');
+    await registryStore.upsertPerson('achen', { uid: 'achen', name: 'Alice Chen', teamIds: [] });
+
+    const res = await teamStore.assignMember(team.id, 'achen', 'admin@example.com');
+    expect(res).toEqual({ assigned: true });
+
+    expect((await registryStore.getPerson('achen')).teamIds).toEqual([team.id]);
+    expect(storage._store['team-data/registry.json']).toBeUndefined();
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('assignMember skips a person already assigned', async () => {
+    const result = makeStores();
+    if (!result) return;
+    const { teamStore, registryStore } = result;
+
+    const team = await teamStore.createTeam('Platform', 'achen', 'admin@example.com');
+    await registryStore.upsertPerson('achen', { uid: 'achen', name: 'Alice Chen', teamIds: [team.id] });
+
+    const res = await teamStore.assignMember(team.id, 'achen', 'admin@example.com');
+    expect(res).toEqual({ skipped: true, reason: 'Already assigned' });
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('assignMembersBulk assigns multiple people via the registry collection', async () => {
+    const result = makeStores();
+    if (!result) return;
+    const { teamStore, registryStore } = result;
+
+    const team = await teamStore.createTeam('Platform', 'achen', 'admin@example.com');
+    await registryStore.upsertPerson('achen', { uid: 'achen', name: 'Alice', teamIds: [] });
+    await registryStore.upsertPerson('bsmith', { uid: 'bsmith', name: 'Bob', teamIds: [team.id] });
+
+    const res = await teamStore.assignMembersBulk(team.id, ['achen', 'bsmith', 'nobody'], 'admin@example.com');
+    expect(res.assigned).toEqual(['achen']);
+    expect(res.skipped).toEqual(['bsmith', 'nobody']);
+    expect((await registryStore.getPerson('achen')).teamIds).toEqual([team.id]);
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('unassignMember removes teamIds in the registry collection', async () => {
+    const result = makeStores();
+    if (!result) return;
+    const { teamStore, registryStore } = result;
+
+    const team = await teamStore.createTeam('Platform', 'achen', 'admin@example.com');
+    await registryStore.upsertPerson('achen', { uid: 'achen', name: 'Alice Chen', teamIds: [team.id] });
+
+    const res = await teamStore.unassignMember(team.id, 'achen', 'admin@example.com');
+    expect(res).toEqual({ unassigned: true });
+    expect((await registryStore.getPerson('achen')).teamIds).toEqual([]);
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('deleteTeam removes the teamId from every person who had it, without touching others', async () => {
+    const result = makeStores();
+    if (!result) return;
+    const { teamStore, registryStore } = result;
+
+    const team = await teamStore.createTeam('Platform', 'achen', 'admin@example.com');
+    const other = await teamStore.createTeam('Data', 'achen', 'admin@example.com');
+    await registryStore.upsertPerson('achen', { uid: 'achen', name: 'Alice', teamIds: [team.id, other.id] });
+    await registryStore.upsertPerson('bsmith', { uid: 'bsmith', name: 'Bob', teamIds: [other.id] });
+
+    await teamStore.deleteTeam(team.id, 'admin@example.com');
+
+    expect((await registryStore.getPerson('achen')).teamIds).toEqual([other.id]);
+    expect((await registryStore.getPerson('bsmith')).teamIds).toEqual([other.id]);
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)(
+    'two concurrent assignMember calls for different people do not clobber each other',
+    async () => {
+      const result = makeStores();
+      if (!result) return;
+      const { teamStore, registryStore } = result;
+
+      const team = await teamStore.createTeam('Platform', 'achen', 'admin@example.com');
+      await registryStore.upsertPerson('achen', { uid: 'achen', name: 'Alice', teamIds: [] });
+      await registryStore.upsertPerson('bsmith', { uid: 'bsmith', name: 'Bob', teamIds: [] });
+
+      await Promise.all([
+        teamStore.assignMember(team.id, 'achen', 'admin@example.com'),
+        teamStore.assignMember(team.id, 'bsmith', 'admin@example.com')
+      ]);
+
+      expect((await registryStore.getPerson('achen')).teamIds).toEqual([team.id]);
+      expect((await registryStore.getPerson('bsmith')).teamIds).toEqual([team.id]);
+    }
+  );
 });

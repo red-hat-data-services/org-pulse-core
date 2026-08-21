@@ -1,9 +1,10 @@
 /**
  * Team CRUD operations with audit logging.
  * Reads/writes data/team-data/teams.json and updates teamIds on registry persons.
- * Supports both MongoDB (via Mongoose model) and file-based storage for teams.
- * The registry (team membership) always stays file-based in this task — its
- * own MongoDB migration is a later task (registry.json has its own model).
+ * Supports both MongoDB (via Mongoose model) and file-based storage for teams,
+ * independently of the registry's own backend (see registry-store.js) —
+ * `options.registryStore` selects the registry's path, `options.model`
+ * selects the team's path.
  */
 
 const crypto = require('crypto');
@@ -81,6 +82,9 @@ const MAX_DESCRIPTION_LENGTH = 2000;
  * @param {object} [options={}] - Options
  * @param {object} [options.model] - Optional Mongoose Team model for MongoDB path
  * @param {object} options.auditLog - Audit log instance (from the module context). Required — no fallback.
+ * @param {object} [options.registryStore] - Optional dual-path registry store (see
+ *   registry-store.js), used for the person-side of team assignment. Falls
+ *   back to a file-only store built on `storage` when omitted.
  * @returns {object} Team store API
  */
 function createTeamStore(storage, options = {}) {
@@ -89,6 +93,8 @@ function createTeamStore(storage, options = {}) {
     throw new Error('createTeamStore requires options.auditLog (from the module context) — there is no fallback');
   }
   const { appendAuditEntry } = options.auditLog;
+  const { createRegistryStore } = require('./registry-store');
+  const registryStore = options.registryStore || createRegistryStore(storage);
 
   // Map a Mongo document to the file-shaped team object.
   function toTeamShape(doc) {
@@ -311,25 +317,40 @@ function createTeamStore(storage, options = {}) {
       // vanish from the unassigned list. The file path keeps the original
       // order (delete team, then clean registry) because it updates both
       // under one multi-lock and that ordering doesn't have this hazard.
-      const registryMutex = getStorageMutex(REGISTRY_KEY);
-      await registryMutex.runExclusive(async () => {
-        const registry = await storage.readFromStorage(REGISTRY_KEY);
+      if (registryStore.usesDatabase) {
+        // Targeted per-person writes: only people who actually referenced
+        // this team are touched, so a concurrent unrelated person update
+        // can't be clobbered by a stale whole-registry read here.
+        const registry = await registryStore.readRegistry();
         if (registry && registry.people) {
-          let changed = false;
-          for (const person of Object.values(registry.people)) {
-            if (Array.isArray(person.teamIds)) {
-              const idx = person.teamIds.indexOf(teamId);
-              if (idx !== -1) {
-                person.teamIds.splice(idx, 1);
-                changed = true;
-              }
+          for (const [uid, person] of Object.entries(registry.people)) {
+            if (Array.isArray(person.teamIds) && person.teamIds.includes(teamId)) {
+              person.teamIds.splice(person.teamIds.indexOf(teamId), 1);
+              await registryStore.upsertPerson(uid, person);
             }
           }
-          if (changed) {
-            await storage.writeToStorage(REGISTRY_KEY, registry);
-          }
         }
-      });
+      } else {
+        const registryMutex = getStorageMutex(REGISTRY_KEY);
+        await registryMutex.runExclusive(async () => {
+          const registry = await storage.readFromStorage(REGISTRY_KEY);
+          if (registry && registry.people) {
+            let changed = false;
+            for (const person of Object.values(registry.people)) {
+              if (Array.isArray(person.teamIds)) {
+                const idx = person.teamIds.indexOf(teamId);
+                if (idx !== -1) {
+                  person.teamIds.splice(idx, 1);
+                  changed = true;
+                }
+              }
+            }
+            if (changed) {
+              await storage.writeToStorage(REGISTRY_KEY, registry);
+            }
+          }
+        });
+      }
 
       // Another caller can delete the same team between the findOne above and
       // this line. Only the caller that actually removed the document reports
@@ -409,6 +430,32 @@ function createTeamStore(storage, options = {}) {
     const data = await readTeams();
     if (!data.teams[teamId]) return { error: 'Team not found' };
 
+    if (registryStore.usesDatabase) {
+      const person = await registryStore.getPerson(uid);
+      if (!person) return { error: 'Person not found' };
+      if (!Array.isArray(person.teamIds)) person.teamIds = [];
+      if (person.teamIds.includes(teamId)) {
+        return { skipped: true, reason: 'Already assigned' };
+      }
+      const oldTeamIds = [...person.teamIds];
+      person.teamIds.push(teamId);
+      await registryStore.upsertPerson(uid, person);
+
+      await appendAuditEntry({
+        action: 'person.team.assign',
+        actor: actorEmail,
+        entityType: 'person',
+        entityId: uid,
+        entityLabel: person.name,
+        field: 'teamIds',
+        oldValue: oldTeamIds,
+        newValue: [...person.teamIds],
+        detail: `Assigned to team "${data.teams[teamId].name}"`
+      });
+
+      return { assigned: true };
+    }
+
     const mutex = getStorageMutex(REGISTRY_KEY);
     return mutex.runExclusive(async () => {
       const registry = await storage.readFromStorage(REGISTRY_KEY);
@@ -451,6 +498,45 @@ function createTeamStore(storage, options = {}) {
     if (!isSafeKey(teamId)) return { error: 'Invalid team ID' };
     const data = await readTeams();
     if (!data.teams[teamId]) return { error: 'Team not found' };
+
+    if (registryStore.usesDatabase) {
+      // Targeted per-person reads+writes rather than one whole-registry
+      // read-modify-write, so an unrelated concurrent person update can't
+      // be clobbered by this bulk operation's stale copy of it.
+      const assigned = [];
+      const skipped = [];
+
+      for (const uid of uids) {
+        if (!isSafeKey(uid)) { skipped.push(uid); continue; }
+        const person = await registryStore.getPerson(uid);
+        if (!person) { skipped.push(uid); continue; }
+
+        if (!Array.isArray(person.teamIds)) person.teamIds = [];
+        if (person.teamIds.includes(teamId)) {
+          skipped.push(uid);
+          continue;
+        }
+
+        const oldTeamIds = [...person.teamIds];
+        person.teamIds.push(teamId);
+        await registryStore.upsertPerson(uid, person);
+        assigned.push(uid);
+
+        await appendAuditEntry({
+          action: 'person.team.assign',
+          actor: actorEmail,
+          entityType: 'person',
+          entityId: uid,
+          entityLabel: person.name,
+          field: 'teamIds',
+          oldValue: oldTeamIds,
+          newValue: [...person.teamIds],
+          detail: `Assigned to team "${data.teams[teamId].name}" (bulk)`
+        });
+      }
+
+      return { assigned, skipped };
+    }
 
     const mutex = getStorageMutex(REGISTRY_KEY);
     return mutex.runExclusive(async () => {
@@ -503,6 +589,33 @@ function createTeamStore(storage, options = {}) {
     if (!isSafeKey(uid)) return { error: 'Invalid person UID' };
     const data = await readTeams();
     if (!data.teams[teamId]) return { error: 'Team not found' };
+
+    if (registryStore.usesDatabase) {
+      const person = await registryStore.getPerson(uid);
+      if (!person) return { error: 'Person not found' };
+      if (!Array.isArray(person.teamIds)) return { skipped: true, reason: 'Not assigned' };
+
+      const idx = person.teamIds.indexOf(teamId);
+      if (idx === -1) return { skipped: true, reason: 'Not assigned' };
+
+      const oldTeamIds = [...person.teamIds];
+      person.teamIds.splice(idx, 1);
+      await registryStore.upsertPerson(uid, person);
+
+      await appendAuditEntry({
+        action: 'person.team.unassign',
+        actor: actorEmail,
+        entityType: 'person',
+        entityId: uid,
+        entityLabel: person.name,
+        field: 'teamIds',
+        oldValue: oldTeamIds,
+        newValue: [...person.teamIds],
+        detail: `Unassigned from team "${data.teams[teamId].name}"`
+      });
+
+      return { unassigned: true };
+    }
 
     const mutex = getStorageMutex(REGISTRY_KEY);
     return mutex.runExclusive(async () => {

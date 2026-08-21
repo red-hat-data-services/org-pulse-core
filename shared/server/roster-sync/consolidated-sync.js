@@ -16,8 +16,8 @@ const { inferUsernames } = require('./username-inference');
 const { validateAmbiguousUsernames } = require('./username-validation');
 const { mergePerson, computeCoverage, processLifecycle } = require('./lifecycle');
 const { DEFAULT_EXCLUDED_TITLES } = require('./constants');
+const { createRegistryStore } = require('../registry-store');
 
-const REGISTRY_KEY = 'team-data/registry.json';
 const SYNC_LOG_KEY = 'team-data/sync-log.json';
 
 let syncInProgress = false;
@@ -35,12 +35,17 @@ const ENRICHMENT_FIELDS = [
  * LDAP + Sheets enrichment + username inference + lifecycle tracking.
  *
  * @param {object} storage - Storage module with readFromStorage/writeToStorage
+ * @param {object} [credentials]
+ * @param {object} [registryStore] - Optional dual-path registry store (see
+ *   registry-store.js). When omitted, falls back to a file-only store built
+ *   on `storage`, matching the pre-existing file-only behavior exactly.
  * @returns {object} Sync log with status, summary, coverage
  */
-async function runConsolidatedSync(storage, credentials) {
+async function runConsolidatedSync(storage, credentials, registryStore) {
   if (syncInProgress) {
     return { status: 'skipped', message: 'Sync already in progress' };
   }
+  const effectiveRegistryStore = registryStore || createRegistryStore(storage);
 
   const config = await loadConfig(storage);
   if (!config || !config.orgRoots || config.orgRoots.length === 0) {
@@ -182,7 +187,7 @@ async function runConsolidatedSync(storage, credentials) {
     }
 
     // ─── Phase 4: Lifecycle merge (LDAP people -> registry people) ───
-    var existing = (await storage.readFromStorage(REGISTRY_KEY)) || { meta: null, people: {} };
+    var existing = (await effectiveRegistryStore.readRegistry()) || { meta: null, people: {} };
     var existingPeople = existing.people || {};
     var now = new Date().toISOString();
     var merged = {};
@@ -498,7 +503,7 @@ async function runConsolidatedSync(storage, credentials) {
       coverage: computeCoverage(merged)
     };
 
-    await storage.writeToStorage(REGISTRY_KEY, registry);
+    await effectiveRegistryStore.writeRegistry(registry);
     await storage.writeToStorage(SYNC_LOG_KEY, syncLog);
 
     await updateSyncStatus(storage, 'success', null);

@@ -16,7 +16,7 @@ function blockDuringImpersonation(req, res, next) {
 }
 
 function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
-  const { tokenValidator, roleStore, getFileMtime } = options;
+  const { tokenValidator, roleStore, getFileMtime, registryStore } = options;
 
   // Registry cache for resolveUserUid (30s TTL + mtime invalidation)
   let _registryCache = null;
@@ -29,7 +29,11 @@ function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
     if (_registryCache && now < _registryCacheExpiry) {
       return _registryCache;
     }
-    if (getFileMtime) {
+    // The MongoDB path has no file mtime to check cheaply, so it falls back
+    // to plain TTL expiry. The file path keeps the existing mtime shortcut,
+    // which avoids re-reading (and re-parsing) an unchanged multi-MB file
+    // every 30s.
+    if (!(registryStore && registryStore.usesDatabase) && getFileMtime) {
       const mtime = await getFileMtime('team-data/registry.json');
       if (_registryCache && mtime === _registryCacheMtime) {
         _registryCacheExpiry = now + REGISTRY_CACHE_TTL_MS;
@@ -37,7 +41,9 @@ function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
       }
       _registryCacheMtime = mtime;
     }
-    _registryCache = await readFromStorage('team-data/registry.json');
+    _registryCache = registryStore
+      ? await registryStore.readRegistry()
+      : await readFromStorage('team-data/registry.json');
     _registryCacheExpiry = now + REGISTRY_CACHE_TTL_MS;
     return _registryCache;
   }
