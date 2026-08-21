@@ -67,6 +67,19 @@ async function startServer(options = {}) {
   }
 
   const { readFromStorage, writeToStorage, getFileMtime } = storageModule;
+
+  // ─── Config Store ───
+  // Constructed early: needed by roleStoreOpts.getAuthDomain below and by
+  // module state loading further down, both of which run before other
+  // consumer modules load.
+  const { createConfigStore } = require('../shared/server/config-store');
+  const configStoreOpts = {};
+  if (dbConnection) {
+    const { configSchema } = require('../shared/server/models/config');
+    configStoreOpts.model = dbConnection.model('core__config', configSchema, 'core__config');
+  }
+  const configStore = createConfigStore(storageModule, configStoreOpts);
+
   const { createAuthMiddleware, proxySecretGuard, blockDuringImpersonation } = require('../shared/server/auth');
   const { createRoleStore } = require('../shared/server/role-store');
   const { createRoleRegistry } = require('../shared/server/role-registry');
@@ -317,7 +330,7 @@ async function startServer(options = {}) {
       if (process.env.AUTH_EMAIL_DOMAIN) {
         return process.env.AUTH_EMAIL_DOMAIN.trim().toLowerCase();
       }
-      const config = await readFromStorage('site-config.json');
+      const config = await configStore.readFromStorage('site-config.json');
       return config?.authEmailDomain || null;
     },
     roleRegistry
@@ -430,6 +443,7 @@ async function startServer(options = {}) {
     blockDuringImpersonation,
     roleStore,
     auditLog,
+    configStore,
     roleRegistry,
     scopeRegistry,
     secretRegistry,
@@ -504,7 +518,7 @@ async function startServer(options = {}) {
   const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, fieldStore, teamStore, auditLog, roleRegistry, scopeRegistry, secretRegistry, dbConnection };
   const registries = { diagnostics: diagnosticsRegistry, messages: messageRegistry, refresh: refreshRegistry, exports: exportRegistry, searchIndex: searchIndexRegistry };
 
-  const persistedState = await loadModuleState(storageModule);
+  const persistedState = await loadModuleState(configStore);
   const startupState = Object.assign({}, persistedState);
   let startupStateChanged = false;
   for (const mod of builtInModules) {
@@ -514,10 +528,10 @@ async function startServer(options = {}) {
     }
   }
   if (startupStateChanged) {
-    await saveModuleState(storageModule, startupState);
+    await saveModuleState(configStore, startupState);
   }
   const effectiveState = getEffectiveState(builtInModules, startupState);
-  await reconcileStartupState(builtInModules, effectiveState, storageModule);
+  await reconcileStartupState(builtInModules, effectiveState, configStore);
   const enabledSlugs = new Set(Object.entries(effectiveState).filter(([, v]) => v).map(([k]) => k));
 
   // Update route context with resolved enabledSlugs
