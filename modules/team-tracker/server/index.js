@@ -5452,7 +5452,10 @@ module.exports = async function registerRoutes(router, context) {
   // ─── Export Hook ───
 
   if (context.registerExport) {
-    context.registerExport(require('./export'));
+    const teamTrackerExport = require('./export');
+    context.registerExport((addFile, exportStorage, mapping) =>
+      teamTrackerExport(addFile, exportStorage, mapping, { personStore, contributionStore, jiraNameMapStore })
+    );
   }
 
   // ─── Absorbed routes from org-roster and team-data ───

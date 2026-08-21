@@ -315,4 +315,51 @@ describe('teamTrackerExport', () => {
     expect(allContent).not.toContain('alicechen')
     expect(allContent).not.toContain('achen@example.com')
   })
+
+  it('uses the person/contribution/jira-name-map stores when passed, instead of raw storage', async () => {
+    const { createPersonStore } = require('../../server/person-store')
+    const { createContributionStore } = require('../../server/contribution-store')
+    const { createJiraNameMapStore } = require('../../server/jira-name-map-store')
+
+    const files = []
+    const addFile = (path, data) => files.push({ path, data })
+    // Deliberately no people/*.json, contribution, or jira-name-map keys in
+    // storage — if the export fell back to raw storage instead of using the
+    // stores below, these sections would be empty. Needs a storage mock
+    // with a real (not no-op) writeToStorage so the stores' writes are
+    // actually visible to the reads performed during export.
+    const backing = registryStorage()
+    const storage = {
+      async readFromStorage(key) { return backing[key] !== undefined ? JSON.parse(JSON.stringify(backing[key])) : null },
+      async writeToStorage(key, value) { backing[key] = JSON.parse(JSON.stringify(value)) },
+      async listStorageFiles(dir) {
+        return Object.keys(backing).filter(k => k.startsWith(dir + '/') && k.endsWith('.json')).map(k => k.slice(dir.length + 1))
+      }
+    }
+    const mapping = buildMapping(FIXTURE_ROSTER)
+
+    const personStore = createPersonStore(storage)
+    await personStore.writePerson('bob_smith', {
+      jiraDisplayName: 'Bob Smith',
+      fetchedAt: '2026-03-10T12:00:00.000Z',
+      resolved: { count: 1, issues: [] },
+      inProgress: { count: 0, issues: [] }
+    })
+
+    const contributionStore = createContributionStore(storage)
+    await contributionStore.writeResults('github', {
+      bobsmith: { totalContributions: 245, months: {}, fetchedAt: '2026-03-10T12:00:00.000Z' }
+    })
+
+    const jiraNameMapStore = createJiraNameMapStore(storage)
+    await jiraNameMapStore.writeAll({ 'Bob Smith': { accountId: 'acc-1', displayName: 'Bob Smith' } })
+
+    await teamTrackerExport(addFile, storage, mapping, { personStore, contributionStore, jiraNameMapStore })
+
+    expect(files.find(f => f.path.startsWith('people/'))).toBeDefined()
+    expect(files.find(f => f.path === 'github-contributions.json').data.users).toBeDefined()
+    const nameMapFile = files.find(f => f.path === 'jira-name-map.json')
+    expect(nameMapFile).toBeDefined()
+    expect(Object.keys(nameMapFile.data)).toHaveLength(1)
+  })
 })
