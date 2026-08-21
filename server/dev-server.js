@@ -260,7 +260,12 @@ async function startServer(options = {}) {
     'release-planning:read': 'releases:read',
     'release-planning:write': 'releases:write',
   };
-  await apiTokens.init(storageModule, { scopeRegistry, scopeMigrationMap });
+  const apiTokenOpts = { scopeRegistry, scopeMigrationMap };
+  if (dbConnection) {
+    const { apiTokenSchema } = require('../shared/server/models/api-token');
+    apiTokenOpts.model = dbConnection.model('core__api_tokens', apiTokenSchema, 'core__api_tokens');
+  }
+  await apiTokens.init(storageModule, apiTokenOpts);
 
   const PORT = port;
 
