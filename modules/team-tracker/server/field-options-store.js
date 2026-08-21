@@ -226,7 +226,7 @@ async function syncFromExternal(storage, name, opts, auditLog) {
  * @param {string[]} candidates - Values to check
  * @returns {string[]} Values from candidates that are still in use
  */
-async function findReferencedValues(storage, optionSetName, candidates) {
+async function findReferencedValues(storage, optionSetName, candidates, registryStore) {
   if (!candidates || candidates.length === 0) return [];
   const candidateSet = new Set(candidates);
   const referenced = new Set();
@@ -238,7 +238,8 @@ async function findReferencedValues(storage, optionSetName, candidates) {
 
   // Scan person records
   if (personFieldIds.length > 0) {
-    const registry = await storage.readFromStorage('team-data/registry.json');
+    const { createRegistryStore } = require('../../../shared/server/registry-store');
+    const registry = await (registryStore || createRegistryStore(storage)).readRegistry();
     if (registry && registry.people) {
       for (const person of Object.values(registry.people)) {
         if (!person._appFields) continue;
@@ -329,7 +330,7 @@ async function removeValues(storage, name, valuesToRemove, actorEmail, auditLog)
  * @param {string} actorEmail
  * @returns {{ updated: number }|null} Count of person+team records updated, or null if set not found
  */
-async function renameValue(storage, name, oldValue, newValue, actorEmail, auditLog) {
+async function renameValue(storage, name, oldValue, newValue, actorEmail, auditLog, registryStore) {
   if (!auditLog) {
     throw new Error('renameValue requires an injected auditLog (from the module context) — there is no fallback');
   }
@@ -369,29 +370,45 @@ async function renameValue(storage, name, oldValue, newValue, actorEmail, auditL
 
     // 3. Cascade to person records
     if (personFieldIds.length > 0) {
-      const registry = await storage.readFromStorage('team-data/registry.json');
+      const usesDatabase = !!(registryStore && registryStore.usesDatabase);
+      // MongoDB path can't safely call registryStore inside the file mutex
+      // held above (it's non-reentrant) — but it doesn't need to, since only
+      // the database branch below touches registryStore, and it never
+      // acquires that mutex itself.
+      const registry = usesDatabase
+        ? await registryStore.readRegistry()
+        : await storage.readFromStorage('team-data/registry.json');
       if (registry && registry.people) {
-        let registryModified = false;
-        for (const person of Object.values(registry.people)) {
+        const modifiedUids = new Set();
+        for (const [uid, person] of Object.entries(registry.people)) {
           if (!person._appFields) continue;
           for (const fieldId of personFieldIds) {
             const val = person._appFields[fieldId];
             if (val === oldValue) {
               person._appFields[fieldId] = newValue;
-              registryModified = true;
+              modifiedUids.add(uid);
               updated++;
             } else if (Array.isArray(val)) {
               const arrIdx = val.indexOf(oldValue);
               if (arrIdx !== -1) {
                 val[arrIdx] = newValue;
-                registryModified = true;
+                modifiedUids.add(uid);
                 updated++;
               }
             }
           }
         }
-        if (registryModified) {
-          await storage.writeToStorage('team-data/registry.json', registry);
+        if (modifiedUids.size > 0) {
+          if (usesDatabase) {
+            // Targeted per-person writes instead of one whole-registry
+            // write, so a concurrent unrelated person update can't be
+            // clobbered by this cascade's stale copy of it.
+            for (const uid of modifiedUids) {
+              await registryStore.upsertPerson(uid, registry.people[uid]);
+            }
+          } else {
+            await storage.writeToStorage('team-data/registry.json', registry);
+          }
         }
       }
     }

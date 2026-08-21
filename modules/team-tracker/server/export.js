@@ -18,15 +18,14 @@ function isEmptyCache(data) {
 
 /**
  * @param {object} [stores={}] - Optional dual-path stores from index.js
- *   (personStore, contributionStore, jiraNameMapStore). When omitted, falls
- *   back to reading the underlying files directly via `storage`, matching
- *   the pre-existing behavior exactly — this keeps the export hook usable
- *   standalone (as the existing tests do) while letting index.js pass the
- *   real stores in production so the export reflects whichever path
- *   (MongoDB or file) is actually in use for those three data sets.
- *   Snapshots, the registry, and roster-sync-config are not part of this
- *   module's MongoDB migration (registry: see models/registry-entry.js;
- *   snapshots: exportSnapshots reads the filesystem directly and isn't
+ *   (personStore, contributionStore, jiraNameMapStore, registryStore). When
+ *   omitted, falls back to reading the underlying files directly via
+ *   `storage`, matching the pre-existing behavior exactly — this keeps the
+ *   export hook usable standalone (as the existing tests do) while letting
+ *   index.js pass the real stores in production so the export reflects
+ *   whichever path (MongoDB or file) is actually in use for those data sets.
+ *   Snapshots and roster-sync-config are not part of this module's MongoDB
+ *   migration (exportSnapshots reads the filesystem directly and isn't
  *   converted here) and always come from the file.
  */
 module.exports = async function teamTrackerExport(addFile, storage, mapping, stores = {}) {
@@ -34,9 +33,10 @@ module.exports = async function teamTrackerExport(addFile, storage, mapping, sto
   const personStore = stores.personStore || null;
   const contributionStore = stores.contributionStore || null;
   const jiraNameMapStore = stores.jiraNameMapStore || null;
+  const registryStore = stores.registryStore || null;
 
   // 1. roster (from team-data/registry.json)
-  await exportRoster(addFile, readFromStorage, mapping);
+  await exportRoster(addFile, storage, mapping, registryStore);
 
   // 2. people/*.json
   await exportPeopleFiles(addFile, storage, mapping, personStore);
@@ -99,9 +99,9 @@ function anonymizePerson(person, mapping) {
   return result;
 }
 
-async function exportRoster(addFile, readFromStorage, mapping) {
+async function exportRoster(addFile, storage, mapping, registryStore) {
   const { readRosterFull } = require('../../../shared/server/roster');
-  const roster = await readRosterFull({ readFromStorage });
+  const roster = await readRosterFull(storage, registryStore);
   if (!roster) return;
 
   const anonymized = {};

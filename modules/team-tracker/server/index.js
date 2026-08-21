@@ -1,6 +1,11 @@
 module.exports = async function registerRoutes(router, context) {
-  const { storage, requireAdmin, requireTeamAdmin, requireScope, fieldStore: contextFieldStore, teamStore: contextTeamStore } = context;
+  const { storage, requireAdmin, requireTeamAdmin, requireScope, fieldStore: contextFieldStore, teamStore: contextTeamStore, registryStore: contextRegistryStore } = context;
   const { readFromStorage, writeToStorage, deleteStorageDirectory } = storage;
+  // Falls back to a file-only store built on `storage` when the context
+  // doesn't provide one (e.g. tests exercising this module standalone),
+  // matching the pre-existing file-only behavior exactly.
+  const { createRegistryStore } = require('../../../shared/server/registry-store');
+  const registryStore = contextRegistryStore || createRegistryStore(storage);
 
   // Register module scopes
   context.registerScopes([
@@ -128,7 +133,7 @@ module.exports = async function registerRoutes(router, context) {
   }
 
   async function readRosterFull() {
-    return await sharedReadRosterFull(storage);
+    return await sharedReadRosterFull(storage, registryStore);
   }
 
   async function getOrgDisplayNames() {
@@ -497,7 +502,7 @@ module.exports = async function registerRoutes(router, context) {
   // Build manager map at startup and rebuild on registry writes
   let managerMap = new Map();
   async function rebuildManagerMap() {
-    const registry = await readFromStorage('team-data/registry.json');
+    const registry = await registryStore.readRegistry();
     if (registry) {
       managerMap = permissions.buildManagerMap(registry);
     }
@@ -515,7 +520,7 @@ module.exports = async function registerRoutes(router, context) {
     if (!req.userUid) return res.status(403).json({ error: 'Cannot determine your identity' });
     const managed = permissions.getManagedUids(req.userUid, managerMap);
     if (managed.size === 0) return res.status(403).json({ error: 'Not authorized for this team' });
-    const registry = await readFromStorage('team-data/registry.json');
+    const registry = await registryStore.readRegistry();
     if (!registry || !registry.people) return res.status(403).json({ error: 'Not authorized for this team' });
     const teamId = req.params.teamId;
     for (const uid of managed) {
@@ -594,7 +599,7 @@ module.exports = async function registerRoutes(router, context) {
       });
     }
 
-    const registry = await readFromStorage('team-data/registry.json');
+    const registry = await registryStore.readRegistry();
     if (!registry || !registry.people) {
       return res.json({
         manager: null,
@@ -730,7 +735,7 @@ module.exports = async function registerRoutes(router, context) {
     const fieldOptionsStoreLocal = require('./field-options-store');
     const { enrichPerson, resolveFieldDefinitions: resolveFieldDefs, buildReferencedPeopleMap, buildAllPeopleList } = require('./field-payload');
 
-    const registry = await readFromStorage('team-data/registry.json');
+    const registry = await registryStore.readRegistry();
     if (!registry || !registry.people) {
       return res.json({
         people: [],
@@ -1308,7 +1313,7 @@ module.exports = async function registerRoutes(router, context) {
     if (!VALID_SCOPES.includes(scope)) {
       return res.status(400).json({ error: `Invalid scope. Must be one of: ${VALID_SCOPES.join(', ')}` });
     }
-    const registry = await readFromStorage('team-data/registry.json');
+    const registry = await registryStore.readRegistry();
     const people = await contextTeamStore.getUnassigned(scope, req.userUid, req.isAdmin, managerMap, registry);
     res.json({ people });
   });
@@ -1773,7 +1778,7 @@ module.exports = async function registerRoutes(router, context) {
     if (!trimmed) return res.status(400).json({ error: 'newValue cannot be empty' });
     if (trimmed.length > 200) return res.status(400).json({ error: 'newValue must be 200 characters or fewer' });
     try {
-      const result = await fieldOptionsStore.renameValue(storage, safeName, oldValue.trim(), trimmed, req.auditActor, auditLog);
+      const result = await fieldOptionsStore.renameValue(storage, safeName, oldValue.trim(), trimmed, req.auditActor, auditLog, registryStore);
       if (!result) return res.status(404).json({ error: 'Field option set not found' });
       res.json(result);
     } catch (err) {
@@ -1812,7 +1817,7 @@ module.exports = async function registerRoutes(router, context) {
       }
 
       // Load existing person fields for required-field checks
-      const registry = await readFromStorage('team-data/registry.json');
+      const registry = await registryStore.readRegistry();
       const person = registry && registry.people && registry.people[req.params.uid];
       const existingValues = person && person._appFields ? person._appFields : {};
 
@@ -2023,7 +2028,7 @@ module.exports = async function registerRoutes(router, context) {
     try {
       const config = await rosterSyncConfig.loadConfig(storage);
       if (!config) return res.status(400).json({ error: 'No config found' });
-      const preview = await previewMigration(storage, config);
+      const preview = await previewMigration(storage, config, registryStore);
       res.json(preview);
     } catch (err) {
       console.error('[migration] Preview failed:', err);
@@ -2048,7 +2053,7 @@ module.exports = async function registerRoutes(router, context) {
       const config = await rosterSyncConfig.loadConfig(storage);
       if (!config) return res.status(400).json({ error: 'No config found' });
       const fieldOverrides = req.body?.fieldOverrides || null;
-      const result = await migrateToInApp(storage, config, req.auditActor, fieldOverrides, { fieldStore: contextFieldStore, teamStore: contextTeamStore, auditLog });
+      const result = await migrateToInApp(storage, config, req.auditActor, fieldOverrides, { fieldStore: contextFieldStore, teamStore: contextTeamStore, auditLog, registryStore });
       if (result.migrated) {
         config._migratedToInApp = new Date().toISOString();
         await rosterSyncConfig.saveConfig(storage, config);
@@ -2088,7 +2093,7 @@ module.exports = async function registerRoutes(router, context) {
       if (!fieldId || typeof fieldId !== 'string') {
         return res.status(400).json({ error: 'fieldId query parameter is required' });
       }
-      const result = await fieldOptionsMigration.previewMigration(storage, fieldId, { fieldStore: contextFieldStore, teamStore: contextTeamStore });
+      const result = await fieldOptionsMigration.previewMigration(storage, fieldId, { fieldStore: contextFieldStore, teamStore: contextTeamStore, registryStore });
       if (result.error) return res.status(400).json({ error: result.error });
       res.json(result);
     } catch (err) {
@@ -2120,7 +2125,7 @@ module.exports = async function registerRoutes(router, context) {
       }
       const result = await fieldOptionsMigration.executeMigration(storage, {
         sourceFieldId, optionSetName, optionSetLabel, createCounterpart, counterpartLabel, seedFromMembers
-      }, req.auditActor, { fieldStore: contextFieldStore, teamStore: contextTeamStore, auditLog });
+      }, req.auditActor, { fieldStore: contextFieldStore, teamStore: contextTeamStore, auditLog, registryStore });
       if (result.error) return res.status(400).json({ error: result.error });
       res.json(result);
     } catch (err) {
@@ -2168,7 +2173,7 @@ module.exports = async function registerRoutes(router, context) {
       const orphanedUsage = {}; // value -> { people: [...names], teams: [...names] }
 
       if (personFieldIds.length > 0) {
-        const registry = await storage.readFromStorage('team-data/registry.json');
+        const registry = await registryStore.readRegistry();
         if (registry && registry.people) {
           for (const [uid, person] of Object.entries(registry.people)) {
             if (!person._appFields) continue;
@@ -2312,10 +2317,11 @@ module.exports = async function registerRoutes(router, context) {
 
       // Cascade to person records
       if (personFieldIds.length > 0) {
-        const registry = await storage.readFromStorage('team-data/registry.json');
+        const registry = await registryStore.readRegistry();
         if (registry && registry.people) {
           let modified = false;
-          for (const person of Object.values(registry.people)) {
+          const modifiedUids = new Set();
+          for (const [uid, person] of Object.entries(registry.people)) {
             if (!person._appFields) continue;
             for (const fieldId of personFieldIds) {
               const val = person._appFields[fieldId];
@@ -2326,6 +2332,7 @@ module.exports = async function registerRoutes(router, context) {
                   person._appFields[fieldId] = mappings[val];
                 }
                 modified = true;
+                modifiedUids.add(uid);
                 updated++;
               } else if (Array.isArray(val)) {
                 let arrModified = false;
@@ -2342,12 +2349,25 @@ module.exports = async function registerRoutes(router, context) {
                   // Deduplicate (mapping two old values to the same new value)
                   person._appFields[fieldId] = [...new Set(newArr)];
                   modified = true;
+                  modifiedUids.add(uid);
                   updated++;
                 }
               }
             }
           }
-          if (modified) await storage.writeToStorage('team-data/registry.json', registry);
+          if (modified) {
+            if (registryStore.usesDatabase) {
+              // Targeted per-person writes instead of one whole-registry
+              // write: only the uids actually touched by this cascade are
+              // persisted, so a concurrent unrelated person update can't be
+              // clobbered by this read-modify-write's stale copy of it.
+              for (const uid of modifiedUids) {
+                await registryStore.upsertPerson(uid, registry.people[uid]);
+              }
+            } else {
+              await registryStore.writeRegistry(registry);
+            }
+          }
         }
       }
 
@@ -2394,7 +2414,8 @@ module.exports = async function registerRoutes(router, context) {
       // Clear orphanedValues from the option set if all mappings resolved
       if (data.orphanedValues && data.orphanedValues.length > 0) {
         const remainingOrphans = await fieldOptionsStore.findReferencedValues(storage, safeName,
-          data.orphanedValues.filter(v => mappings[v] === undefined)
+          data.orphanedValues.filter(v => mappings[v] === undefined),
+          registryStore
         );
         if (remainingOrphans.length === 0) {
           delete data.orphanedValues;
@@ -2558,7 +2579,7 @@ module.exports = async function registerRoutes(router, context) {
         const removedSet = new Set(removed);
 
         if (personFieldIds.length > 0) {
-          const registry = await readFromStorage('team-data/registry.json');
+          const registry = await registryStore.readRegistry();
           if (registry && registry.people) {
             for (const [uid, person] of Object.entries(registry.people)) {
               if (!person._appFields) continue;
@@ -4565,7 +4586,7 @@ module.exports = async function registerRoutes(router, context) {
         return res.status(400).json({ error: 'Roster sync is not configured' });
       }
 
-      consolidatedSync.runConsolidatedSync(storage, { ...context.secrets, resolveSecret: context.resolveSecret }).then(function(result) {
+      consolidatedSync.runConsolidatedSync(storage, { ...context.secrets, resolveSecret: context.resolveSecret }, registryStore).then(function(result) {
         console.log('[consolidated-sync] On-demand sync result:', result.status);
       }).catch(function(err) {
         console.error('[consolidated-sync] On-demand sync error:', err);
@@ -5121,7 +5142,7 @@ module.exports = async function registerRoutes(router, context) {
       description: 'Syncs the team roster from IPA LDAP and Google Sheets, enriching with GitHub/GitLab usernames.',
       handler: async function() {
         if (DEMO_MODE) return;
-        await consolidatedSync.runConsolidatedSync(storage, { ...context.secrets, resolveSecret: context.resolveSecret });
+        await consolidatedSync.runConsolidatedSync(storage, { ...context.secrets, resolveSecret: context.resolveSecret }, registryStore);
       },
       status: async function() {
         return { inProgress: consolidatedSync.isSyncInProgress() };
@@ -5370,7 +5391,7 @@ module.exports = async function registerRoutes(router, context) {
       if (!user.uid) return [];
       if (!user.isAdmin && !user.isTeamAdmin && !user.isManager) return [];
 
-      const registry = await readFromStorage('team-data/registry.json');
+      const registry = await registryStore.readRegistry();
       if (!registry || !registry.people) return [];
 
       // Verify this user actually has direct reports
@@ -5454,7 +5475,7 @@ module.exports = async function registerRoutes(router, context) {
   if (context.registerExport) {
     const teamTrackerExport = require('./export');
     context.registerExport((addFile, exportStorage, mapping) =>
-      teamTrackerExport(addFile, exportStorage, mapping, { personStore, contributionStore, jiraNameMapStore })
+      teamTrackerExport(addFile, exportStorage, mapping, { personStore, contributionStore, jiraNameMapStore, registryStore })
     );
   }
 
@@ -5506,7 +5527,7 @@ module.exports = async function registerRoutes(router, context) {
     (async function() {
       try {
         // Phase 1: Consolidated sync (LDAP + Sheets + lifecycle)
-        const syncResult = await consolidatedSync.runConsolidatedSync(storage, { ...context.secrets, resolveSecret: context.resolveSecret });
+        const syncResult = await consolidatedSync.runConsolidatedSync(storage, { ...context.secrets, resolveSecret: context.resolveSecret }, registryStore);
         if (syncResult.status === 'skipped' || syncResult.status === 'error') {
           console.warn('[unified-sync] Consolidated sync did not succeed:', syncResult.status, syncResult.message || '');
           return;
