@@ -61,6 +61,9 @@ function coerceFieldValue(value, fieldDef) {
  * @param {object} [options={}] - Options
  * @param {object} [options.model] - Optional Mongoose FieldDefinition model for MongoDB path
  * @param {object} options.auditLog - Audit log instance (from the module context). Required — no fallback.
+ * @param {object} [options.registryStore] - Optional dual-path registry store
+ *   (see registry-store.js), used by updatePersonFields. Falls back to a
+ *   file-only store built on `storage` when omitted.
  * @returns {object} Field store API
  */
 function createFieldStore(storage, options = {}) {
@@ -69,6 +72,8 @@ function createFieldStore(storage, options = {}) {
     throw new Error('createFieldStore requires options.auditLog (from the module context) — there is no fallback');
   }
   const auditLog = options.auditLog;
+  const { createRegistryStore } = require('./registry-store');
+  const registryStore = options.registryStore || createRegistryStore(storage);
 
   // Mutex for file-based path only — MongoDB uses atomic operations
   const filesMutex = Model ? null : getStorageMutex(FIELD_DEFS_KEY);
@@ -580,14 +585,40 @@ function createFieldStore(storage, options = {}) {
 
   /**
    * Update person-level custom field values.
-   * Note: This path ALWAYS uses file-backed storage for registry.json, even when MongoDB is present.
-   * The registry model is not yet migrated (task 6.3).
    *
    * @param {string} uid - Person UID
    * @param {Object<string, *>} fieldValues - { fieldId: value, ... }
    * @param {string} actorEmail
    */
   async function updatePersonFields(uid, fieldValues, actorEmail) {
+    if (registryStore.usesDatabase) {
+      const person = await registryStore.getPerson(uid);
+      if (!person) return null;
+      if (!person._appFields) person._appFields = {};
+
+      for (const [fieldId, value] of Object.entries(fieldValues)) {
+        if (!isSafeKey(fieldId)) {
+          throw new Error(`Invalid field key: ${fieldId}`);
+        }
+        const oldValue = person._appFields[fieldId] || null;
+        person._appFields[fieldId] = value;
+
+        await auditLog.appendAuditEntry({
+          action: 'person.field.update',
+          actor: actorEmail,
+          entityType: 'person',
+          entityId: uid,
+          entityLabel: person.name,
+          field: fieldId,
+          oldValue,
+          newValue: value
+        });
+      }
+
+      await registryStore.upsertPerson(uid, person);
+      return person._appFields;
+    }
+
     const mutex = getStorageMutex(REGISTRY_KEY);
     return mutex.runExclusive(async () => {
       const registry = await storage.readFromStorage(REGISTRY_KEY);

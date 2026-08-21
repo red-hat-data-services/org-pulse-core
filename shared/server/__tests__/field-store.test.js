@@ -508,6 +508,29 @@ describe('field-store (MongoDB)', () => {
     expect(reg.people.user1._appFields.field_test).toBe('value');
   });
 
+  it.skipIf(!process.env.MONGODB_URI)('updatePersonFields writes to the registry collection when a registryStore is injected', async () => {
+    const result = makeMongoStore();
+    if (!result) return;
+    const { storage } = result;
+
+    const { createRegistryStore } = require('../registry-store');
+    const { registryEntrySchema } = require('../models/registry-entry');
+    const RegistryModel = connection.models.core__registry_entries
+      || connection.model('core__registry_entries', registryEntrySchema, 'core__registry_entries');
+    await RegistryModel.deleteMany({});
+    const registryStore = createRegistryStore(storage, { model: RegistryModel });
+    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog: createAuditLog(storage), registryStore });
+
+    await registryStore.upsertPerson('user1', { uid: 'user1', name: 'Test User' });
+
+    const updated = await fieldStore.updatePersonFields('user1', { field_test: 'value' }, 'admin@example.com');
+    expect(updated.field_test).toBe('value');
+
+    // Not written to the file at all.
+    expect(storage._store['team-data/registry.json']).toBeUndefined();
+    expect((await registryStore.getPerson('user1'))._appFields.field_test).toBe('value');
+  });
+
   it.skipIf(!process.env.MONGODB_URI)('handles unique fieldId race by retrying', async () => {
     const result = makeMongoStore();
     if (!result) return;

@@ -5,6 +5,7 @@
  */
 
 const { loadConfig, getOrgDisplayNames } = require('./roster-sync/config');
+const { createRegistryStore } = require('./registry-store');
 
 /**
  * Read registry data and transform to the legacy roster format.
@@ -12,10 +13,14 @@ const { loadConfig, getOrgDisplayNames } = require('./roster-sync/config');
  * with flat githubUsername/gitlabUsername fields for compatibility.
  *
  * @param {{ readFromStorage: Function }} storage
+ * @param {object} [registryStore] - Optional dual-path registry store (see
+ *   registry-store.js). When omitted, falls back to a file-only store built
+ *   on `storage`, matching the pre-existing file-only behavior exactly.
  * @returns {object|null}
  */
-async function readRosterFull(storage) {
-  const registry = await storage.readFromStorage('team-data/registry.json');
+async function readRosterFull(storage, registryStore) {
+  const effectiveRegistryStore = registryStore || createRegistryStore(storage);
+  const registry = await effectiveRegistryStore.readRegistry();
   if (!registry || !registry.people) return null;
 
   const config = await loadConfig(storage);
@@ -59,8 +64,8 @@ async function readRosterFull(storage) {
  * @param {{ readFromStorage: Function }} storage
  * @returns {object[]}
  */
-async function getAllPeople(storage) {
-  const full = await readRosterFull(storage);
+async function getAllPeople(storage, registryStore) {
+  const full = await readRosterFull(storage, registryStore);
   if (!full || !full.orgs) return [];
   const people = [];
   for (const [orgKey, orgData] of Object.entries(full.orgs)) {
@@ -78,8 +83,8 @@ async function getAllPeople(storage) {
  * @param {string} orgKey
  * @returns {object[]}
  */
-async function getPeopleByOrg(storage, orgKey) {
-  const full = await readRosterFull(storage);
+async function getPeopleByOrg(storage, orgKey, registryStore) {
+  const full = await readRosterFull(storage, registryStore);
   if (!full || !full.orgs || !full.orgs[orgKey]) return [];
   const orgData = full.orgs[orgKey];
   return [orgData.leader, ...orgData.members]
@@ -92,8 +97,8 @@ async function getPeopleByOrg(storage, orgKey) {
  * @param {{ readFromStorage: Function }} storage
  * @returns {{ key: string, displayName: string }[]}
  */
-async function getOrgKeys(storage) {
-  const full = await readRosterFull(storage);
+async function getOrgKeys(storage, registryStore) {
+  const full = await readRosterFull(storage, registryStore);
   if (!full || !full.orgs) return [];
   return Object.entries(full.orgs).map(([key, orgData]) => ({
     key,
