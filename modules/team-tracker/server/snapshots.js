@@ -105,6 +105,10 @@ async function generateSnapshot(storage, teamKey, team, period, options = {}) {
   // Fallback caches used only when history data is unavailable for a user
   const githubCache = options.githubCache || (await readFromStorage('github-contributions.json')) || { users: {} };
   const gitlabCache = options.gitlabCache || (await readFromStorage('gitlab-contributions.json')) || { users: {} };
+  // Optional override for reading a person's metrics blob (e.g. backed by a
+  // MongoDB-aware person store instead of the raw file). Defaults to the
+  // pre-existing file-based read so callers that don't pass it see no change.
+  const readPerson = options.readPerson || (key => readFromStorage(`people/${key}.json`));
 
   const seen = new Set();
   const uniqueMembers = team.members.filter(m => {
@@ -126,7 +130,7 @@ async function generateSnapshot(storage, teamKey, team, period, options = {}) {
 
   for (const member of uniqueMembers) {
     const key = member.jiraDisplayName.toLowerCase().replace(/[^a-z0-9]/g, '_');
-    const cached = await readFromStorage(`people/${key}.json`);
+    const cached = await readPerson(key);
 
     // Filter resolved issues to this period's date range
     const allIssues = cached?.resolved?.issues || [];
@@ -206,23 +210,56 @@ async function generateSnapshot(storage, teamKey, team, period, options = {}) {
 /**
  * Generate and store a snapshot if one doesn't already exist for the period.
  * Returns the snapshot (existing or newly generated).
+ *
+ * @param {object} [options] - Forwarded to generateSnapshot(); also accepts
+ *   options.model (a Mongoose Snapshot model) to persist to MongoDB instead
+ *   of the file. Omitting it (the default) preserves the file-only behavior.
  */
-async function generateAndStoreSnapshot(storage, teamKey, team, period) {
+async function generateAndStoreSnapshot(storage, teamKey, team, period, options = {}) {
   const { readFromStorage, writeToStorage } = storage;
+  const Model = options.model || null;
+  const date = formatDate(period.end);
+
+  if (Model) {
+    const existingDoc = await Model.findOne({ team: teamKey, date }).lean();
+    if (existingDoc) return existingDoc.data;
+
+    const snapshot = await generateSnapshot(storage, teamKey, team, period, options);
+    await Model.updateOne(
+      { team: teamKey, date },
+      { $set: { team: teamKey, date, data: snapshot } },
+      { upsert: true }
+    );
+    return snapshot;
+  }
+
   const path = snapshotPath(teamKey, period.end);
 
   const existing = await readFromStorage(path);
   if (existing) return existing;
 
-  const snapshot = await generateSnapshot(storage, teamKey, team, period);
+  const snapshot = await generateSnapshot(storage, teamKey, team, period, options);
   await writeToStorage(path, snapshot);
   return snapshot;
 }
 
 /**
  * Load all snapshots for a team, sorted by period start date.
+ *
+ * @param {object} [options] - options.model (a Mongoose Snapshot model)
+ *   reads from MongoDB instead of the file. Omitting it preserves the
+ *   file-only behavior.
  */
-async function loadTeamSnapshots(storage, teamKey) {
+async function loadTeamSnapshots(storage, teamKey, options = {}) {
+  const Model = options.model || null;
+
+  if (Model) {
+    const docs = await Model.find({ team: teamKey }).lean();
+    const snapshots = docs.map(doc => doc.data);
+    snapshots.sort((a, b) => a.periodStart.localeCompare(b.periodStart));
+    return snapshots;
+  }
+
   const { listStorageFiles, readFromStorage } = storage;
   const dir = `snapshots/${sanitizeTeamKey(teamKey)}`;
   const files = await listStorageFiles(dir);
@@ -244,8 +281,8 @@ async function loadTeamSnapshots(storage, teamKey) {
 /**
  * Load snapshots for a specific person within a team.
  */
-async function loadPersonSnapshots(storage, teamKey, personName) {
-  const allSnapshots = await loadTeamSnapshots(storage, teamKey);
+async function loadPersonSnapshots(storage, teamKey, personName, options = {}) {
+  const allSnapshots = await loadTeamSnapshots(storage, teamKey, options);
   return allSnapshots.map(s => ({
     periodStart: s.periodStart,
     periodEnd: s.periodEnd,
