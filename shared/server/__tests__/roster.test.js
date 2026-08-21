@@ -251,12 +251,12 @@ const sampleRegistry = {
 describe('readRosterFull (file path)', () => {
   it('returns null when the registry is missing', async () => {
     const storage = createMockStorage({})
-    expect(await readRosterFull(storage)).toBeNull()
+    expect(await readRosterFull(storage, createRegistryStore(storage))).toBeNull()
   })
 
   it('groups active people by orgRoot and flattens github/gitlab usernames', async () => {
     const storage = createMockStorage({ 'team-data/registry.json': sampleRegistry })
-    const roster = await readRosterFull(storage)
+    const roster = await readRosterFull(storage, createRegistryStore(storage))
     expect(roster.orgs.achen.members.map(m => m.uid).sort()).toEqual(['achen', 'bsmith'])
     const achen = roster.orgs.achen.members.find(m => m.uid === 'achen')
     expect(achen.githubUsername).toBe('alicechen')
@@ -265,8 +265,15 @@ describe('readRosterFull (file path)', () => {
 
   it('getAllPeople excludes inactive people', async () => {
     const storage = createMockStorage({ 'team-data/registry.json': sampleRegistry })
-    const people = await getAllPeople(storage)
+    const people = await getAllPeople(storage, createRegistryStore(storage))
     expect(people.map(p => p.uid).sort()).toEqual(['achen', 'bsmith'])
+  })
+})
+
+describe('readRosterFull registryStore requirement', () => {
+  it('throws immediately when registryStore is missing', async () => {
+    const storage = createMockStorage({})
+    await expect(readRosterFull(storage)).rejects.toThrow(/requires a registryStore argument/)
   })
 })
 
@@ -305,7 +312,8 @@ describe('readRosterFull / getAllPeople (MongoDB registry)', () => {
     const { registryStore, storage } = result
     await registryStore.writeRegistry(sampleRegistry)
 
-    const fileRoster = await readRosterFull(createMockStorage({ 'team-data/registry.json': sampleRegistry }))
+    const fileStorage = createMockStorage({ 'team-data/registry.json': sampleRegistry })
+    const fileRoster = await readRosterFull(fileStorage, createRegistryStore(fileStorage))
     const dbRoster = await readRosterFull(storage, registryStore)
     expect(dbRoster).toEqual(fileRoster)
   })

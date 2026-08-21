@@ -460,6 +460,7 @@ async function startServer(options = {}) {
     requireScope,
     blockDuringImpersonation,
     roleStore,
+    registryStore,
     auditLog,
     configStore,
     roleRegistry,

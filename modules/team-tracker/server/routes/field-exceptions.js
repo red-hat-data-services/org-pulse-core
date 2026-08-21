@@ -7,8 +7,10 @@ const fieldExceptionsStore = require('../field-exceptions-store');
 
 module.exports = function registerFieldExceptionRoutes(router, context) {
   const { storage, requireTeamAdmin, requireScope, fieldStore, teamStore, auditLog, registryStore: contextRegistryStore } = context;
-  const { createRegistryStore } = require('../../../../shared/server/registry-store');
-  const registryStore = contextRegistryStore || createRegistryStore(storage);
+  if (!contextRegistryStore) {
+    throw new Error('registerFieldExceptionRoutes requires context.registryStore (from the module context) — there is no fallback');
+  }
+  const registryStore = contextRegistryStore;
 
   const DEMO_MODE = process.env.DEMO_MODE === 'true';
 

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 
 const fieldOptionsStore = require('../../server/field-options-store')
 const { createAuditLog } = require('../../../../shared/server/audit-log')
+const { createRegistryStore } = require('../../../../shared/server/registry-store')
 
 function makeStorage(initial = {}) {
   const data = { ...initial }
@@ -374,7 +375,7 @@ describe('field-options-store', () => {
           KServe: { id: '10005', description: 'Model serving' },
           Notebooks: { id: '10008', description: 'Jupyter notebooks' }
         }
-      }, createAuditLog(storage))
+      }, createAuditLog(storage), createRegistryStore(storage))
 
       expect(result.added).toEqual(['Dashboard', 'KServe', 'Notebooks'])
       expect(result.removed).toEqual([])
@@ -401,7 +402,7 @@ describe('field-options-store', () => {
         source: 'jira',
         sourceProject: 'RHAI',
         values: ['B', 'D']
-      }, createAuditLog(storage))
+      }, createAuditLog(storage), createRegistryStore(storage))
 
       expect(result.added).toEqual(['D'])
       expect(result.removed).toEqual(['A', 'C'])
@@ -432,7 +433,7 @@ describe('field-options-store', () => {
         source: 'jira',
         sourceProject: 'RHAI',
         values: ['Alpha', 'Gamma', 'Delta']
-      }, createAuditLog(storage))
+      }, createAuditLog(storage), createRegistryStore(storage))
 
       expect(result.removed).toEqual(['Beta'])
       expect(result.orphanedValues).toEqual(['Beta'])
@@ -454,7 +455,7 @@ describe('field-options-store', () => {
         source: 'jira',
         sourceProject: 'RHAI',
         values: ['Alpha', 'Beta']
-      }, createAuditLog(storage))
+      }, createAuditLog(storage), createRegistryStore(storage))
 
       const saved = storage._data['team-data/field-options/component.json']
       expect(saved.orphanedValues).toBeUndefined()
@@ -479,7 +480,7 @@ describe('field-options-store', () => {
         'team-data/teams.json': { teams: {} }
       })
 
-      const result = await fieldOptionsStore.findReferencedValues(storage, 'component', ['X', 'Z', 'NOTFOUND'])
+      const result = await fieldOptionsStore.findReferencedValues(storage, 'component', ['X', 'Z', 'NOTFOUND'], createRegistryStore(storage))
       expect(result).toEqual(['X', 'Z'])
     })
 
@@ -499,7 +500,7 @@ describe('field-options-store', () => {
         }
       })
 
-      const result = await fieldOptionsStore.findReferencedValues(storage, 'component', ['Alpha', 'Beta'])
+      const result = await fieldOptionsStore.findReferencedValues(storage, 'component', ['Alpha', 'Beta'], createRegistryStore(storage))
       expect(result).toEqual(['Alpha'])
     })
 
@@ -507,7 +508,7 @@ describe('field-options-store', () => {
       const storage = makeStorage({
         'team-data/field-definitions.json': { personFields: [], teamFields: [] }
       })
-      expect(await fieldOptionsStore.findReferencedValues(storage, 'component', ['X'])).toEqual([])
+      expect(await fieldOptionsStore.findReferencedValues(storage, 'component', ['X'], createRegistryStore(storage))).toEqual([])
     })
   })
 
@@ -524,6 +525,20 @@ describe('field-options-store', () => {
         .rejects.toThrow(/requires an injected auditLog/)
       await expect(fieldOptionsStore.syncFromExternal(storage, 'component', { source: 'jira', values: ['A'] }))
         .rejects.toThrow(/requires an injected auditLog/)
+    })
+  })
+
+  describe('registryStore requirement', () => {
+    it('throws immediately when registryStore is missing on findReferencedValues', async () => {
+      const storage = makeStorage({ 'team-data/field-definitions.json': { personFields: [], teamFields: [] } })
+      await expect(fieldOptionsStore.findReferencedValues(storage, 'component', ['X']))
+        .rejects.toThrow(/requires a registryStore argument/)
+    })
+
+    it('throws immediately when registryStore is missing on syncFromExternal', async () => {
+      const storage = makeStorage({ 'audit-log.json': { entries: [] } })
+      await expect(fieldOptionsStore.syncFromExternal(storage, 'component', { source: 'jira', values: ['A'] }, createAuditLog(storage)))
+        .rejects.toThrow(/requires a registryStore argument/)
     })
   })
 })

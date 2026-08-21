@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
 const { collect } = require('../must-gather')
+const { createRegistryStore } = require('../../shared/server/registry-store')
 
 function makeStorage(data = {}) {
   return {
@@ -116,6 +117,7 @@ describe('must-gather collect', () => {
         test: { unresolvedNames: ['Bob Leader'] }
       }),
       diagnosticsRegistry: {},
+      registryStore: createRegistryStore(storage),
       redact: 'aggressive'
     })
 
@@ -141,6 +143,7 @@ describe('must-gather collect', () => {
         test: { config: { googleSheetId: '1abc-long-sheet-id-here' } }
       }),
       diagnosticsRegistry: {},
+      registryStore: createRegistryStore(storage),
       redact: 'aggressive'
     })
 
@@ -178,6 +181,7 @@ describe('must-gather collect', () => {
       enabledSlugs: new Set(),
       collectModuleDiagnostics: async () => ({}),
       diagnosticsRegistry: {},
+      registryStore: createRegistryStore(storage),
       redact: 'aggressive'
     })
 

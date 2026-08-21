@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import mongoose from 'mongoose'
 
 const { createFieldStore, coerceFieldValue, FIELD_DEFS_KEY } = require('../field-store');
+const { createRegistryStore } = require('../registry-store');
 const { fieldDefinitionSchema } = require('../models/field-definition');
 
 // Suppress console.log output in tests
@@ -23,7 +24,7 @@ function makeStore(opts = {}) {
   if (initialFieldDefs) initial[FIELD_DEFS_KEY] = initialFieldDefs;
 
   const storage = createMockStorage(initial);
-  const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) });
+  const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage), registryStore: createRegistryStore(storage) });
   return { fieldStore, storage };
 }
 
@@ -365,6 +366,14 @@ describe('createFieldStore auditLog requirement', () => {
   });
 });
 
+describe('createFieldStore registryStore requirement', () => {
+  it('throws immediately when options.registryStore is missing', () => {
+    const storage = createMockStorage();
+    const auditLog = createAuditLog(storage);
+    expect(() => createFieldStore(storage, { auditLog })).toThrow(/requires options\.registryStore/);
+  });
+});
+
 // ─── MongoDB-backed tests ───
 
 describe('field-store (MongoDB)', () => {
@@ -393,7 +402,7 @@ describe('field-store (MongoDB)', () => {
   function makeMongoStore() {
     if (!FieldModel) return null;
     const storage = createMockStorage({});
-    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog: createAuditLog(storage) });
+    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog: createAuditLog(storage), registryStore: createRegistryStore(storage) });
     return { fieldStore, storage };
   }
 

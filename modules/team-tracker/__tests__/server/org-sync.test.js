@@ -6,6 +6,7 @@ const rosterSyncConfig = require('../../../../shared/server/roster-sync/config')
 const googleSheets = require('../../../../shared/server/google-sheets')
 const { createFieldStore } = require('../../../../shared/server/field-store')
 const { createAuditLog } = require('../../../../shared/server/audit-log')
+const { createRegistryStore } = require('../../../../shared/server/registry-store')
 
 const {
   deriveTeamsFromPeople,
@@ -69,7 +70,7 @@ describe('deriveTeamsFromPeople', () => {
     )
     const storage = makeStorage(data)
 
-    const teams = await deriveTeamsFromPeople(storage)
+    const teams = await deriveTeamsFromPeople(storage, createRegistryStore(storage))
     expect(teams).toHaveLength(2)
     expect(teams).toEqual(expect.arrayContaining([
       { org: 'Org Alpha', name: 'Team A', boardUrls: [] },
@@ -87,7 +88,7 @@ describe('deriveTeamsFromPeople', () => {
     )
     const storage = makeStorage(data)
 
-    const teams = await deriveTeamsFromPeople(storage)
+    const teams = await deriveTeamsFromPeople(storage, createRegistryStore(storage))
     expect(teams).toHaveLength(2)
     expect(teams.map(t => t.name)).toEqual(['Team A', 'Team B'])
   })
@@ -104,7 +105,7 @@ describe('deriveTeamsFromPeople', () => {
     }
     const storage = makeStorage(data)
 
-    const teams = await deriveTeamsFromPeople(storage)
+    const teams = await deriveTeamsFromPeople(storage, createRegistryStore(storage))
     expect(teams).toHaveLength(0)
   })
 
@@ -119,7 +120,7 @@ describe('deriveTeamsFromPeople', () => {
     )
     const storage = makeStorage(data)
 
-    const teams = await deriveTeamsFromPeople(storage)
+    const teams = await deriveTeamsFromPeople(storage, createRegistryStore(storage))
     expect(teams).toHaveLength(0)
   })
 
@@ -134,7 +135,7 @@ describe('deriveTeamsFromPeople', () => {
     )
     const storage = makeStorage(data)
 
-    const teams = await deriveTeamsFromPeople(storage)
+    const teams = await deriveTeamsFromPeople(storage, createRegistryStore(storage))
     expect(teams).toHaveLength(1)
     expect(teams[0].name).toBe('Team A')
   })
@@ -149,7 +150,7 @@ describe('deriveTeamsFromPeople', () => {
     )
     const storage = makeStorage(data)
 
-    const teams = await deriveTeamsFromPeople(storage)
+    const teams = await deriveTeamsFromPeople(storage, createRegistryStore(storage))
     expect(teams).toHaveLength(1)
     expect(teams[0].name).toBe('Legacy Team')
   })
@@ -175,9 +176,9 @@ describe('runSync', () => {
       ]
     )
     const storage = makeStorage(data)
-    const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
+    const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage), registryStore: createRegistryStore(storage) })
 
-    const result = await runSync(storage, null, {}, {}, fieldStore)
+    const result = await runSync(storage, null, {}, {}, fieldStore, createRegistryStore(storage))
     expect(result.status).toBe('success')
     expect(result.teamCount).toBe(2)
 
@@ -195,10 +196,10 @@ describe('runSync', () => {
       ]
     )
     const storage = makeStorage(data)
-    const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
+    const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage), registryStore: createRegistryStore(storage) })
     fetchRawSheetSpy.mockRejectedValue(new Error('Sheet not found'))
 
-    const result = await runSync(storage, 'sheet123', { teamBoardsTab: 'Missing Tab' }, {}, fieldStore)
+    const result = await runSync(storage, 'sheet123', { teamBoardsTab: 'Missing Tab' }, {}, fieldStore, createRegistryStore(storage))
     expect(result.status).toBe('success')
     expect(result.teamCount).toBe(1)
 
@@ -215,9 +216,9 @@ describe('runSync', () => {
       ]
     )
     const storage = makeStorage(data)
-    const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
+    const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage), registryStore: createRegistryStore(storage) })
 
-    await runSync(storage, null, {}, {}, fieldStore)
+    await runSync(storage, null, {}, {}, fieldStore, createRegistryStore(storage))
 
     expect(fetchRawSheetSpy).not.toHaveBeenCalled()
   })

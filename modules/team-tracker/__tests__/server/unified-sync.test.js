@@ -98,12 +98,14 @@ async function createApp() {
   app.use(express.json())
   const router = express.Router()
 
+  const { createRegistryStore } = require('../../../../shared/server/registry-store')
   const registerRoutes = require('../../server/index.js')
   await registerRoutes(router, {
     storage: storageMock,
     requireAdmin: (req, res, next) => next(),
     requireTeamAdmin: (req, res, next) => next(),
     requireScope: () => (req, res, next) => next(),
+    registryStore: createRegistryStore(storageMock),
     registerScopes: vi.fn()
   })
 
@@ -157,6 +159,7 @@ describe('Unified Sync Endpoint', () => {
       const app2 = express2()
       app2.use(express2.json())
       const router2 = express2.Router()
+      const { createRegistryStore } = require('../../../../shared/server/registry-store')
       const mod = await import('../../server/index.js')
       const registerRoutes2 = mod.default || mod
       registerRoutes2(router2, {
@@ -164,6 +167,7 @@ describe('Unified Sync Endpoint', () => {
         requireAdmin: (req, res, next) => next(),
     requireTeamAdmin: (req, res, next) => next(),
     requireScope: () => (req, res, next) => next(),
+    registryStore: createRegistryStore(storageMock),
     registerScopes: vi.fn()
       })
       app2.use('/api/modules/team-tracker', router2)

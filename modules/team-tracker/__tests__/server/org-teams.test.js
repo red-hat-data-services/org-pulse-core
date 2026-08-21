@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const { createFieldStore } = require('../../../../shared/server/field-store')
 const { createAuditLog } = require('../../../../shared/server/audit-log')
 const { createTeamStore } = require('../../../../shared/server/team-store')
+const { createRegistryStore } = require('../../../../shared/server/registry-store')
 const rosterSyncConfig = require('../../../../shared/server/roster-sync/config')
 
 function makeStorage(initial = {}) {
@@ -71,8 +72,9 @@ function setupRoutes(storage, opts = {}) {
 
   const registeredSearchHandler = { fn: null }
   const auditLog = createAuditLog(storage)
-  const fieldStore = createFieldStore(storage, { auditLog })
-  const teamStore = createTeamStore(storage, { auditLog })
+  const registryStore = createRegistryStore(storage)
+  const fieldStore = createFieldStore(storage, { auditLog, registryStore })
+  const teamStore = createTeamStore(storage, { auditLog, registryStore })
   const context = {
     storage,
     requireAdmin: (req, res, next) => next(),
@@ -82,6 +84,7 @@ function setupRoutes(storage, opts = {}) {
       : undefined,
     fieldStore,
     teamStore,
+    registryStore,
     auditLog,
     secrets: {}
   }
