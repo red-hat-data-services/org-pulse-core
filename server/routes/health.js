@@ -101,8 +101,8 @@ function registerPreAuthRoutes(app, context) {
  * Register routes that come AFTER authMiddleware.
  */
 function registerPostAuthRoutes(app, context) {
-  const { storage, requireAdmin, requireScope, roleStore, auditLog, DEMO_MODE } = context;
-  const { readFromStorage, writeToStorage } = storage;
+  const { configStore, requireAdmin, requireScope, roleStore, auditLog, DEMO_MODE } = context;
+  const { readFromStorage, writeToStorage } = configStore;
 
   /**
    * @openapi

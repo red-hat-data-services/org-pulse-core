@@ -7,7 +7,7 @@
 
 function registerModuleManagementRoutes(app, context) {
   const {
-    storage, requireAdmin, requireScope, builtInModules,
+    storage, configStore, requireAdmin, requireScope, builtInModules,
     modulesConfig, gitSync, invalidateStaticCache, DEMO_MODE,
     loadModuleState, saveModuleState, getEffectiveState,
     resolveEnableOrder, checkDisableAllowed, computeRequiredBy, wasMountedAtStartup
@@ -420,7 +420,7 @@ function registerModuleManagementRoutes(app, context) {
   app.get('/api/admin/modules/state', requireAdmin, requireScope('admin:manage'), async function(req, res) {
     try {
       const discovered = builtInModules;
-      const currentState = await loadModuleState(storage);
+      const currentState = await loadModuleState(configStore);
       const effective = getEffectiveState(discovered, currentState);
       const requiredBy = computeRequiredBy(discovered);
 
@@ -495,7 +495,7 @@ function registerModuleManagementRoutes(app, context) {
         return res.status(404).json({ error: `Module "${slug}" not found` });
       }
 
-      const currentState = await loadModuleState(storage);
+      const currentState = await loadModuleState(configStore);
       const effective = getEffectiveState(discovered, currentState);
 
       if (effective[slug]) {
@@ -510,7 +510,7 @@ function registerModuleManagementRoutes(app, context) {
       for (const s of result.toEnable) {
         currentState[s] = true;
       }
-      await saveModuleState(storage, currentState);
+      await saveModuleState(configStore, currentState);
 
       const restartRequired = result.toEnable.some(function(s) { return !wasMountedAtStartup(s); });
 
@@ -573,7 +573,7 @@ function registerModuleManagementRoutes(app, context) {
         return res.status(404).json({ error: `Module "${slug}" not found` });
       }
 
-      const currentState = await loadModuleState(storage);
+      const currentState = await loadModuleState(configStore);
       const effective = getEffectiveState(discovered, currentState);
 
       if (!effective[slug]) {
@@ -589,7 +589,7 @@ function registerModuleManagementRoutes(app, context) {
       }
 
       currentState[slug] = false;
-      await saveModuleState(storage, currentState);
+      await saveModuleState(configStore, currentState);
 
       res.json({ disabled: slug });
     } catch (error) {
@@ -621,7 +621,7 @@ function registerModuleManagementRoutes(app, context) {
    */
   app.get('/api/built-in-modules/state', async function(req, res) {
     try {
-      const currentState = await loadModuleState(storage);
+      const currentState = await loadModuleState(configStore);
       const effective = getEffectiveState(builtInModules, currentState);
       const enabledList = Object.entries(effective)
         .filter(function(entry) { return entry[1]; })
