@@ -17,7 +17,7 @@ let _exporting = false;
 /**
  * Handle GET /api/export/test-data
  */
-async function handleExport(req, res, storageModule, exportRegistry) {
+async function handleExport(req, res, storageModule, exportRegistry, registryStore) {
   if (_exporting) {
     return res.status(429).json({ error: 'Export already in progress' });
   }
@@ -31,7 +31,7 @@ async function handleExport(req, res, storageModule, exportRegistry) {
 
     // Build PII mapping from roster
     const { readRosterFull } = require('../shared/server/roster');
-    const roster = await readRosterFull(storageModule);
+    const roster = await readRosterFull(storageModule, registryStore);
     const mapping = buildMapping(roster);
 
     // Create temp directory structure

@@ -4,6 +4,7 @@ const { buildMapping } = require('../../../../shared/server/anonymize')
 
 // We test the export hook by calling it with mock addFile and storage
 const teamTrackerExport = require('../../server/export')
+const { createRegistryStore } = require('../../../../shared/server/registry-store')
 
 // Old-format roster for buildMapping (expects { vp, orgs: { key: { leader, members } } })
 const FIXTURE_ROSTER = {
@@ -85,7 +86,7 @@ describe('teamTrackerExport', () => {
     const storage = makeStorage(registryStorage())
     const mapping = buildMapping(FIXTURE_ROSTER)
 
-    await teamTrackerExport(addFile, storage, mapping)
+    await teamTrackerExport(addFile, storage, mapping, { registryStore: createRegistryStore(storage) })
 
     const rosterFile = files.find(f => f.path === 'org-roster-full.json')
     expect(rosterFile).toBeDefined()
@@ -124,7 +125,7 @@ describe('teamTrackerExport', () => {
     }))
     const mapping = buildMapping(FIXTURE_ROSTER)
 
-    await teamTrackerExport(addFile, storage, mapping)
+    await teamTrackerExport(addFile, storage, mapping, { registryStore: createRegistryStore(storage) })
 
     const peopleFiles = files.filter(f => f.path.startsWith('people/'))
     expect(peopleFiles.length).toBe(1)
@@ -158,7 +159,7 @@ describe('teamTrackerExport', () => {
     }))
     const mapping = buildMapping(FIXTURE_ROSTER)
 
-    await teamTrackerExport(addFile, storage, mapping)
+    await teamTrackerExport(addFile, storage, mapping, { registryStore: createRegistryStore(storage) })
 
     const ghFile = files.find(f => f.path === 'github-contributions.json')
     expect(ghFile).toBeDefined()
@@ -181,7 +182,7 @@ describe('teamTrackerExport', () => {
     }))
     const mapping = buildMapping(FIXTURE_ROSTER)
 
-    await teamTrackerExport(addFile, storage, mapping)
+    await teamTrackerExport(addFile, storage, mapping, { registryStore: createRegistryStore(storage) })
 
     const glFile = files.find(f => f.path === 'gitlab-contributions.json')
     expect(glFile).toBeDefined()
@@ -201,7 +202,7 @@ describe('teamTrackerExport', () => {
     }))
     const mapping = buildMapping(FIXTURE_ROSTER)
 
-    await teamTrackerExport(addFile, storage, mapping)
+    await teamTrackerExport(addFile, storage, mapping, { registryStore: createRegistryStore(storage) })
 
     const histFile = files.find(f => f.path === 'github-history.json')
     expect(histFile).toBeDefined()
@@ -221,7 +222,7 @@ describe('teamTrackerExport', () => {
     }))
     const mapping = buildMapping(FIXTURE_ROSTER)
 
-    await teamTrackerExport(addFile, storage, mapping)
+    await teamTrackerExport(addFile, storage, mapping, { registryStore: createRegistryStore(storage) })
 
     const jnmFile = files.find(f => f.path === 'jira-name-map.json')
     expect(jnmFile).toBeDefined()
@@ -245,7 +246,7 @@ describe('teamTrackerExport', () => {
     }))
     const mapping = buildMapping(FIXTURE_ROSTER)
 
-    await teamTrackerExport(addFile, storage, mapping)
+    await teamTrackerExport(addFile, storage, mapping, { registryStore: createRegistryStore(storage) })
 
     const configFile = files.find(f => f.path === 'roster-sync-config.json')
     expect(configFile).toBeDefined()
@@ -272,7 +273,7 @@ describe('teamTrackerExport', () => {
     }))
     const mapping = buildMapping(FIXTURE_ROSTER)
 
-    await teamTrackerExport(addFile, storage, mapping)
+    await teamTrackerExport(addFile, storage, mapping, { registryStore: createRegistryStore(storage) })
 
     // Find the fake name for Bob Smith in the roster
     const rosterFile = files.find(f => f.path === 'org-roster-full.json')
@@ -304,7 +305,7 @@ describe('teamTrackerExport', () => {
     }))
     const mapping = buildMapping(FIXTURE_ROSTER)
 
-    await teamTrackerExport(addFile, storage, mapping)
+    await teamTrackerExport(addFile, storage, mapping, { registryStore: createRegistryStore(storage) })
 
     const allContent = JSON.stringify(files)
     expect(allContent).not.toContain('Bob Smith')
@@ -314,5 +315,61 @@ describe('teamTrackerExport', () => {
     expect(allContent).not.toContain('bobsmith')
     expect(allContent).not.toContain('alicechen')
     expect(allContent).not.toContain('achen@example.com')
+  })
+
+  it('uses the person/contribution/jira-name-map stores when passed, instead of raw storage', async () => {
+    const { createPersonStore } = require('../../server/person-store')
+    const { createContributionStore } = require('../../server/contribution-store')
+    const { createJiraNameMapStore } = require('../../server/jira-name-map-store')
+
+    const files = []
+    const addFile = (path, data) => files.push({ path, data })
+    // Deliberately no people/*.json, contribution, or jira-name-map keys in
+    // storage — if the export fell back to raw storage instead of using the
+    // stores below, these sections would be empty. Needs a storage mock
+    // with a real (not no-op) writeToStorage so the stores' writes are
+    // actually visible to the reads performed during export.
+    const backing = registryStorage()
+    const storage = {
+      async readFromStorage(key) { return backing[key] !== undefined ? JSON.parse(JSON.stringify(backing[key])) : null },
+      async writeToStorage(key, value) { backing[key] = JSON.parse(JSON.stringify(value)) },
+      async listStorageFiles(dir) {
+        return Object.keys(backing).filter(k => k.startsWith(dir + '/') && k.endsWith('.json')).map(k => k.slice(dir.length + 1))
+      }
+    }
+    const mapping = buildMapping(FIXTURE_ROSTER)
+
+    const personStore = createPersonStore(storage)
+    await personStore.writePerson('bob_smith', {
+      jiraDisplayName: 'Bob Smith',
+      fetchedAt: '2026-03-10T12:00:00.000Z',
+      resolved: { count: 1, issues: [] },
+      inProgress: { count: 0, issues: [] }
+    })
+
+    const contributionStore = createContributionStore(storage)
+    await contributionStore.writeResults('github', {
+      bobsmith: { totalContributions: 245, months: {}, fetchedAt: '2026-03-10T12:00:00.000Z' }
+    })
+
+    const jiraNameMapStore = createJiraNameMapStore(storage)
+    await jiraNameMapStore.writeAll({ 'Bob Smith': { accountId: 'acc-1', displayName: 'Bob Smith' } })
+
+    await teamTrackerExport(addFile, storage, mapping, { personStore, contributionStore, jiraNameMapStore, registryStore: createRegistryStore(storage) })
+
+    expect(files.find(f => f.path.startsWith('people/'))).toBeDefined()
+    expect(files.find(f => f.path === 'github-contributions.json').data.users).toBeDefined()
+    const nameMapFile = files.find(f => f.path === 'jira-name-map.json')
+    expect(nameMapFile).toBeDefined()
+    expect(Object.keys(nameMapFile.data)).toHaveLength(1)
+  })
+
+  it('throws immediately when stores.registryStore is missing', async () => {
+    const storage = makeStorage(FIXTURE_ROSTER)
+    const files = []
+    const addFile = (path, data) => files.push({ path, data })
+    const mapping = buildMapping(FIXTURE_ROSTER)
+
+    await expect(teamTrackerExport(addFile, storage, mapping)).rejects.toThrow(/requires stores\.registryStore/)
   })
 })

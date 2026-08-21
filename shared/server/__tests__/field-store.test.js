@@ -1,7 +1,9 @@
+const { createAuditLog } = require('../audit-log')
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest'
 import mongoose from 'mongoose'
 
 const { createFieldStore, coerceFieldValue, FIELD_DEFS_KEY } = require('../field-store');
+const { createRegistryStore } = require('../registry-store');
 const { fieldDefinitionSchema } = require('../models/field-definition');
 
 // Suppress console.log output in tests
@@ -22,7 +24,7 @@ function makeStore(opts = {}) {
   if (initialFieldDefs) initial[FIELD_DEFS_KEY] = initialFieldDefs;
 
   const storage = createMockStorage(initial);
-  const fieldStore = createFieldStore(storage, {});
+  const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage), registryStore: createRegistryStore(storage) });
   return { fieldStore, storage };
 }
 
@@ -356,6 +358,22 @@ describe('usesDatabase', () => {
   });
 });
 
+describe('createFieldStore auditLog requirement', () => {
+  it('throws immediately when options.auditLog is missing', () => {
+    const storage = createMockStorage();
+    expect(() => createFieldStore(storage)).toThrow(/requires options\.auditLog/);
+    expect(() => createFieldStore(storage, {})).toThrow(/requires options\.auditLog/);
+  });
+});
+
+describe('createFieldStore registryStore requirement', () => {
+  it('throws immediately when options.registryStore is missing', () => {
+    const storage = createMockStorage();
+    const auditLog = createAuditLog(storage);
+    expect(() => createFieldStore(storage, { auditLog })).toThrow(/requires options\.registryStore/);
+  });
+});
+
 // ─── MongoDB-backed tests ───
 
 describe('field-store (MongoDB)', () => {
@@ -384,7 +402,7 @@ describe('field-store (MongoDB)', () => {
   function makeMongoStore() {
     if (!FieldModel) return null;
     const storage = createMockStorage({});
-    const fieldStore = createFieldStore(storage, { model: FieldModel });
+    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog: createAuditLog(storage), registryStore: createRegistryStore(storage) });
     return { fieldStore, storage };
   }
 
@@ -497,6 +515,29 @@ describe('field-store (MongoDB)', () => {
     // Verify it's in storage (file-backed, not MongoDB)
     const reg = await storage.readFromStorage('team-data/registry.json');
     expect(reg.people.user1._appFields.field_test).toBe('value');
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('updatePersonFields writes to the registry collection when a registryStore is injected', async () => {
+    const result = makeMongoStore();
+    if (!result) return;
+    const { storage } = result;
+
+    const { createRegistryStore } = require('../registry-store');
+    const { registryEntrySchema } = require('../models/registry-entry');
+    const RegistryModel = connection.models.core__registry_entries
+      || connection.model('core__registry_entries', registryEntrySchema, 'core__registry_entries');
+    await RegistryModel.deleteMany({});
+    const registryStore = createRegistryStore(storage, { model: RegistryModel });
+    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog: createAuditLog(storage), registryStore });
+
+    await registryStore.upsertPerson('user1', { uid: 'user1', name: 'Test User' });
+
+    const updated = await fieldStore.updatePersonFields('user1', { field_test: 'value' }, 'admin@example.com');
+    expect(updated.field_test).toBe('value');
+
+    // Not written to the file at all.
+    expect(storage._store['team-data/registry.json']).toBeUndefined();
+    expect((await registryStore.getPerson('user1'))._appFields.field_test).toBe('value');
   });
 
   it.skipIf(!process.env.MONGODB_URI)('handles unique fieldId race by retrying', async () => {

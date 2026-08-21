@@ -6,7 +6,6 @@
 
 const { REGISTRY_KEY, MAX_BOARDS, MAX_URL_LENGTH } = require('./team-store');
 const { validateAllowedValues, MAX_ALLOWED_VALUES, MAX_ALLOWED_VALUE_LENGTH } = require('./field-store');
-const { appendAuditEntry } = require('./audit-log');
 const { mergePerson } = require('./roster-sync/lifecycle');
 
 /**
@@ -226,8 +225,8 @@ function tryCreateLdapConnection() {
  * For each custom field, returns unique values, suggested type, multi-value detection,
  * and person-reference match info.
  */
-async function previewMigration(storage, config) {
-  const registry = await storage.readFromStorage(REGISTRY_KEY);
+async function previewMigration(storage, config, registryStore) {
+  const registry = registryStore ? await registryStore.readRegistry() : await storage.readFromStorage(REGISTRY_KEY);
   if (!registry || !registry.people) {
     return { fields: [], totalPeople: 0 };
   }
@@ -414,11 +413,12 @@ async function previewMigration(storage, config) {
  * @param {object} stores - Store instances shared with the rest of the app (required)
  * @param {object} stores.fieldStore - Field store instance from the module context
  * @param {object} stores.teamStore - Team store instance from the module context
+ * @param {object} stores.auditLog - Audit log instance from the module context
  * @returns {{ migrated: boolean, teams: number, fields: number, assignments: number, boardsMigrated: number }}
  */
-async function migrateToInApp(storage, config, actorEmail, fieldOverrides, { fieldStore, teamStore } = {}) {
-  if (!fieldStore || !teamStore) {
-    throw new Error('migrateToInApp requires an injected fieldStore and teamStore (from context) — do not construct file-backed stores here');
+async function migrateToInApp(storage, config, actorEmail, fieldOverrides, { fieldStore, teamStore, auditLog, registryStore } = {}) {
+  if (!fieldStore || !teamStore || !auditLog) {
+    throw new Error('migrateToInApp requires an injected fieldStore, teamStore and auditLog (from context) — do not construct file-backed stores here');
   }
 
   // Already migrated — skip
@@ -426,7 +426,7 @@ async function migrateToInApp(storage, config, actorEmail, fieldOverrides, { fie
     return { migrated: false, teams: 0, fields: 0, assignments: 0, boardsMigrated: 0 };
   }
 
-  const registry = await storage.readFromStorage(REGISTRY_KEY);
+  const registry = registryStore ? await registryStore.readRegistry() : await storage.readFromStorage(REGISTRY_KEY);
   if (!registry || !registry.people) {
     return { migrated: false, teams: 0, fields: 0, assignments: 0, boardsMigrated: 0 };
   }
@@ -435,9 +435,9 @@ async function migrateToInApp(storage, config, actorEmail, fieldOverrides, { fie
   // `dbConnection` check, so they are always on the same backend — branch
   // on just one.
   if (!teamStore.usesDatabase) {
-    return migrateToInAppFile(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore });
+    return migrateToInAppFile(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore, auditLog });
   }
-  return migrateToInAppDatabase(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore });
+  return migrateToInAppDatabase(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore, auditLog, registryStore });
 }
 
 /**
@@ -446,7 +446,7 @@ async function migrateToInApp(storage, config, actorEmail, fieldOverrides, { fie
  * byte-for-byte identical (same generated ids, same batched audit entries,
  * same wholesale blob writes).
  */
-async function migrateToInAppFile(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore }) {
+async function migrateToInAppFile(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore, auditLog }) {
   // ─── Read all data once ───
   const { generateTeamId, TEAMS_KEY } = require('./team-store');
   const { FIELD_DEFS_KEY } = require('./field-store');
@@ -792,7 +792,7 @@ async function migrateToInAppFile(storage, config, actorEmail, fieldOverrides, r
   });
 
   for (const entry of auditEntries) {
-    await appendAuditEntry(storage, entry);
+    await auditLog.appendAuditEntry(entry);
   }
 
   return { migrated: true, teams: teamsCreated, fields: fieldsCreated, assignments: assignmentsCreated, boardsMigrated };
@@ -808,8 +808,13 @@ async function migrateToInAppFile(storage, config, actorEmail, fieldOverrides, r
  * definitions too, so the blob-write shortcut is not available here.
  *
  * The registry (team assignments on people, and _appFields for person-scoped
- * fields) has no model yet and stays a single storage.writeToStorage(REGISTRY_KEY)
- * write at the end, exactly like the file path.
+ * fields) is written once at the end via registryStore.writeRegistry(), a
+ * full-registry replace. That's the same whole-blob shape as the file path's
+ * single storage.writeToStorage(REGISTRY_KEY) call, and is safe here (unlike
+ * most registry writers) because this function computes the complete new
+ * registry from a fresh read and runs once as a one-time cutover, not a
+ * hot path with concurrent callers — the same justification consolidated-sync
+ * uses for the same primitive. See registry-store.js's module doc comment.
  *
  * Documented divergences from the file path, confined to this path only
  * (see team-store.js's deleteTeam for the established precedent of
@@ -852,7 +857,10 @@ async function migrateToInAppFile(storage, config, actorEmail, fieldOverrides, r
  *     has no such field and no such risk — it always creates a fresh field
  *     definition object in memory rather than looking one up.
  */
-async function migrateToInAppDatabase(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore }) {
+async function migrateToInAppDatabase(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore, auditLog, registryStore }) {
+  if (!registryStore) {
+    throw new Error('migrateToInAppDatabase requires an injected registryStore (from context) — do not construct a file-backed store here');
+  }
   const { getOrgDisplayNames } = require('./roster-sync/config');
 
   const overrideMap = {};
@@ -1191,9 +1199,9 @@ async function migrateToInAppDatabase(storage, config, actorEmail, fieldOverride
 
   // ─── Step 3: Persist the registry. Teams and field definitions were
   // already persisted per-entity above through the stores. ───
-  await storage.writeToStorage(REGISTRY_KEY, registry);
+  await registryStore.writeRegistry(registry);
 
-  await appendAuditEntry(storage, {
+  await auditLog.appendAuditEntry({
     action: 'migration.sheets_to_inapp',
     actor: actorEmail,
     entityType: 'system',

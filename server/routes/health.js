@@ -9,8 +9,6 @@
  * @param {object} context - Core services context
  */
 
-const auditLog = require('../../shared/server/audit-log');
-
 /** Validate a domain name per RFC 1123 */
 function isValidDomain(domain) {
   if (!domain || typeof domain !== 'string') return false;
@@ -103,8 +101,8 @@ function registerPreAuthRoutes(app, context) {
  * Register routes that come AFTER authMiddleware.
  */
 function registerPostAuthRoutes(app, context) {
-  const { storage, requireAdmin, requireScope, roleStore, DEMO_MODE } = context;
-  const { readFromStorage, writeToStorage } = storage;
+  const { configStore, requireAdmin, requireScope, roleStore, auditLog, DEMO_MODE } = context;
+  const { readFromStorage, writeToStorage } = configStore;
 
   /**
    * @openapi
@@ -263,7 +261,7 @@ function registerPostAuthRoutes(app, context) {
       await writeToStorage('site-config.json', config);
 
       if (updates.authEmailDomain !== undefined && updates.authEmailDomain !== existing.authEmailDomain) {
-        await auditLog.appendAuditEntry({ readFromStorage, writeToStorage }, {
+        await auditLog.appendAuditEntry({
           action: 'config.authEmailDomain.change',
           actor: req.userEmail || 'unknown',
           entityType: 'config',

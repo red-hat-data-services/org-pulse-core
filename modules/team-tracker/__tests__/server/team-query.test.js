@@ -29,6 +29,10 @@ async function setupRoutes(storageData) {
   const storage = makeStorage(storageData)
   const { createFieldStore } = require('../../../../shared/server/field-store')
   const { createTeamStore } = require('../../../../shared/server/team-store')
+  const { createAuditLog } = require('../../../../shared/server/audit-log')
+  const { createRegistryStore } = require('../../../../shared/server/registry-store')
+  const auditLog = createAuditLog(storage)
+  const registryStore = createRegistryStore(storage)
   const context = {
     storage,
     requireAdmin: (req, res, next) => next(),
@@ -39,8 +43,10 @@ async function setupRoutes(storageData) {
       isAdmin: vi.fn(() => false),
       isTeamAdmin: vi.fn(() => false)
     },
-    fieldStore: createFieldStore(storage),
-    teamStore: createTeamStore(storage),
+    fieldStore: createFieldStore(storage, { auditLog, registryStore }),
+    teamStore: createTeamStore(storage, { auditLog, registryStore }),
+    registryStore,
+    auditLog,
     registerScopes: vi.fn()
   }
 

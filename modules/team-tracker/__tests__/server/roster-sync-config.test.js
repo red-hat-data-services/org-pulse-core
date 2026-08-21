@@ -1,4 +1,6 @@
 const { createFieldStore } = require('../../../../shared/server/field-store')
+const { createAuditLog } = require('../../../../shared/server/audit-log')
+const { createRegistryStore } = require('../../../../shared/server/registry-store')
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import express from 'express'
 import http from 'http'
@@ -64,7 +66,8 @@ async function createTestApp() {
   // Register the team-tracker routes
   const registerRoutes = require('../../server/index.js')
   const router = express.Router()
-  const fieldStore = createFieldStore({ readFromStorage, writeToStorage })
+  const registryStore = createRegistryStore({ readFromStorage, writeToStorage })
+  const fieldStore = createFieldStore({ readFromStorage, writeToStorage }, { auditLog: createAuditLog({ readFromStorage, writeToStorage }), registryStore })
 
   // Provide minimal context with requireAdmin middleware
   const context = {
@@ -74,6 +77,7 @@ async function createTestApp() {
     requireScope: () => (req, res, next) => next(),
     registerDiagnostics: vi.fn(),
     fieldStore,
+    registryStore,
     registerScopes: vi.fn()
   }
 

@@ -4,7 +4,6 @@
  * Module-scoped to team-tracker (not shared/) per stability contract.
  */
 
-const { appendAuditEntry } = require('../../../shared/server/audit-log');
 const { getStorageMutex } = require('../../../shared/server/storage-mutex');
 
 const FIELD_OPTIONS_DIR = 'team-data/field-options';
@@ -64,7 +63,10 @@ async function getValues(storage, name) {
  * Add values to a field option set. Creates the option set if it does not exist.
  * Rejects writes to externally-managed option sets.
  */
-async function addValues(storage, name, values, actorEmail) {
+async function addValues(storage, name, values, actorEmail, auditLog) {
+  if (!auditLog) {
+    throw new Error('addValues requires an injected auditLog (from the module context) — there is no fallback');
+  }
   const mutex = getStorageMutex(optionsKey(name));
   return mutex.runExclusive(async () => {
     let options = await readFieldOptions(storage, name);
@@ -92,7 +94,7 @@ async function addValues(storage, name, values, actorEmail) {
       options.updatedBy = actorEmail;
       await writeFieldOptions(storage, name, options);
 
-      await appendAuditEntry(storage, {
+      await auditLog.appendAuditEntry({
         action: 'field-options.add',
         actor: actorEmail,
         entityType: 'field-options',
@@ -109,7 +111,10 @@ async function addValues(storage, name, values, actorEmail) {
  * Replace all values in a field option set.
  * Rejects writes to externally-managed option sets (source !== undefined).
  */
-async function replaceValues(storage, name, values, label, actorEmail) {
+async function replaceValues(storage, name, values, label, actorEmail, auditLog) {
+  if (!auditLog) {
+    throw new Error('replaceValues requires an injected auditLog (from the module context) — there is no fallback');
+  }
   const mutex = getStorageMutex(optionsKey(name));
   return mutex.runExclusive(async () => {
     const existing = await readFieldOptions(storage, name);
@@ -126,7 +131,7 @@ async function replaceValues(storage, name, values, label, actorEmail) {
     };
     await writeFieldOptions(storage, name, options);
 
-    await appendAuditEntry(storage, {
+    await auditLog.appendAuditEntry({
       action: 'field-options.replace',
       actor: actorEmail,
       entityType: 'field-options',
@@ -151,9 +156,17 @@ async function replaceValues(storage, name, values, label, actorEmail) {
  * @param {string[]} opts.values - The new canonical values from the source
  * @param {string} [opts.label] - Display label
  * @param {object} [opts.richValues] - Keyed by value name, contains enriched data
+ * @param {object} auditLog - Audit log instance from the module context. Required — no fallback.
+ * @param {object} registryStore - Dual-path registry store from the module context. Required — no fallback.
  * @returns {{ orphanedValues: string[], added: string[], removed: string[] }}
  */
-async function syncFromExternal(storage, name, opts) {
+async function syncFromExternal(storage, name, opts, auditLog, registryStore) {
+  if (!auditLog) {
+    throw new Error('syncFromExternal requires an injected auditLog (from the module context) — there is no fallback');
+  }
+  if (!registryStore) {
+    throw new Error('syncFromExternal requires a registryStore argument (from the module context) — there is no fallback');
+  }
   const mutex = getStorageMutex(optionsKey(name));
   return mutex.runExclusive(async () => {
     const { source, sourceProject, values, label, richValues } = opts;
@@ -169,7 +182,7 @@ async function syncFromExternal(storage, name, opts) {
 
     // Detect orphaned values -- removed from source but still referenced by records
     const orphanedValues = removed.length > 0
-      ? await findReferencedValues(storage, name, removed)
+      ? await findReferencedValues(storage, name, removed, registryStore)
       : [];
 
     const now = new Date().toISOString();
@@ -196,7 +209,7 @@ async function syncFromExternal(storage, name, opts) {
     await writeFieldOptions(storage, name, options);
 
     if (added.length > 0 || removed.length > 0) {
-      await appendAuditEntry(storage, {
+      await auditLog.appendAuditEntry({
         action: 'field-options.external-sync',
         actor: source + '-sync',
         entityType: 'field-options',
@@ -216,9 +229,13 @@ async function syncFromExternal(storage, name, opts) {
  * @param {object} storage
  * @param {string} optionSetName - The option set name
  * @param {string[]} candidates - Values to check
+ * @param {object} registryStore - Dual-path registry store (from the module context). Required — no fallback.
  * @returns {string[]} Values from candidates that are still in use
  */
-async function findReferencedValues(storage, optionSetName, candidates) {
+async function findReferencedValues(storage, optionSetName, candidates, registryStore) {
+  if (!registryStore) {
+    throw new Error('findReferencedValues requires a registryStore argument (from the module context) — there is no fallback');
+  }
   if (!candidates || candidates.length === 0) return [];
   const candidateSet = new Set(candidates);
   const referenced = new Set();
@@ -230,7 +247,7 @@ async function findReferencedValues(storage, optionSetName, candidates) {
 
   // Scan person records
   if (personFieldIds.length > 0) {
-    const registry = await storage.readFromStorage('team-data/registry.json');
+    const registry = await registryStore.readRegistry();
     if (registry && registry.people) {
       for (const person of Object.values(registry.people)) {
         if (!person._appFields) continue;
@@ -275,7 +292,10 @@ async function findReferencedValues(storage, optionSetName, candidates) {
  * Remove values from a field option set.
  * Rejects writes to externally-managed option sets.
  */
-async function removeValues(storage, name, valuesToRemove, actorEmail) {
+async function removeValues(storage, name, valuesToRemove, actorEmail, auditLog) {
+  if (!auditLog) {
+    throw new Error('removeValues requires an injected auditLog (from the module context) — there is no fallback');
+  }
   const mutex = getStorageMutex(optionsKey(name));
   return mutex.runExclusive(async () => {
     const options = await readFieldOptions(storage, name);
@@ -294,7 +314,7 @@ async function removeValues(storage, name, valuesToRemove, actorEmail) {
       options.updatedBy = actorEmail;
       await writeFieldOptions(storage, name, options);
 
-      await appendAuditEntry(storage, {
+      await auditLog.appendAuditEntry({
         action: 'field-options.remove',
         actor: actorEmail,
         entityType: 'field-options',
@@ -318,7 +338,10 @@ async function removeValues(storage, name, valuesToRemove, actorEmail) {
  * @param {string} actorEmail
  * @returns {{ updated: number }|null} Count of person+team records updated, or null if set not found
  */
-async function renameValue(storage, name, oldValue, newValue, actorEmail) {
+async function renameValue(storage, name, oldValue, newValue, actorEmail, auditLog, registryStore) {
+  if (!auditLog) {
+    throw new Error('renameValue requires an injected auditLog (from the module context) — there is no fallback');
+  }
   const release = await acquireMultiLock([
     optionsKey(name),
     'team-data/registry.json',
@@ -355,29 +378,45 @@ async function renameValue(storage, name, oldValue, newValue, actorEmail) {
 
     // 3. Cascade to person records
     if (personFieldIds.length > 0) {
-      const registry = await storage.readFromStorage('team-data/registry.json');
+      const usesDatabase = !!(registryStore && registryStore.usesDatabase);
+      // MongoDB path can't safely call registryStore inside the file mutex
+      // held above (it's non-reentrant) — but it doesn't need to, since only
+      // the database branch below touches registryStore, and it never
+      // acquires that mutex itself.
+      const registry = usesDatabase
+        ? await registryStore.readRegistry()
+        : await storage.readFromStorage('team-data/registry.json');
       if (registry && registry.people) {
-        let registryModified = false;
-        for (const person of Object.values(registry.people)) {
+        const modifiedUids = new Set();
+        for (const [uid, person] of Object.entries(registry.people)) {
           if (!person._appFields) continue;
           for (const fieldId of personFieldIds) {
             const val = person._appFields[fieldId];
             if (val === oldValue) {
               person._appFields[fieldId] = newValue;
-              registryModified = true;
+              modifiedUids.add(uid);
               updated++;
             } else if (Array.isArray(val)) {
               const arrIdx = val.indexOf(oldValue);
               if (arrIdx !== -1) {
                 val[arrIdx] = newValue;
-                registryModified = true;
+                modifiedUids.add(uid);
                 updated++;
               }
             }
           }
         }
-        if (registryModified) {
-          await storage.writeToStorage('team-data/registry.json', registry);
+        if (modifiedUids.size > 0) {
+          if (usesDatabase) {
+            // Targeted per-person writes instead of one whole-registry
+            // write, so a concurrent unrelated person update can't be
+            // clobbered by this cascade's stale copy of it.
+            for (const uid of modifiedUids) {
+              await registryStore.upsertPerson(uid, registry.people[uid]);
+            }
+          } else {
+            await storage.writeToStorage('team-data/registry.json', registry);
+          }
         }
       }
     }
@@ -411,7 +450,7 @@ async function renameValue(storage, name, oldValue, newValue, actorEmail) {
       }
     }
 
-    await appendAuditEntry(storage, {
+    await auditLog.appendAuditEntry({
       action: 'field-options.rename',
       actor: actorEmail,
       entityType: 'field-options',

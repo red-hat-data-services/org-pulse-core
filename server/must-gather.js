@@ -35,6 +35,7 @@ async function collect(options) {
     diagnosticsRegistry,
     gitSync,
     secretRegistry,
+    registryStore,
     redact = 'minimal'
   } = options
 
@@ -86,7 +87,7 @@ async function collect(options) {
   bundle.recentErrors = errorBuffer.getEntries()
 
   // 11. Redact
-  return redactBundle(bundle, redact, storageModule)
+  return redactBundle(bundle, redact, storageModule, registryStore)
 }
 
 function collectSystemInfo() {
@@ -211,14 +212,14 @@ async function collectGitStaticInfo(storageModule, gitSync) {
 
 // ─── Redaction ───
 
-async function redactBundle(bundle, mode, storageModule) {
+async function redactBundle(bundle, mode, storageModule, registryStore) {
   if (mode === 'minimal') {
     return stripSecrets(bundle)
   }
 
   // Aggressive: build mapping from roster, then walk the tree
   const { readRosterFull } = require('../shared/server/roster')
-  const roster = await readRosterFull(storageModule)
+  const roster = await readRosterFull(storageModule, registryStore)
   const mapping = roster ? buildMapping(roster) : null
   const stripped = stripSecrets(bundle)
   if (!mapping) return stripped

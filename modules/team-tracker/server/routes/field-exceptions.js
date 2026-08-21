@@ -6,8 +6,11 @@
 const fieldExceptionsStore = require('../field-exceptions-store');
 
 module.exports = function registerFieldExceptionRoutes(router, context) {
-  const { storage, requireTeamAdmin, requireScope, fieldStore, teamStore } = context;
-  const { readFromStorage } = storage;
+  const { storage, requireTeamAdmin, requireScope, fieldStore, teamStore, auditLog, registryStore: contextRegistryStore } = context;
+  if (!contextRegistryStore) {
+    throw new Error('registerFieldExceptionRoutes requires context.registryStore (from the module context) — there is no fallback');
+  }
+  const registryStore = contextRegistryStore;
 
   const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
@@ -28,7 +31,7 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
     const permissions = require('../../../../shared/server/permissions');
     const { getManagerPurview } = require('../manager-purview');
 
-    const registry = await readFromStorage('team-data/registry.json');
+    const registry = await registryStore.readRegistry();
     if (!registry) return [];
 
     const teamsData = await teamStore.readTeams();
@@ -154,7 +157,7 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
 
     // Validate entity exists
     if (entityType === 'person') {
-      const registry = await readFromStorage('team-data/registry.json');
+      const registry = await registryStore.readRegistry();
       if (!registry || !registry.people || !registry.people[entityId]) {
         return res.status(400).json({ error: `Person "${entityId}" not found in registry` });
       }
@@ -182,7 +185,8 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
     const { exception, created } = await fieldExceptionsStore.createException(
       storage,
       { entityType, entityId, fieldId, reason: reason.trim() },
-      actorEmail
+      actorEmail,
+      auditLog
     );
 
     res.status(created ? 201 : 200).json({ exception });
@@ -215,7 +219,7 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
     if (guarded) return;
 
     const actorEmail = req.userEmail || 'unknown';
-    const removed = await fieldExceptionsStore.removeException(storage, req.params.id, actorEmail);
+    const removed = await fieldExceptionsStore.removeException(storage, req.params.id, actorEmail, auditLog);
 
     if (!removed) {
       return res.status(404).json({ error: 'Exception not found' });

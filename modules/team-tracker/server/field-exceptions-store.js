@@ -7,7 +7,6 @@
 
 const crypto = require('crypto');
 const { Mutex } = require('async-mutex');
-const { appendAuditEntry } = require('../../../shared/server/audit-log');
 
 const STORAGE_KEY = 'team-data/field-exceptions.json';
 
@@ -70,8 +69,12 @@ async function findException(storage, entityType, entityId, fieldId) {
 /**
  * Create or upsert an exception.
  * Returns { exception, created } where created is true for new, false for upsert.
+ * @param {object} auditLog - Audit log instance from the module context. Required — no fallback.
  */
-async function createException(storage, { entityType, entityId, fieldId, reason }, actorEmail) {
+async function createException(storage, { entityType, entityId, fieldId, reason }, actorEmail, auditLog) {
+  if (!auditLog) {
+    throw new Error('createException requires an injected auditLog (from the module context) — there is no fallback');
+  }
   const mutex = getStorageMutex(STORAGE_KEY);
   return mutex.runExclusive(async () => {
     const data = await readExceptions(storage);
@@ -86,7 +89,7 @@ async function createException(storage, { entityType, entityId, fieldId, reason 
       existing.createdBy = actorEmail;
       await writeExceptions(storage, data);
 
-      await appendAuditEntry(storage, {
+      await auditLog.appendAuditEntry({
         action: 'field-exception.update',
         actor: actorEmail,
         entityType: 'field-exception',
@@ -110,7 +113,7 @@ async function createException(storage, { entityType, entityId, fieldId, reason 
     data.exceptions.push(exception);
     await writeExceptions(storage, data);
 
-    await appendAuditEntry(storage, {
+    await auditLog.appendAuditEntry({
       action: 'field-exception.create',
       actor: actorEmail,
       entityType: 'field-exception',
@@ -125,8 +128,12 @@ async function createException(storage, { entityType, entityId, fieldId, reason 
 /**
  * Remove an exception by ID.
  * Returns the removed exception, or null if not found.
+ * @param {object} auditLog - Audit log instance from the module context. Required — no fallback.
  */
-async function removeException(storage, id, actorEmail) {
+async function removeException(storage, id, actorEmail, auditLog) {
+  if (!auditLog) {
+    throw new Error('removeException requires an injected auditLog (from the module context) — there is no fallback');
+  }
   const mutex = getStorageMutex(STORAGE_KEY);
   return mutex.runExclusive(async () => {
     const data = await readExceptions(storage);
@@ -136,7 +143,7 @@ async function removeException(storage, id, actorEmail) {
     const [removed] = data.exceptions.splice(idx, 1);
     await writeExceptions(storage, data);
 
-    await appendAuditEntry(storage, {
+    await auditLog.appendAuditEntry({
       action: 'field-exception.remove',
       actor: actorEmail,
       entityType: 'field-exception',

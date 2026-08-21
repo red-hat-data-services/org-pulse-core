@@ -24,8 +24,12 @@ function isOrgSyncInProgress() {
 }
 
 module.exports = function registerOrgTeamsRoutes(router, context) {
-  const { storage, requireAdmin, requireScope, fieldStore, teamStore } = context;
+  const { storage, requireAdmin, requireScope, fieldStore, teamStore, registryStore: contextRegistryStore } = context;
   const { readFromStorage, writeToStorage } = storage;
+  if (!contextRegistryStore) {
+    throw new Error('registerOrgTeamsRoutes requires context.registryStore (from the module context) — there is no fallback');
+  }
+  const registryStore = contextRegistryStore;
   const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
   // Initialize rfe module with secrets
@@ -115,7 +119,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
 
     const structureData = await teamStore.readTeams();
 
-    const allPeople = await getAllPeople(storage);
+    const allPeople = await getAllPeople(storage, registryStore);
     const orgKeyToDisplay = await buildOrgKeyToDisplayName();
     const orgTeamPeopleMap = isInAppMode
       ? groupPeopleByOrgTeamFromRegistry(allPeople, orgKeyToDisplay, structureData)
@@ -341,7 +345,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
 
       const orgName = teamKey.substring(0, sepIdx);
       const teamName = teamKey.substring(sepIdx + 2);
-      const allPeople = await getAllPeople(storage);
+      const allPeople = await getAllPeople(storage, registryStore);
       const orgKeyToDisplay = await buildOrgKeyToDisplayName();
 
       const rosterConfig = await loadRosterSyncConfig(storage);
@@ -385,7 +389,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
    */
   router.get('/org-list', requireScope('roster:read'), async function(req, res) {
     try {
-      const allPeople = await getAllPeople(storage);
+      const allPeople = await getAllPeople(storage, registryStore);
       const orgKeyToDisplay = await buildOrgKeyToDisplayName();
       const rosterConfig = await loadRosterSyncConfig(storage);
       const listInAppMode = (rosterConfig?.teamDataSource || 'sheets') === 'in-app';
@@ -453,7 +457,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
 
       if (teams.length === 0) return res.status(404).json({ error: 'No data available for this org' });
 
-      const allPeople = await getAllPeople(storage);
+      const allPeople = await getAllPeople(storage, registryStore);
       const orgKeyToDisplay = await buildOrgKeyToDisplayName();
       const orgPeople = isAll ? allPeople : allPeople.filter(function(person) {
         return (orgKeyToDisplay[person.orgKey] || '') === orgName;
@@ -739,7 +743,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
     const config = await getOrgConfig();
 
     try {
-      await runSync(storage, sheetId, config, context.secrets, fieldStore);
+      await runSync(storage, sheetId, config, context.secrets, fieldStore, registryStore);
       try {
         const { teams } = await buildEnrichedTeams();
         const allComponents = [...new Set(teams.flatMap(t => t.components || []))];
@@ -821,7 +825,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
 
   if (!DEMO_MODE) {
     setTimeout(async function() {
-      const rosterData = await readFromStorage('team-data/registry.json');
+      const rosterData = await registryStore.readRegistry();
       if (rosterData) {
         triggerOrgSync().catch(function(err) {
           console.error('[team-tracker] Initial org sync error:', err.message);

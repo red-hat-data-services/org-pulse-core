@@ -5,14 +5,16 @@
  * @param {object} context - Core services context
  */
 
-const auditLog = require('../../shared/server/audit-log');
-
 function registerAdminRoutes(app, context) {
   const {
     storage, requireAuth, requireAdmin, requireScope, blockDuringImpersonation,
     secretRegistry, refreshRegistry, builtInModules, enabledSlugs,
-    collectModuleDiagnostics, diagnosticsRegistry, gitSync, exportRegistry
+    collectModuleDiagnostics, diagnosticsRegistry, gitSync, exportRegistry,
+    auditLog
   } = context;
+  if (!auditLog) {
+    throw new Error('registerAdminRoutes requires context.auditLog — there is no fallback');
+  }
   const backup = require('../../shared/server/backup');
 
   let backupRunning = false;
@@ -468,6 +470,10 @@ function registerAdminRoutes(app, context) {
         return res.status(400).json({ error: 'Invalid request: secrets object required' });
       }
 
+      if (Object.keys(secrets).length === 0) {
+        return res.status(400).json({ error: 'Invalid request: secrets object must not be empty' });
+      }
+
       const fs = require('fs');
       const path = require('path');
       const envPath = path.join(__dirname, '..', '..', '.env');
@@ -516,12 +522,21 @@ function registerAdminRoutes(app, context) {
 
       fs.writeFileSync(envPath, newEnvContent + '\n', 'utf8');
 
-      auditLog.log({
-        actor: req.user?.email || 'unknown',
-        action: 'secrets.update',
-        resource: Object.keys(secrets).join(', '),
-        outcome: 'success'
-      });
+      // The .env write above has already happened at this point, so an audit
+      // failure here must not turn into a reported failure — that would
+      // tell the caller secrets update failed when it actually succeeded.
+      // Mirrors the treatment the catch-path append already gets below.
+      try {
+        await auditLog.appendAuditEntry({
+          actor: req.user?.email || 'unknown',
+          action: 'secrets.update',
+          entityType: 'secret',
+          entityId: Object.keys(secrets).join(', '),
+          detail: `Updated ${Object.keys(secrets).length} secret(s)`
+        });
+      } catch (auditErr) {
+        console.error('Failed to write audit entry for secrets.update:', auditErr);
+      }
 
       res.json({
         success: true,
@@ -530,12 +545,20 @@ function registerAdminRoutes(app, context) {
       });
     } catch (err) {
       console.error('Failed to update secrets:', err);
-      auditLog.log({
-        actor: req.user?.email || 'unknown',
-        action: 'secrets.update',
-        outcome: 'failure',
-        error: err.message
-      });
+      // Never let the audit write replace the error being reported. This
+      // handler previously threw a second time in here, which masked the
+      // real failure and returned an opaque 500.
+      try {
+        await auditLog.appendAuditEntry({
+          actor: req.user?.email || 'unknown',
+          action: 'secrets.update',
+          entityType: 'secret',
+          entityId: Object.keys(req.body?.secrets || {}).join(', '),
+          detail: `Failed to update secrets: ${err.message}`
+        });
+      } catch (auditErr) {
+        console.error('Failed to write audit entry for secrets.update:', auditErr);
+      }
       res.status(500).json({ error: 'Failed to update secrets: ' + err.message });
     }
   });
@@ -582,6 +605,7 @@ function registerAdminRoutes(app, context) {
         diagnosticsRegistry,
         gitSync,
         secretRegistry,
+        registryStore: context.registryStore,
         redact
       });
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -617,7 +641,7 @@ function registerAdminRoutes(app, context) {
    *         $ref: '#/components/responses/ServerError'
    */
   app.get('/api/export/test-data', requireAuth, context.exportRateLimit, function(req, res) {
-    handleExport(req, res, storage, exportRegistry);
+    handleExport(req, res, storage, exportRegistry, context.registryStore);
   });
 }
 

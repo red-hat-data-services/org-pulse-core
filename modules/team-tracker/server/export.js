@@ -5,32 +5,67 @@
  * snapshots, jira-name-map.json, roster-sync-config.json
  */
 
-module.exports = async function teamTrackerExport(addFile, storage, mapping) {
+/**
+ * contributionStore.readCache()/readHistory() always return an object
+ * ({ users: {}, fetchedAt: null } when nothing is stored) rather than null,
+ * unlike a raw file read. Used only on the store path (see call sites) so
+ * the no-store/file path keeps its exact prior behavior of skipping export
+ * only when the file itself is absent.
+ */
+function isEmptyCache(data) {
+  return !data || (Object.keys(data.users || {}).length === 0 && !data.fetchedAt);
+}
+
+/**
+ * @param {object} stores - Dual-path stores from index.js
+ *   (personStore, contributionStore, jiraNameMapStore, registryStore) so the
+ *   export reflects whichever path (MongoDB or file) is actually in use for
+ *   those data sets.
+ * @param {object} [stores.personStore] - Optional; when omitted, people/*.json
+ *   is read directly from `storage`.
+ * @param {object} [stores.contributionStore] - Optional; when omitted,
+ *   contribution/history files are read directly from `storage`.
+ * @param {object} [stores.jiraNameMapStore] - Optional; when omitted,
+ *   jira-name-map.json is read directly from `storage`.
+ * @param {object} stores.registryStore - Dual-path registry store. Required —
+ *   there is no fallback.
+ *   Snapshots and roster-sync-config are not part of this module's MongoDB
+ *   migration (exportSnapshots reads the filesystem directly and isn't
+ *   converted here) and always come from the file.
+ */
+module.exports = async function teamTrackerExport(addFile, storage, mapping, stores = {}) {
+  if (!stores.registryStore) {
+    throw new Error('teamTrackerExport requires stores.registryStore (from the module context) — there is no fallback');
+  }
   const { readFromStorage } = storage;
+  const personStore = stores.personStore || null;
+  const contributionStore = stores.contributionStore || null;
+  const jiraNameMapStore = stores.jiraNameMapStore || null;
+  const registryStore = stores.registryStore;
 
   // 1. roster (from team-data/registry.json)
-  await exportRoster(addFile, readFromStorage, mapping);
+  await exportRoster(addFile, storage, mapping, registryStore);
 
   // 2. people/*.json
-  await exportPeopleFiles(addFile, storage, mapping);
+  await exportPeopleFiles(addFile, storage, mapping, personStore);
 
   // 3. github-contributions.json
-  await exportGithubContributions(addFile, readFromStorage, mapping);
+  await exportGithubContributions(addFile, readFromStorage, mapping, contributionStore);
 
   // 4. github-history.json
-  await exportGithubHistory(addFile, readFromStorage, mapping);
+  await exportGithubHistory(addFile, readFromStorage, mapping, contributionStore);
 
   // 5. gitlab-contributions.json
-  await exportGitlabContributions(addFile, readFromStorage, mapping);
+  await exportGitlabContributions(addFile, readFromStorage, mapping, contributionStore);
 
   // 6. gitlab-history.json
-  await exportGitlabHistory(addFile, readFromStorage, mapping);
+  await exportGitlabHistory(addFile, readFromStorage, mapping, contributionStore);
 
   // 7. snapshots
   await exportSnapshots(addFile, storage, mapping);
 
   // 8. jira-name-map.json
-  await exportJiraNameMap(addFile, readFromStorage, mapping);
+  await exportJiraNameMap(addFile, readFromStorage, mapping, jiraNameMapStore);
 
   // 9. roster-sync-config (from team-data/config.json)
   await exportRosterSyncConfig(addFile, readFromStorage, mapping);
@@ -72,9 +107,9 @@ function anonymizePerson(person, mapping) {
   return result;
 }
 
-async function exportRoster(addFile, readFromStorage, mapping) {
+async function exportRoster(addFile, storage, mapping, registryStore) {
   const { readRosterFull } = require('../../../shared/server/roster');
-  const roster = await readRosterFull({ readFromStorage });
+  const roster = await readRosterFull(storage, registryStore);
   if (!roster) return;
 
   const anonymized = {};
@@ -102,10 +137,19 @@ async function exportRoster(addFile, readFromStorage, mapping) {
   addFile('org-roster-full.json', anonymized);
 }
 
-async function exportPeopleFiles(addFile, storage, mapping) {
+async function listPeopleFromFiles(storage) {
   const files = await storage.listStorageFiles('people');
+  const results = [];
   for (const file of files) {
     const data = await storage.readFromStorage(`people/${file}`);
+    if (data) results.push({ key: file.endsWith('.json') ? file.slice(0, -'.json'.length) : file, data });
+  }
+  return results;
+}
+
+async function exportPeopleFiles(addFile, storage, mapping, personStore) {
+  const people = personStore ? await personStore.listPeople() : await listPeopleFromFiles(storage);
+  for (const { key, data } of people) {
     if (!data) continue;
 
     const anonymized = { ...data };
@@ -137,14 +181,15 @@ async function exportPeopleFiles(addFile, storage, mapping) {
       const fakeFilename = fakeName.toLowerCase().replace(/\s+/g, '_') + '.json';
       addFile(`people/${fakeFilename}`, anonymized);
     } else {
-      addFile(`people/${file}`, anonymized);
+      addFile(`people/${key}.json`, anonymized);
     }
   }
 }
 
-async function exportGithubContributions(addFile, readFromStorage, mapping) {
-  const data = await readFromStorage('github-contributions.json');
+async function exportGithubContributions(addFile, readFromStorage, mapping, contributionStore) {
+  const data = contributionStore ? await contributionStore.readCache('github') : await readFromStorage('github-contributions.json');
   if (!data) return;
+  if (contributionStore && isEmptyCache(data)) return;
 
   const anonymized = { ...data };
   if (data.users) {
@@ -160,9 +205,10 @@ async function exportGithubContributions(addFile, readFromStorage, mapping) {
   addFile('github-contributions.json', anonymized);
 }
 
-async function exportGithubHistory(addFile, readFromStorage, mapping) {
-  const data = await readFromStorage('github-history.json');
+async function exportGithubHistory(addFile, readFromStorage, mapping, contributionStore) {
+  const data = contributionStore ? await contributionStore.readHistory('github') : await readFromStorage('github-history.json');
   if (!data) return;
+  if (contributionStore && isEmptyCache(data)) return;
 
   const anonymized = { ...data };
   if (data.users) {
@@ -175,9 +221,10 @@ async function exportGithubHistory(addFile, readFromStorage, mapping) {
   addFile('github-history.json', anonymized);
 }
 
-async function exportGitlabContributions(addFile, readFromStorage, mapping) {
-  const data = await readFromStorage('gitlab-contributions.json');
+async function exportGitlabContributions(addFile, readFromStorage, mapping, contributionStore) {
+  const data = contributionStore ? await contributionStore.readCache('gitlab') : await readFromStorage('gitlab-contributions.json');
   if (!data) return;
+  if (contributionStore && isEmptyCache(data)) return;
 
   const anonymized = { ...data };
   if (data.users) {
@@ -198,9 +245,10 @@ async function exportGitlabContributions(addFile, readFromStorage, mapping) {
   addFile('gitlab-contributions.json', anonymized);
 }
 
-async function exportGitlabHistory(addFile, readFromStorage, mapping) {
-  const data = await readFromStorage('gitlab-history.json');
+async function exportGitlabHistory(addFile, readFromStorage, mapping, contributionStore) {
+  const data = contributionStore ? await contributionStore.readHistory('gitlab') : await readFromStorage('gitlab-history.json');
   if (!data) return;
+  if (contributionStore && isEmptyCache(data)) return;
 
   const anonymized = { ...data };
   if (data.users) {
@@ -290,9 +338,15 @@ function anonymizeSnapshotData(data, mapping) {
   return result;
 }
 
-async function exportJiraNameMap(addFile, readFromStorage, mapping) {
-  const data = await readFromStorage('jira-name-map.json');
+async function exportJiraNameMap(addFile, readFromStorage, mapping, jiraNameMapStore) {
+  // jiraNameMapStore.readAll() always returns an object ({} when nothing is
+  // stored) rather than null, unlike a raw file read — treat "empty" as
+  // "not present" only on that path so this preserves the exact file-path
+  // behavior (skip export only when the file itself is absent) when no
+  // store is given.
+  const data = jiraNameMapStore ? await jiraNameMapStore.readAll() : await readFromStorage('jira-name-map.json');
   if (!data) return;
+  if (jiraNameMapStore && Object.keys(data).length === 0) return;
 
   const anonymized = {};
   for (const [name, info] of Object.entries(data)) {

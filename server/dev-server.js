@@ -66,6 +66,19 @@ async function startServer(options = {}) {
   }
 
   const { readFromStorage, writeToStorage, getFileMtime } = storageModule;
+
+  // ─── Config Store ───
+  // Constructed early: needed by roleStoreOpts.getAuthDomain below and by
+  // module state loading further down, both of which run before other
+  // consumer modules load.
+  const { createConfigStore } = require('../shared/server/config-store');
+  const configStoreOpts = {};
+  if (dbConnection) {
+    const { configSchema } = require('../shared/server/models/config');
+    configStoreOpts.model = dbConnection.model('core__config', configSchema, 'core__config');
+  }
+  const configStore = createConfigStore(storageModule, configStoreOpts);
+
   const { createAuthMiddleware, proxySecretGuard, blockDuringImpersonation } = require('../shared/server/auth');
   const { createRoleStore } = require('../shared/server/role-store');
   const { createRoleRegistry } = require('../shared/server/role-registry');
@@ -247,7 +260,12 @@ async function startServer(options = {}) {
     'release-planning:read': 'releases:read',
     'release-planning:write': 'releases:write',
   };
-  await apiTokens.init(storageModule, { scopeRegistry, scopeMigrationMap });
+  const apiTokenOpts = { scopeRegistry, scopeMigrationMap };
+  if (dbConnection) {
+    const { apiTokenSchema } = require('../shared/server/models/api-token');
+    apiTokenOpts.model = dbConnection.model('core__api_tokens', apiTokenSchema, 'core__api_tokens');
+  }
+  await apiTokens.init(storageModule, apiTokenOpts);
 
   const PORT = port;
 
@@ -316,7 +334,7 @@ async function startServer(options = {}) {
       if (process.env.AUTH_EMAIL_DOMAIN) {
         return process.env.AUTH_EMAIL_DOMAIN.trim().toLowerCase();
       }
-      const config = await readFromStorage('site-config.json');
+      const config = await configStore.readFromStorage('site-config.json');
       return config?.authEmailDomain || null;
     },
     roleRegistry
@@ -325,17 +343,44 @@ async function startServer(options = {}) {
     const { roleAssignmentSchema } = require('../shared/server/models/role');
     roleStoreOpts.model = dbConnection.model('core__roles', roleAssignmentSchema, 'core__roles');
   }
+  // ─── Audit Log ───
+  // Constructed before the role/field/team stores below — they all require
+  // an injected audit log instance.
+
+  const { createAuditLog } = require('../shared/server/audit-log');
+  const auditLogOpts = {};
+  if (dbConnection) {
+    const { auditEntrySchema } = require('../shared/server/models/audit-entry');
+    auditLogOpts.model = dbConnection.model('core__audit_entries', auditEntrySchema, 'core__audit_entries');
+  }
+  const auditLog = createAuditLog(storageModule, auditLogOpts);
+  roleStoreOpts.auditLog = auditLog;
+
   const roleStore = createRoleStore(readFromStorage, writeToStorage, roleStoreOpts);
+
+  // ─── Registry Store ───
+  // Created before auth middleware, which caches registry reads for
+  // resolveUserUid and needs the dual-path store to do so correctly.
+
+  const { createRegistryStore } = require('../shared/server/registry-store');
+  const registryStoreOpts = {};
+  if (dbConnection) {
+    const { registryEntrySchema } = require('../shared/server/models/registry-entry');
+    registryStoreOpts.model = dbConnection.model('core__registry_entries', registryEntrySchema, 'core__registry_entries');
+  }
+  const registryStore = createRegistryStore(storageModule, registryStoreOpts);
+
   const { authMiddleware, requireAuth, requireAdmin, requireTeamAdmin, requireRole, requireScope, seedRoles } = createAuthMiddleware(readFromStorage, writeToStorage, {
     tokenValidator: apiTokens,
     roleStore,
-    getFileMtime
+    getFileMtime,
+    registryStore
   });
 
   // ─── Field Store ───
 
   const { createFieldStore } = require('../shared/server/field-store');
-  const fieldStoreOpts = {};
+  const fieldStoreOpts = { auditLog, registryStore };
   if (dbConnection) {
     const { fieldDefinitionSchema } = require('../shared/server/models/field-definition');
     fieldStoreOpts.model = dbConnection.model('core__field_definitions', fieldDefinitionSchema, 'core__field_definitions');
@@ -345,7 +390,7 @@ async function startServer(options = {}) {
   // ─── Team Store ───
 
   const { createTeamStore } = require('../shared/server/team-store');
-  const teamStoreOpts = {};
+  const teamStoreOpts = { auditLog, registryStore };
   if (dbConnection) {
     const { teamSchema } = require('../shared/server/models/team');
     teamStoreOpts.model = dbConnection.model('core__teams', teamSchema, 'core__teams');
@@ -415,6 +460,9 @@ async function startServer(options = {}) {
     requireScope,
     blockDuringImpersonation,
     roleStore,
+    registryStore,
+    auditLog,
+    configStore,
     roleRegistry,
     scopeRegistry,
     secretRegistry,
@@ -486,10 +534,10 @@ async function startServer(options = {}) {
 
   // ─── Module State ───
 
-  const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, fieldStore, teamStore, roleRegistry, scopeRegistry, secretRegistry, dbConnection };
+  const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, fieldStore, teamStore, registryStore, auditLog, roleRegistry, scopeRegistry, secretRegistry, dbConnection };
   const registries = { diagnostics: diagnosticsRegistry, messages: messageRegistry, refresh: refreshRegistry, exports: exportRegistry, searchIndex: searchIndexRegistry };
 
-  const persistedState = await loadModuleState(storageModule);
+  const persistedState = await loadModuleState(configStore);
   const startupState = Object.assign({}, persistedState);
   let startupStateChanged = false;
   for (const mod of builtInModules) {
@@ -499,10 +547,10 @@ async function startServer(options = {}) {
     }
   }
   if (startupStateChanged) {
-    await saveModuleState(storageModule, startupState);
+    await saveModuleState(configStore, startupState);
   }
   const effectiveState = getEffectiveState(builtInModules, startupState);
-  await reconcileStartupState(builtInModules, effectiveState, storageModule);
+  await reconcileStartupState(builtInModules, effectiveState, configStore);
   const enabledSlugs = new Set(Object.entries(effectiveState).filter(([, v]) => v).map(([k]) => k));
 
   // Update route context with resolved enabledSlugs

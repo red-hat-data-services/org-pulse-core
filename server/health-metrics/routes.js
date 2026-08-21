@@ -3,7 +3,7 @@ const { createEventStore } = require('./event-store');
 const { aggregateEvents, mergeDailyBreakdown } = require('./aggregator');
 
 function createHealthMetricsRouter(context, { eventsDir } = {}) {
-  const { storage, requireAdmin, requireScope, roleStore } = context;
+  const { storage, requireAdmin, requireScope, roleStore, registryStore } = context;
   const { readFromStorage, writeToStorage, getFileMtime, listStorageFiles } = storage;
 
   const router = express.Router();
@@ -40,7 +40,7 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
     if (!configuredFieldId) return;
 
     // Cross-module read: team-tracker exports team-data/registry.json (see module.json > export.files)
-    const registry = await readFromStorage('team-data/registry.json');
+    const registry = registryStore ? await registryStore.readRegistry() : await readFromStorage('team-data/registry.json');
     if (!registry?.people) return;
 
     for (const [uid, person] of Object.entries(registry.people)) {
@@ -55,9 +55,15 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
   // Build cache on startup
   rebuildUserTypeCache().catch(err => console.error('[health-metrics] rebuildUserTypeCache startup error:', err.message));
 
-  // Poll registry mtime every 60s to detect roster sync changes
+  // Poll registry mtime every 60s to detect roster sync changes. The
+  // MongoDB path has no file mtime to check cheaply, so it just rebuilds
+  // unconditionally on the same interval.
   const registryCheckInterval = setInterval(async () => {
     try {
+      if (registryStore && registryStore.usesDatabase) {
+        await rebuildUserTypeCache();
+        return;
+      }
       const mtime = await getFileMtime('team-data/registry.json');
       if (mtime && mtime > registryMtime) {
         registryMtime = mtime;

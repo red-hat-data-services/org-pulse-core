@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 
 const fieldOptionsSync = require('../../server/field-options-sync')
+const { createAuditLog } = require('../../../../shared/server/audit-log')
+const { createRegistryStore } = require('../../../../shared/server/registry-store')
 
 function makeStorage(initial = {}) {
   const data = { ...initial }
@@ -140,7 +142,7 @@ describe('field-options-sync', () => {
         projectKey: 'RHAI',
         entityType: 'components',
         label: 'Components'
-      })
+      }, createAuditLog(storage), createRegistryStore(storage))
 
       expect(result.linked).toBe(true)
       expect(result.valuesCount).toBe(3)
@@ -166,7 +168,7 @@ describe('field-options-sync', () => {
         orgId: 'org-123',
         siteId: 'site-456',
         label: 'Jira Teams'
-      })
+      }, createAuditLog(storage), createRegistryStore(storage))
 
       expect(result.linked).toBe(true)
       expect(result.valuesCount).toBe(3)
@@ -256,7 +258,7 @@ describe('field-options-sync', () => {
         '/components': SAMPLE_COMPONENTS
       })
 
-      const result = await fieldOptionsSync.syncOptionSet(storage, jiraRequest, 'components')
+      const result = await fieldOptionsSync.syncOptionSet(storage, jiraRequest, 'components', createAuditLog(storage), createRegistryStore(storage))
       expect(result.valuesCount).toBe(3)
       expect(result.added).toEqual(['Operator'])
       expect(result.removed).toEqual([])
@@ -277,7 +279,7 @@ describe('field-options-sync', () => {
         '/gateway/api/public/teams/v1/org/': SAMPLE_TEAMS_PAGE
       })
 
-      const result = await fieldOptionsSync.syncOptionSet(storage, jiraRequest, 'jira-teams')
+      const result = await fieldOptionsSync.syncOptionSet(storage, jiraRequest, 'jira-teams', createAuditLog(storage), createRegistryStore(storage))
       expect(result.valuesCount).toBe(3)
       expect(result.added).toEqual(['AIP Fine Tuning', 'RHAI Green'])
       expect(result.entityType).toBe('teams')
@@ -313,7 +315,7 @@ describe('field-options-sync', () => {
         '/components': SAMPLE_COMPONENTS
       })
 
-      const result = await fieldOptionsSync.syncAllLinked(storage, jiraRequest)
+      const result = await fieldOptionsSync.syncAllLinked(storage, jiraRequest, createAuditLog(storage), createRegistryStore(storage))
       expect(result.status).toBe('success')
       expect(result.synced).toBe(1)
       expect(result.failed).toBe(0)
@@ -327,7 +329,7 @@ describe('field-options-sync', () => {
       })
       const jiraRequest = makeJiraRequest({})
 
-      const result = await fieldOptionsSync.syncAllLinked(storage, jiraRequest)
+      const result = await fieldOptionsSync.syncAllLinked(storage, jiraRequest, createAuditLog(storage), createRegistryStore(storage))
       expect(result.status).toBe('skipped')
     })
 
@@ -351,7 +353,7 @@ describe('field-options-sync', () => {
         throw new Error('Project not found')
       })
 
-      const result = await fieldOptionsSync.syncAllLinked(storage, jiraRequest)
+      const result = await fieldOptionsSync.syncAllLinked(storage, jiraRequest, createAuditLog(storage), createRegistryStore(storage))
       expect(result.synced).toBe(1)
       expect(result.failed).toBe(1)
       expect(result.results[1].status).toBe('error')

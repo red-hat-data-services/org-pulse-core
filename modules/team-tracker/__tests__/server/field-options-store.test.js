@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 
 const fieldOptionsStore = require('../../server/field-options-store')
+const { createAuditLog } = require('../../../../shared/server/audit-log')
+const { createRegistryStore } = require('../../../../shared/server/registry-store')
 
 function makeStorage(initial = {}) {
   const data = { ...initial }
@@ -64,7 +66,7 @@ describe('field-options-store', () => {
         },
         'audit-log.json': { entries: [] }
       })
-      const result = await fieldOptionsStore.addValues(storage, 'component', ['B', 'C', 'D'], 'user@test.com')
+      const result = await fieldOptionsStore.addValues(storage, 'component', ['B', 'C', 'D'], 'user@test.com', createAuditLog(storage))
       expect(result.added).toEqual(['C', 'D'])
       expect(result.total).toBe(4)
 
@@ -74,7 +76,7 @@ describe('field-options-store', () => {
 
     it('creates option set if it does not exist', async () => {
       const storage = makeStorage({ 'audit-log.json': { entries: [] } })
-      const result = await fieldOptionsStore.addValues(storage, 'newthing', ['X', 'Y'], 'user@test.com')
+      const result = await fieldOptionsStore.addValues(storage, 'newthing', ['X', 'Y'], 'user@test.com', createAuditLog(storage))
       expect(result.added).toEqual(['X', 'Y'])
       expect(result.total).toBe(2)
 
@@ -85,7 +87,7 @@ describe('field-options-store', () => {
 
     it('trims whitespace and ignores empty strings', async () => {
       const storage = makeStorage({ 'audit-log.json': { entries: [] } })
-      const result = await fieldOptionsStore.addValues(storage, 'test', ['  A  ', '', '  '], 'user@test.com')
+      const result = await fieldOptionsStore.addValues(storage, 'test', ['  A  ', '', '  '], 'user@test.com', createAuditLog(storage))
       expect(result.added).toEqual(['A'])
     })
   })
@@ -93,7 +95,7 @@ describe('field-options-store', () => {
   describe('replaceValues', () => {
     it('replaces all values, dedupes and sorts', async () => {
       const storage = makeStorage({ 'audit-log.json': { entries: [] } })
-      const result = await fieldOptionsStore.replaceValues(storage, 'component', ['C', 'A', 'B', 'A'], 'Components', 'user@test.com')
+      const result = await fieldOptionsStore.replaceValues(storage, 'component', ['C', 'A', 'B', 'A'], 'Components', 'user@test.com', createAuditLog(storage))
       expect(result.values).toEqual(['A', 'B', 'C'])
       expect(result.name).toBe('component')
       expect(result.label).toBe('Components')
@@ -108,14 +110,14 @@ describe('field-options-store', () => {
         },
         'audit-log.json': { entries: [] }
       })
-      const result = await fieldOptionsStore.removeValues(storage, 'component', ['B'], 'user@test.com')
+      const result = await fieldOptionsStore.removeValues(storage, 'component', ['B'], 'user@test.com', createAuditLog(storage))
       expect(result.removed).toBe(1)
       expect(result.total).toBe(2)
     })
 
     it('returns null for non-existent option set', async () => {
       const storage = makeStorage({})
-      const result = await fieldOptionsStore.removeValues(storage, 'nonexistent', ['A'], 'user@test.com')
+      const result = await fieldOptionsStore.removeValues(storage, 'nonexistent', ['A'], 'user@test.com', createAuditLog(storage))
       expect(result).toBeNull()
     })
   })
@@ -123,7 +125,7 @@ describe('field-options-store', () => {
   describe('path sanitization', () => {
     it('strips unsafe characters from option set name', async () => {
       const storage = makeStorage({ 'audit-log.json': { entries: [] } })
-      await fieldOptionsStore.replaceValues(storage, '../../../etc/passwd', ['X'], null, 'user@test.com')
+      await fieldOptionsStore.replaceValues(storage, '../../../etc/passwd', ['X'], null, 'user@test.com', createAuditLog(storage))
       // Should write to sanitized path, not allow traversal
       expect(storage._data['team-data/field-options/etcpasswd.json']).toBeDefined()
       expect(storage._data['../../../etc/passwd.json']).toBeUndefined()
@@ -158,7 +160,7 @@ describe('field-options-store', () => {
         'team-data/teams.json': { teams: {} },
         'audit-log.json': { entries: [] }
       })
-      const result = await fieldOptionsStore.renameValue(storage, 'component', 'Beta', 'Beta v2', 'admin@test.com')
+      const result = await fieldOptionsStore.renameValue(storage, 'component', 'Beta', 'Beta v2', 'admin@test.com', createAuditLog(storage))
       expect(result.updated).toBe(1)
 
       const opts = storage._data['team-data/field-options/component.json']
@@ -189,7 +191,7 @@ describe('field-options-store', () => {
         'team-data/teams.json': { teams: {} },
         'audit-log.json': { entries: [] }
       })
-      const result = await fieldOptionsStore.renameValue(storage, 'component', 'B', 'B-renamed', 'admin@test.com')
+      const result = await fieldOptionsStore.renameValue(storage, 'component', 'B', 'B-renamed', 'admin@test.com', createAuditLog(storage))
       expect(result.updated).toBe(1)
 
       const reg = storage._data['team-data/registry.json']
@@ -215,7 +217,7 @@ describe('field-options-store', () => {
         },
         'audit-log.json': { entries: [] }
       })
-      const result = await fieldOptionsStore.renameValue(storage, 'component', 'X', 'X-new', 'admin@test.com')
+      const result = await fieldOptionsStore.renameValue(storage, 'component', 'X', 'X-new', 'admin@test.com', createAuditLog(storage))
       expect(result.updated).toBe(1)
 
       const teams = storage._data['team-data/teams.json']
@@ -230,7 +232,7 @@ describe('field-options-store', () => {
         'audit-log.json': { entries: [] }
       })
       await expect(
-        fieldOptionsStore.renameValue(storage, 'component', 'Z', 'Z-new', 'admin@test.com')
+        fieldOptionsStore.renameValue(storage, 'component', 'Z', 'Z-new', 'admin@test.com', createAuditLog(storage))
       ).rejects.toThrow('not found')
     })
 
@@ -242,13 +244,13 @@ describe('field-options-store', () => {
         'audit-log.json': { entries: [] }
       })
       await expect(
-        fieldOptionsStore.renameValue(storage, 'component', 'A', 'B', 'admin@test.com')
+        fieldOptionsStore.renameValue(storage, 'component', 'A', 'B', 'admin@test.com', createAuditLog(storage))
       ).rejects.toThrow('already exists')
     })
 
     it('returns null for non-existent option set', async () => {
       const storage = makeStorage({})
-      const result = await fieldOptionsStore.renameValue(storage, 'nonexistent', 'A', 'B', 'admin@test.com')
+      const result = await fieldOptionsStore.renameValue(storage, 'nonexistent', 'A', 'B', 'admin@test.com', createAuditLog(storage))
       expect(result).toBeNull()
     })
 
@@ -272,7 +274,7 @@ describe('field-options-store', () => {
         'team-data/teams.json': { teams: {} },
         'audit-log.json': { entries: [] }
       })
-      const result = await fieldOptionsStore.renameValue(storage, 'component', 'A', 'A-renamed', 'admin@test.com')
+      const result = await fieldOptionsStore.renameValue(storage, 'component', 'A', 'A-renamed', 'admin@test.com', createAuditLog(storage))
       expect(result.updated).toBe(1)
 
       const reg = storage._data['team-data/registry.json']
@@ -294,7 +296,7 @@ describe('field-options-store', () => {
         'audit-log.json': { entries: [] }
       })
 
-      await fieldOptionsStore.addValues(storage, 'component', ['B'], 'user@test.com')
+      await fieldOptionsStore.addValues(storage, 'component', ['B'], 'user@test.com', createAuditLog(storage))
       expect(await fieldOptionsStore.getValues(storage, 'tags')).toEqual(['X'])
       expect(await fieldOptionsStore.getValues(storage, 'component')).toEqual(['A', 'B'])
     })
@@ -322,7 +324,7 @@ describe('field-options-store', () => {
         }
       })
       await expect(
-        fieldOptionsStore.addValues(storage, 'component', ['B'], 'user@test.com')
+        fieldOptionsStore.addValues(storage, 'component', ['B'], 'user@test.com', createAuditLog(storage))
       ).rejects.toThrow('managed by external source')
     })
 
@@ -333,7 +335,7 @@ describe('field-options-store', () => {
         }
       })
       await expect(
-        fieldOptionsStore.replaceValues(storage, 'component', ['B'], 'Components', 'user@test.com')
+        fieldOptionsStore.replaceValues(storage, 'component', ['B'], 'Components', 'user@test.com', createAuditLog(storage))
       ).rejects.toThrow('managed by external source')
     })
 
@@ -344,7 +346,7 @@ describe('field-options-store', () => {
         }
       })
       await expect(
-        fieldOptionsStore.removeValues(storage, 'component', ['A'], 'user@test.com')
+        fieldOptionsStore.removeValues(storage, 'component', ['A'], 'user@test.com', createAuditLog(storage))
       ).rejects.toThrow('managed by external source')
     })
 
@@ -355,7 +357,7 @@ describe('field-options-store', () => {
         }
       })
       await expect(
-        fieldOptionsStore.renameValue(storage, 'component', 'A', 'C', 'user@test.com')
+        fieldOptionsStore.renameValue(storage, 'component', 'A', 'C', 'user@test.com', createAuditLog(storage))
       ).rejects.toThrow('managed by external source')
     })
   })
@@ -373,7 +375,7 @@ describe('field-options-store', () => {
           KServe: { id: '10005', description: 'Model serving' },
           Notebooks: { id: '10008', description: 'Jupyter notebooks' }
         }
-      })
+      }, createAuditLog(storage), createRegistryStore(storage))
 
       expect(result.added).toEqual(['Dashboard', 'KServe', 'Notebooks'])
       expect(result.removed).toEqual([])
@@ -400,7 +402,7 @@ describe('field-options-store', () => {
         source: 'jira',
         sourceProject: 'RHAI',
         values: ['B', 'D']
-      })
+      }, createAuditLog(storage), createRegistryStore(storage))
 
       expect(result.added).toEqual(['D'])
       expect(result.removed).toEqual(['A', 'C'])
@@ -431,7 +433,7 @@ describe('field-options-store', () => {
         source: 'jira',
         sourceProject: 'RHAI',
         values: ['Alpha', 'Gamma', 'Delta']
-      })
+      }, createAuditLog(storage), createRegistryStore(storage))
 
       expect(result.removed).toEqual(['Beta'])
       expect(result.orphanedValues).toEqual(['Beta'])
@@ -453,7 +455,7 @@ describe('field-options-store', () => {
         source: 'jira',
         sourceProject: 'RHAI',
         values: ['Alpha', 'Beta']
-      })
+      }, createAuditLog(storage), createRegistryStore(storage))
 
       const saved = storage._data['team-data/field-options/component.json']
       expect(saved.orphanedValues).toBeUndefined()
@@ -478,7 +480,7 @@ describe('field-options-store', () => {
         'team-data/teams.json': { teams: {} }
       })
 
-      const result = await fieldOptionsStore.findReferencedValues(storage, 'component', ['X', 'Z', 'NOTFOUND'])
+      const result = await fieldOptionsStore.findReferencedValues(storage, 'component', ['X', 'Z', 'NOTFOUND'], createRegistryStore(storage))
       expect(result).toEqual(['X', 'Z'])
     })
 
@@ -498,7 +500,7 @@ describe('field-options-store', () => {
         }
       })
 
-      const result = await fieldOptionsStore.findReferencedValues(storage, 'component', ['Alpha', 'Beta'])
+      const result = await fieldOptionsStore.findReferencedValues(storage, 'component', ['Alpha', 'Beta'], createRegistryStore(storage))
       expect(result).toEqual(['Alpha'])
     })
 
@@ -506,7 +508,37 @@ describe('field-options-store', () => {
       const storage = makeStorage({
         'team-data/field-definitions.json': { personFields: [], teamFields: [] }
       })
-      expect(await fieldOptionsStore.findReferencedValues(storage, 'component', ['X'])).toEqual([])
+      expect(await fieldOptionsStore.findReferencedValues(storage, 'component', ['X'], createRegistryStore(storage))).toEqual([])
+    })
+  })
+
+  describe('auditLog requirement', () => {
+    it('throws immediately when auditLog is missing', async () => {
+      const storage = makeStorage({ 'audit-log.json': { entries: [] } })
+      await expect(fieldOptionsStore.addValues(storage, 'component', ['A'], 'user@test.com'))
+        .rejects.toThrow(/requires an injected auditLog/)
+      await expect(fieldOptionsStore.replaceValues(storage, 'component', ['A'], 'Components', 'user@test.com'))
+        .rejects.toThrow(/requires an injected auditLog/)
+      await expect(fieldOptionsStore.removeValues(storage, 'component', ['A'], 'user@test.com'))
+        .rejects.toThrow(/requires an injected auditLog/)
+      await expect(fieldOptionsStore.renameValue(storage, 'component', 'A', 'B', 'user@test.com'))
+        .rejects.toThrow(/requires an injected auditLog/)
+      await expect(fieldOptionsStore.syncFromExternal(storage, 'component', { source: 'jira', values: ['A'] }))
+        .rejects.toThrow(/requires an injected auditLog/)
+    })
+  })
+
+  describe('registryStore requirement', () => {
+    it('throws immediately when registryStore is missing on findReferencedValues', async () => {
+      const storage = makeStorage({ 'team-data/field-definitions.json': { personFields: [], teamFields: [] } })
+      await expect(fieldOptionsStore.findReferencedValues(storage, 'component', ['X']))
+        .rejects.toThrow(/requires a registryStore argument/)
+    })
+
+    it('throws immediately when registryStore is missing on syncFromExternal', async () => {
+      const storage = makeStorage({ 'audit-log.json': { entries: [] } })
+      await expect(fieldOptionsStore.syncFromExternal(storage, 'component', { source: 'jira', values: ['A'] }, createAuditLog(storage)))
+        .rejects.toThrow(/requires a registryStore argument/)
     })
   })
 })

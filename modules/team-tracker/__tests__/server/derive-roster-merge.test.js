@@ -115,11 +115,13 @@ async function createTestServer(storageData) {
   app.use(express.json())
   const router = express.Router()
   const storage = makeStorage(storageData)
+  const { createRegistryStore } = require('../../../../shared/server/registry-store')
   await registerRoutes(router, {
     storage,
     requireAdmin: (_req, _res, next) => next(),
     requireTeamAdmin: (_req, _res, next) => next(),
     requireScope: () => (_req, _res, next) => next(),
+    registryStore: createRegistryStore(storage),
     registerScopes: vi.fn()
   })
   app.use(router)

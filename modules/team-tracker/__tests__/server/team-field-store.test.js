@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 
 const { createTeamStore } = require('../../../../shared/server/team-store')
+const { createAuditLog } = require('../../../../shared/server/audit-log')
+const { createRegistryStore } = require('../../../../shared/server/registry-store')
 
 function makeStorage(initial = {}) {
   const data = { ...initial }
@@ -17,7 +19,7 @@ describe('team-store createTeam', () => {
       'team-data/teams.json': { teams: {} },
       'audit-log.json': { entries: [] }
     })
-    const teamStore = createTeamStore(storage)
+    const teamStore = createTeamStore(storage, { auditLog: createAuditLog(storage), registryStore: createRegistryStore(storage) })
     const team = await teamStore.createTeam('New Team', 'org1', 'admin@test.com')
     expect(team.boards).toEqual([])
   })
@@ -33,7 +35,7 @@ describe('team-store updateTeamBoards', () => {
       },
       'audit-log.json': { entries: [] }
     })
-    const teamStore = createTeamStore(storage)
+    const teamStore = createTeamStore(storage, { auditLog: createAuditLog(storage), registryStore: createRegistryStore(storage) })
 
     const boards = [
       { url: 'https://jira.example.com/board/1', name: 'Board 1' },
@@ -51,7 +53,7 @@ describe('team-store updateTeamBoards', () => {
       'team-data/teams.json': { teams: {} },
       'audit-log.json': { entries: [] }
     })
-    const teamStore = createTeamStore(storage)
+    const teamStore = createTeamStore(storage, { auditLog: createAuditLog(storage), registryStore: createRegistryStore(storage) })
     const result = await teamStore.updateTeamBoards('team_nope', [], 'admin@test.com')
     expect(result).toBeNull()
   })
@@ -65,7 +67,7 @@ describe('team-store updateTeamBoards', () => {
       },
       'audit-log.json': { entries: [] }
     })
-    const teamStore = createTeamStore(storage)
+    const teamStore = createTeamStore(storage, { auditLog: createAuditLog(storage), registryStore: createRegistryStore(storage) })
 
     await teamStore.updateTeamBoards('team_abc', [{ url: 'https://example.com', name: '' }], 'admin@test.com')
     const log = storage._data['audit-log.json']
@@ -84,7 +86,7 @@ describe('team-store updateTeamFields', () => {
       },
       'audit-log.json': { entries: [] }
     })
-    const teamStore = createTeamStore(storage)
+    const teamStore = createTeamStore(storage, { auditLog: createAuditLog(storage), registryStore: createRegistryStore(storage) })
 
     const result = await teamStore.updateTeamFields('team_abc', { field_x: 'hello' }, 'admin@test.com')
     expect(result.metadata).toEqual({ field_x: 'hello' })
@@ -99,7 +101,7 @@ describe('team-store updateTeamFields', () => {
       },
       'audit-log.json': { entries: [] }
     })
-    const teamStore = createTeamStore(storage)
+    const teamStore = createTeamStore(storage, { auditLog: createAuditLog(storage), registryStore: createRegistryStore(storage) })
 
     const result = await teamStore.updateTeamFields('team_abc', { field_x: ['A', 'B'] }, 'admin@test.com')
     expect(result.metadata.field_x).toEqual(['A', 'B'])
@@ -110,7 +112,7 @@ describe('team-store updateTeamFields', () => {
       'team-data/teams.json': { teams: {} },
       'audit-log.json': { entries: [] }
     })
-    const teamStore = createTeamStore(storage)
+    const teamStore = createTeamStore(storage, { auditLog: createAuditLog(storage), registryStore: createRegistryStore(storage) })
 
     const result = await teamStore.updateTeamFields('team_nope', { field_x: 'y' }, 'admin@test.com')
     expect(result).toBeNull()
@@ -125,7 +127,7 @@ describe('team-store updateTeamFields', () => {
       },
       'audit-log.json': { entries: [] }
     })
-    const teamStore = createTeamStore(storage)
+    const teamStore = createTeamStore(storage, { auditLog: createAuditLog(storage), registryStore: createRegistryStore(storage) })
 
     await teamStore.updateTeamFields('team_abc', { field_x: 'hello' }, 'admin@test.com')
     const log = storage._data['audit-log.json']

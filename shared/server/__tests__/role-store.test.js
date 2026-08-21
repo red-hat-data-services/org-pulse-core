@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import mongoose from 'mongoose';
 
 const { createRoleStore, normalizeEmail } = require('../role-store');
+const { createAuditLog } = require('../audit-log');
 const { roleAssignmentSchema } = require('../models/role');
 
 // Suppress console.log output in tests
@@ -23,10 +24,14 @@ function makeStore(opts = {}) {
   if (allowlistData) initial['allowlist.json'] = allowlistData;
 
   const storage = createMockStorage(initial);
+  const auditLog = createAuditLog({
+    readFromStorage: (key) => storage.read(key),
+    writeToStorage: (key, data) => storage.write(key, data)
+  });
   const roleStore = createRoleStore(
     (key) => storage.read(key),
     (key, data) => storage.write(key, data),
-    { getAuthDomain: () => authDomain }
+    { getAuthDomain: () => authDomain, auditLog }
   );
   return { roleStore, storage };
 }
@@ -233,10 +238,14 @@ describe('invalidateCache', () => {
   it('causes fresh authDomain lookup after invalidation', async () => {
     let currentDomain = 'old.local';
     const storage = createMockStorage({});
+    const auditLog = createAuditLog({
+      readFromStorage: (key) => storage.read(key),
+      writeToStorage: (key, data) => storage.write(key, data)
+    });
     const roleStore = createRoleStore(
       (key) => storage.read(key),
       (key, data) => storage.write(key, data),
-      { getAuthDomain: () => currentDomain }
+      { getAuthDomain: () => currentDomain, auditLog }
     );
 
     await roleStore.assignRole('user@redhat.com', 'admin', 'test');
@@ -249,6 +258,21 @@ describe('invalidateCache', () => {
     await roleStore.assignRole('user2@redhat.com', 'admin', 'test');
     data = await storage.read('roles.json');
     expect(data.assignments['user2@new.local']).toBeDefined();
+  });
+});
+
+describe('createRoleStore auditLog requirement', () => {
+  it('throws immediately when options.auditLog is missing', () => {
+    const storage = createMockStorage({});
+    expect(() => createRoleStore(
+      (key) => storage.read(key),
+      (key, data) => storage.write(key, data)
+    )).toThrow(/requires options\.auditLog/);
+    expect(() => createRoleStore(
+      (key) => storage.read(key),
+      (key, data) => storage.write(key, data),
+      { getAuthDomain: () => null }
+    )).toThrow(/requires options\.auditLog/);
   });
 });
 
@@ -280,10 +304,14 @@ describe('role-store (MongoDB)', () => {
   function makeMongoStore(opts = {}) {
     if (!RoleModel) return null;
     const storage = createMockStorage({});
+    const auditLog = createAuditLog({
+      readFromStorage: (key) => storage.read(key),
+      writeToStorage: (key, data) => storage.write(key, data)
+    });
     const roleStore = createRoleStore(
       (key) => storage.read(key),
       (key, data) => storage.write(key, data),
-      { getAuthDomain: () => opts.authDomain || null, model: RoleModel }
+      { getAuthDomain: () => opts.authDomain || null, model: RoleModel, auditLog }
     );
     return { roleStore, storage };
   }

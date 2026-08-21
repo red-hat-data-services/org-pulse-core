@@ -1,5 +1,7 @@
 const { createFieldStore } = require('../../../../shared/server/field-store')
+const { createAuditLog } = require('../../../../shared/server/audit-log')
 const { createTeamStore } = require('../../../../shared/server/team-store')
+const { createRegistryStore } = require('../../../../shared/server/registry-store')
 import { describe, it, expect, vi } from 'vitest'
 
 
@@ -35,8 +37,10 @@ async function setupRoutes(storageData) {
   }
 
   const storage = makeStorage(storageData)
-  const fieldStore = createFieldStore(storage)
-  const teamStore = createTeamStore(storage)
+  const auditLog = createAuditLog(storage)
+  const registryStore = createRegistryStore(storage)
+  const fieldStore = createFieldStore(storage, { auditLog, registryStore })
+  const teamStore = createTeamStore(storage, { auditLog, registryStore })
   const mockRoleStore = {
     getRoles: vi.fn(() => []),
     isAdmin: vi.fn(() => false),
@@ -51,6 +55,8 @@ async function setupRoutes(storageData) {
     roleStore: mockRoleStore,
     fieldStore,
     teamStore,
+    registryStore,
+    auditLog,
     registerScopes: vi.fn()
   }
 

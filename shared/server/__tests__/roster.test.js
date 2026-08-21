@@ -1,6 +1,9 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import mongoose from 'mongoose'
 
-const { splitByKnownNames, getTeamRollup, collectRoleNames } = require('../roster')
+const { splitByKnownNames, getTeamRollup, collectRoleNames, readRosterFull, getAllPeople } = require('../roster')
+const { createRegistryStore } = require('../registry-store')
+const { registryEntrySchema } = require('../models/registry-entry')
 
 describe('splitByKnownNames', () => {
   const knownNames = new Set([
@@ -213,5 +216,115 @@ describe('collectRoleNames', () => {
     ]
     const result = collectRoleNames(people, ['productManager'], new Set())
     expect(result.has('Custom PM')).toBe(true)
+  })
+})
+
+// ─── readRosterFull / getAllPeople dual-path parity ───
+
+function createMockStorage(initialData = {}) {
+  const store = {}
+  for (const [key, val] of Object.entries(initialData)) {
+    store[key] = JSON.parse(JSON.stringify(val))
+  }
+  return {
+    async readFromStorage(key) { return store[key] ? JSON.parse(JSON.stringify(store[key])) : null },
+    async writeToStorage(key, data) { store[key] = JSON.parse(JSON.stringify(data)) },
+    _store: store
+  }
+}
+
+const sampleRegistry = {
+  meta: { generatedAt: '2026-01-01T00:00:00.000Z', vp: { uid: 'vp1', name: 'VP One' } },
+  people: {
+    achen: {
+      uid: 'achen', name: 'Alice Chen', status: 'active', orgRoot: 'achen',
+      github: { username: 'alicechen', source: 'ldap' }, gitlab: null
+    },
+    bsmith: {
+      uid: 'bsmith', name: 'Bob Smith', status: 'active', orgRoot: 'achen',
+      github: null, gitlab: { username: 'bobsmith', source: 'ldap' }
+    },
+    inactive1: { uid: 'inactive1', name: 'Gone', status: 'inactive', orgRoot: 'achen' }
+  }
+}
+
+describe('readRosterFull (file path)', () => {
+  it('returns null when the registry is missing', async () => {
+    const storage = createMockStorage({})
+    expect(await readRosterFull(storage, createRegistryStore(storage))).toBeNull()
+  })
+
+  it('groups active people by orgRoot and flattens github/gitlab usernames', async () => {
+    const storage = createMockStorage({ 'team-data/registry.json': sampleRegistry })
+    const roster = await readRosterFull(storage, createRegistryStore(storage))
+    expect(roster.orgs.achen.members.map(m => m.uid).sort()).toEqual(['achen', 'bsmith'])
+    const achen = roster.orgs.achen.members.find(m => m.uid === 'achen')
+    expect(achen.githubUsername).toBe('alicechen')
+    expect(achen.gitlabUsername).toBeNull()
+  })
+
+  it('getAllPeople excludes inactive people', async () => {
+    const storage = createMockStorage({ 'team-data/registry.json': sampleRegistry })
+    const people = await getAllPeople(storage, createRegistryStore(storage))
+    expect(people.map(p => p.uid).sort()).toEqual(['achen', 'bsmith'])
+  })
+})
+
+describe('readRosterFull registryStore requirement', () => {
+  it('throws immediately when registryStore is missing', async () => {
+    const storage = createMockStorage({})
+    await expect(readRosterFull(storage)).rejects.toThrow(/requires a registryStore argument/)
+  })
+})
+
+describe('readRosterFull / getAllPeople (MongoDB registry)', () => {
+  let connection
+  let RegistryModel
+  const dbName = 'test_roster_' + process.pid
+
+  beforeAll(async () => {
+    const uri = process.env.MONGODB_URI
+    if (!uri) return
+    connection = await mongoose.createConnection(uri, { dbName })
+    RegistryModel = connection.model('core__registry_entries', registryEntrySchema, 'core__registry_entries')
+  })
+
+  afterAll(async () => {
+    if (connection) {
+      await connection.db.dropDatabase()
+      await connection.close()
+    }
+  })
+
+  beforeEach(async () => {
+    if (RegistryModel) await RegistryModel.deleteMany({})
+  })
+
+  function makeRegistryStore() {
+    if (!RegistryModel) return null
+    const storage = createMockStorage({})
+    return { registryStore: createRegistryStore(storage, { model: RegistryModel }), storage }
+  }
+
+  it.skipIf(!process.env.MONGODB_URI)('returns the same shape as the file path for the same data', async () => {
+    const result = makeRegistryStore()
+    if (!result) return
+    const { registryStore, storage } = result
+    await registryStore.writeRegistry(sampleRegistry)
+
+    const fileStorage = createMockStorage({ 'team-data/registry.json': sampleRegistry })
+    const fileRoster = await readRosterFull(fileStorage, createRegistryStore(fileStorage))
+    const dbRoster = await readRosterFull(storage, registryStore)
+    expect(dbRoster).toEqual(fileRoster)
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('getAllPeople excludes inactive people on the MongoDB path', async () => {
+    const result = makeRegistryStore()
+    if (!result) return
+    const { registryStore, storage } = result
+    await registryStore.writeRegistry(sampleRegistry)
+
+    const people = await getAllPeople(storage, registryStore)
+    expect(people.map(p => p.uid).sort()).toEqual(['achen', 'bsmith'])
   })
 })
