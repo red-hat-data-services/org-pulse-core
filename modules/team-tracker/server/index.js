@@ -1,6 +1,6 @@
 module.exports = async function registerRoutes(router, context) {
   const { storage, requireAdmin, requireTeamAdmin, requireScope, fieldStore: contextFieldStore, teamStore: contextTeamStore } = context;
-  const { readFromStorage, writeToStorage, listStorageFiles, deleteStorageDirectory } = storage;
+  const { readFromStorage, writeToStorage, deleteStorageDirectory } = storage;
 
   // Register module scopes
   context.registerScopes([
