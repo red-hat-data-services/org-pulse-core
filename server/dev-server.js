@@ -358,16 +358,30 @@ async function startServer(options = {}) {
   roleStoreOpts.auditLog = auditLog;
 
   const roleStore = createRoleStore(readFromStorage, writeToStorage, roleStoreOpts);
+
+  // ─── Registry Store ───
+  // Created before auth middleware, which caches registry reads for
+  // resolveUserUid and needs the dual-path store to do so correctly.
+
+  const { createRegistryStore } = require('../shared/server/registry-store');
+  const registryStoreOpts = {};
+  if (dbConnection) {
+    const { registryEntrySchema } = require('../shared/server/models/registry-entry');
+    registryStoreOpts.model = dbConnection.model('core__registry_entries', registryEntrySchema, 'core__registry_entries');
+  }
+  const registryStore = createRegistryStore(storageModule, registryStoreOpts);
+
   const { authMiddleware, requireAuth, requireAdmin, requireTeamAdmin, requireRole, requireScope, seedRoles } = createAuthMiddleware(readFromStorage, writeToStorage, {
     tokenValidator: apiTokens,
     roleStore,
-    getFileMtime
+    getFileMtime,
+    registryStore
   });
 
   // ─── Field Store ───
 
   const { createFieldStore } = require('../shared/server/field-store');
-  const fieldStoreOpts = { auditLog };
+  const fieldStoreOpts = { auditLog, registryStore };
   if (dbConnection) {
     const { fieldDefinitionSchema } = require('../shared/server/models/field-definition');
     fieldStoreOpts.model = dbConnection.model('core__field_definitions', fieldDefinitionSchema, 'core__field_definitions');
@@ -377,7 +391,7 @@ async function startServer(options = {}) {
   // ─── Team Store ───
 
   const { createTeamStore } = require('../shared/server/team-store');
-  const teamStoreOpts = { auditLog };
+  const teamStoreOpts = { auditLog, registryStore };
   if (dbConnection) {
     const { teamSchema } = require('../shared/server/models/team');
     teamStoreOpts.model = dbConnection.model('core__teams', teamSchema, 'core__teams');
@@ -520,7 +534,7 @@ async function startServer(options = {}) {
 
   // ─── Module State ───
 
-  const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, fieldStore, teamStore, auditLog, roleRegistry, scopeRegistry, secretRegistry, dbConnection };
+  const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, fieldStore, teamStore, registryStore, auditLog, roleRegistry, scopeRegistry, secretRegistry, dbConnection };
   const registries = { diagnostics: diagnosticsRegistry, messages: messageRegistry, refresh: refreshRegistry, exports: exportRegistry, searchIndex: searchIndexRegistry };
 
   const persistedState = await loadModuleState(configStore);
