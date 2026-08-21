@@ -102,6 +102,7 @@ function buildModuleContext(coreServices, slug, registries = {}) {
     roleStore: coreServices.roleStore,
     fieldStore: coreServices.fieldStore,
     teamStore: coreServices.teamStore,
+    registryStore: coreServices.registryStore,
     auditLog: coreServices.auditLog,
 
     registerRole: roleRegistry
