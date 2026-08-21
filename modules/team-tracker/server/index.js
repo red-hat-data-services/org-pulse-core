@@ -30,6 +30,27 @@ module.exports = async function registerRoutes(router, context) {
   const sheetsModule = require('../../../shared/server/roster-sync/sheets');
   const snapshots = require('./snapshots');
 
+  // ─── MongoDB models & stores (dual-path: db is null when MONGODB_URI
+  // is unset, in which case every store below falls back to the file path
+  // it has always used) ───
+
+  const { createPersonStore } = require('./person-store');
+  const { createContributionStore } = require('./contribution-store');
+  const { createJiraNameMapStore } = require('./jira-name-map-store');
+  const { personMetricsSchema } = require('./models/person');
+  const { contributionSchema } = require('./models/contribution');
+  const { jiraNameMapEntrySchema } = require('./models/jira-name-map');
+  const { snapshotSchema } = require('./models/snapshot');
+
+  const personModel = context.db ? context.db.model('person', personMetricsSchema) : null;
+  const contributionModel = context.db ? context.db.model('contribution', contributionSchema) : null;
+  const jiraNameMapModel = context.db ? context.db.model('jira-name-map', jiraNameMapEntrySchema) : null;
+  const snapshotModel = context.db ? context.db.model('snapshot', snapshotSchema) : null;
+
+  const personStore = createPersonStore(storage, { model: personModel });
+  const contributionStore = createContributionStore(storage, { model: contributionModel });
+  const jiraNameMapStore = createJiraNameMapStore(storage, { model: jiraNameMapModel });
+
   // ─── Unified Sync State ───
 
   const STALENESS_THRESHOLD_MS = 48 * 60 * 60 * 1000;
@@ -58,46 +79,42 @@ module.exports = async function registerRoutes(router, context) {
   const GITLAB_CACHE_PATH = 'gitlab-contributions.json';
   const GITLAB_HISTORY_CACHE_PATH = 'gitlab-history.json';
 
+  // Path constants are kept only to know which provider a call site means;
+  // the actual read/write now goes through contributionStore (dual-path).
+  const CACHE_PATH_TO_PROVIDER = {
+    [GITHUB_CACHE_PATH]: 'github',
+    [GITHUB_HISTORY_CACHE_PATH]: 'github',
+    [GITLAB_CACHE_PATH]: 'gitlab',
+    [GITLAB_HISTORY_CACHE_PATH]: 'gitlab'
+  };
+
   async function readGithubCache() {
-    return (await readFromStorage(GITHUB_CACHE_PATH)) || { users: {}, fetchedAt: null };
+    return contributionStore.readCache('github');
   }
 
   async function readGithubHistoryCache() {
-    return (await readFromStorage(GITHUB_HISTORY_CACHE_PATH)) || { users: {}, fetchedAt: null };
+    return contributionStore.readHistory('github');
   }
 
   async function readGitlabCache() {
-    return (await readFromStorage(GITLAB_CACHE_PATH)) || { users: {}, fetchedAt: null };
+    return contributionStore.readCache('gitlab');
   }
 
   async function readGitlabHistoryCache() {
-    return (await readFromStorage(GITLAB_HISTORY_CACHE_PATH)) || { users: {}, fetchedAt: null };
+    return contributionStore.readHistory('gitlab');
   }
 
   async function writeSinglePassResults(results, contribCachePath, historyCachePath) {
-    const contribCache = (await readFromStorage(contribCachePath)) || { users: {}, fetchedAt: null };
-    const historyCache = (await readFromStorage(historyCachePath)) || { users: {}, fetchedAt: null };
-    const now = new Date().toISOString();
-
-    for (const [username, data] of Object.entries(results)) {
-      if (data) {
-        contribCache.users[username] = data;
-        historyCache.users[username] = { months: data.months || {}, fetchedAt: data.fetchedAt };
-      }
-    }
-
-    contribCache.fetchedAt = now;
-    historyCache.fetchedAt = now;
-    await writeToStorage(contribCachePath, contribCache);
-    await writeToStorage(historyCachePath, historyCache);
+    const provider = CACHE_PATH_TO_PROVIDER[contribCachePath] || CACHE_PATH_TO_PROVIDER[historyCachePath];
+    await contributionStore.writeResults(provider, results);
   }
 
   // ─── Jira Name Resolution Cache ───
 
-  let jiraNameCache = (await readFromStorage('jira-name-map.json')) || {};
+  let jiraNameCache = await jiraNameMapStore.readAll();
 
   async function persistNameCache() {
-    await writeToStorage('jira-name-map.json', jiraNameCache);
+    await jiraNameMapStore.writeAll(jiraNameCache);
   }
 
   // ─── Helper functions ───
@@ -358,8 +375,8 @@ module.exports = async function registerRoutes(router, context) {
   }
 
   async function buildJiraTrends() {
-    const files = await listStorageFiles('people');
-    if (files.length === 0) return {};
+    const people = await personStore.listPeople();
+    if (people.length === 0) return {};
 
     const roster = await deriveRoster();
 
@@ -377,9 +394,8 @@ module.exports = async function registerRoutes(router, context) {
 
     const monthlyData = {};
 
-    for (const file of files) {
+    for (const { data } of people) {
       try {
-        const data = await readFromStorage(`people/${file}`);
         if (!data.resolved?.issues) continue;
 
         const personName = data.jiraDisplayName;
@@ -2920,7 +2936,7 @@ module.exports = async function registerRoutes(router, context) {
         try {
           completed++;
           console.log(`[refresh] Jira: ${member.jiraDisplayName} (${completed}/${memberList.length})`);
-          const existingData = force ? null : await readFromStorage(`people/${sanitizeFilename(member.jiraDisplayName)}.json`);
+          const existingData = force ? null : await personStore.readPerson(sanitizeFilename(member.jiraDisplayName));
           const metrics = await fetchPersonMetrics(jiraRequest, member.jiraDisplayName, {
             nameCache: jiraNameCache,
             existingData,
@@ -2928,7 +2944,7 @@ module.exports = async function registerRoutes(router, context) {
             projectKeys: jiraProjectKeys
           });
           if (metrics._resolvedName) delete metrics._resolvedName;
-          await writeToStorage(`people/${sanitizeFilename(member.jiraDisplayName)}.json`, metrics);
+          await personStore.writePerson(sanitizeFilename(member.jiraDisplayName), metrics);
           if (refreshState.sources.jira) refreshState.sources.jira.completed++;
         } catch (err) {
           console.error(`[refresh] Jira failed for ${member.jiraDisplayName}:`, err.message);
@@ -2986,7 +3002,7 @@ module.exports = async function registerRoutes(router, context) {
 
         if (sources.jira && !DEMO_MODE) {
           promises.push((async () => {
-            const existingData = force ? null : await readFromStorage(`people/${sanitizeFilename(member.jiraDisplayName)}.json`);
+            const existingData = force ? null : await personStore.readPerson(sanitizeFilename(member.jiraDisplayName));
             const metrics = await fetchPersonMetrics(jiraRequest, member.jiraDisplayName, {
               nameCache: jiraNameCache,
               existingData,
@@ -2997,7 +3013,7 @@ module.exports = async function registerRoutes(router, context) {
               await persistNameCache();
               delete metrics._resolvedName;
             }
-            await writeToStorage(`people/${sanitizeFilename(member.jiraDisplayName)}.json`, metrics);
+            await personStore.writePerson(sanitizeFilename(member.jiraDisplayName), metrics);
             result.jira = metrics;
           })());
         }
@@ -3490,13 +3506,12 @@ module.exports = async function registerRoutes(router, context) {
    */
   router.get('/people/metrics', requireScope('metrics:read'), async function(req, res) {
     try {
-      const files = await listStorageFiles('people');
-      if (files.length === 0) return res.json({});
+      const people = await personStore.listPeople();
+      if (people.length === 0) return res.json({});
 
       const result = {};
-      for (const file of files) {
+      for (const { data } of people) {
         try {
-          const data = await readFromStorage(`people/${file}`);
           if (data.jiraDisplayName) {
             result[data.jiraDisplayName] = {
               resolvedCount: data.resolved?.count ?? 0,
@@ -3542,9 +3557,8 @@ module.exports = async function registerRoutes(router, context) {
     try {
       const name = decodeURIComponent(req.params.jiraDisplayName);
       const key = sanitizeFilename(name);
-      const cachePath = `people/${key}.json`;
 
-      const cached = await readFromStorage(cachePath);
+      const cached = await personStore.readPerson(key);
       if (cached) {
         // Enrich with jiraAccountId from name cache if not already present
         if (!cached.jiraAccountId && jiraNameCache[name]?.accountId) {
@@ -3603,7 +3617,7 @@ module.exports = async function registerRoutes(router, context) {
       const results = {};
       await Promise.all(names.map(async (name) => {
         const key = sanitizeFilename(name);
-        const cached = await readFromStorage(`people/${key}.json`);
+        const cached = await personStore.readPerson(key);
         if (cached) {
           if (!cached.jiraAccountId && jiraNameCache[name]?.accountId) {
             cached.jiraAccountId = jiraNameCache[name].accountId;
@@ -3689,7 +3703,7 @@ module.exports = async function registerRoutes(router, context) {
 
       for (const member of uniqueMembers) {
         const key = sanitizeFilename(member.jiraDisplayName);
-        const cached = await readFromStorage(`people/${key}.json`);
+        const cached = await personStore.readPerson(key);
         const memberData = {
           name: member.name,
           jiraDisplayName: member.jiraDisplayName,
@@ -3755,7 +3769,7 @@ module.exports = async function registerRoutes(router, context) {
    */
   router.delete('/jira-name-cache', requireAdmin, requireScope('metrics:write'), async function(req, res) {
     jiraNameCache = {};
-    await writeToStorage('jira-name-map.json', {});
+    await jiraNameMapStore.clear();
     res.json({ success: true });
   });
 
@@ -4707,6 +4721,46 @@ module.exports = async function registerRoutes(router, context) {
 
   // ─── Routes: Snapshots ───
 
+  /**
+   * Cross-store reads (github/gitlab contribution caches, per-person
+   * metrics) that snapshots.js needs to compute a snapshot, plus the
+   * snapshot model itself. Always assembled through the dual-path stores
+   * so snapshots.js itself doesn't need to know whether MongoDB is in use.
+   */
+  async function buildSnapshotOptions() {
+    const [githubHistory, gitlabHistory, githubCache, gitlabCache] = await Promise.all([
+      contributionStore.readHistory('github'),
+      contributionStore.readHistory('gitlab'),
+      contributionStore.readCache('github'),
+      contributionStore.readCache('gitlab')
+    ]);
+    return {
+      githubHistory,
+      gitlabHistory,
+      githubCache,
+      gitlabCache,
+      readPerson: personStore.readPerson,
+      model: snapshotModel
+    };
+  }
+
+  async function readSnapshotRecord(teamKey, periodEnd) {
+    if (snapshotModel) {
+      const doc = await snapshotModel.findOne({ team: teamKey, date: snapshots.formatDate(periodEnd) }).lean();
+      return doc ? doc.data : null;
+    }
+    return await readFromStorage(snapshots.snapshotPath(teamKey, periodEnd));
+  }
+
+  async function writeSnapshotRecord(teamKey, periodEnd, data) {
+    if (snapshotModel) {
+      const date = snapshots.formatDate(periodEnd);
+      await snapshotModel.updateOne({ team: teamKey, date }, { $set: { team: teamKey, date, data } }, { upsert: true });
+      return;
+    }
+    await writeToStorage(snapshots.snapshotPath(teamKey, periodEnd), data);
+  }
+
   async function findTeamFromRoster(teamKey) {
     const roster = await deriveRoster();
     const sepIdx = teamKey.indexOf('::');
@@ -4730,14 +4784,14 @@ module.exports = async function registerRoutes(router, context) {
 
     const results = [];
     for (const period of periods) {
-      const snapshot = await snapshots.generateAndStoreSnapshot(storage, teamKey, team, period);
+      const snapshot = await snapshots.generateAndStoreSnapshot(storage, teamKey, team, period, await buildSnapshotOptions());
       results.push(snapshot);
     }
     return results;
   }
 
   async function getOrGenerateTeamSnapshots(teamKey) {
-    const existing = await snapshots.loadTeamSnapshots(storage, teamKey);
+    const existing = await snapshots.loadTeamSnapshots(storage, teamKey, { model: snapshotModel });
     if (existing.length > 0) return existing;
     return await generateSnapshotsForTeam(teamKey);
   }
@@ -4855,18 +4909,17 @@ module.exports = async function registerRoutes(router, context) {
         for (const [teamName, team] of Object.entries(org.teams)) {
           const teamKey = `${org.key}::${teamName}`;
           for (const period of periodsToSnapshot) {
-            const path = snapshots.snapshotPath(teamKey, period.end);
-            const existing = await readFromStorage(path);
+            const existing = await readSnapshotRecord(teamKey, period.end);
 
             // Regenerate current period snapshot when refreshCurrent is set
             if (existing && refreshCurrent && currentPeriod && period.monthKey === currentPeriod.monthKey) {
-              const snapshot = await snapshots.generateSnapshot(storage, teamKey, team, period);
-              await writeToStorage(path, snapshot);
+              const snapshot = await snapshots.generateSnapshot(storage, teamKey, team, period, await buildSnapshotOptions());
+              await writeSnapshotRecord(teamKey, period.end, snapshot);
               refreshed++;
             } else if (existing) {
               skipped++;
             } else {
-              await snapshots.generateAndStoreSnapshot(storage, teamKey, team, period);
+              await snapshots.generateAndStoreSnapshot(storage, teamKey, team, period, await buildSnapshotOptions());
               generated++;
             }
           }
@@ -4894,6 +4947,10 @@ module.exports = async function registerRoutes(router, context) {
    */
   router.delete('/snapshots', requireAdmin, requireScope('team-tracker:write'), async function(req, res) {
     try {
+      if (snapshotModel) {
+        const { deletedCount } = await snapshotModel.deleteMany({});
+        return res.json({ success: true, deleted: deletedCount });
+      }
       const result = await deleteStorageDirectory('snapshots');
       res.json({ success: true, deleted: result.deleted });
     } catch (error) {
@@ -4938,7 +4995,7 @@ module.exports = async function registerRoutes(router, context) {
         try {
           completed++;
           console.log(`[refresh] Jira: ${member.jiraDisplayName} (${completed}/${memberList.length})`);
-          const existingData = await readFromStorage(`people/${sanitizeFilename(member.jiraDisplayName)}.json`);
+          const existingData = await personStore.readPerson(sanitizeFilename(member.jiraDisplayName));
           const metrics = await fetchPersonMetrics(jiraRequest, member.jiraDisplayName, {
             nameCache: jiraNameCache,
             existingData,
@@ -4946,7 +5003,7 @@ module.exports = async function registerRoutes(router, context) {
             projectKeys: jiraProjectKeys
           });
           if (metrics._resolvedName) delete metrics._resolvedName;
-          await writeToStorage(`people/${sanitizeFilename(member.jiraDisplayName)}.json`, metrics);
+          await personStore.writePerson(sanitizeFilename(member.jiraDisplayName), metrics);
           if (refreshState.sources.jira) refreshState.sources.jira.completed++;
         } catch (err) {
           console.error(`[refresh] Jira failed for ${member.jiraDisplayName}:`, err.message);
@@ -5038,17 +5095,16 @@ module.exports = async function registerRoutes(router, context) {
       for (const [teamName, team] of Object.entries(org.teams)) {
         const teamKey = `${org.key}::${teamName}`;
         for (const period of periodsToSnapshot) {
-          const path = snapshots.snapshotPath(teamKey, period.end);
-          const existing = await readFromStorage(path);
+          const existing = await readSnapshotRecord(teamKey, period.end);
 
           if (existing && refreshCurrent && currentPeriod && period.monthKey === currentPeriod.monthKey) {
-            const snapshot = await snapshots.generateSnapshot(storage, teamKey, team, period);
-            await writeToStorage(path, snapshot);
+            const snapshot = await snapshots.generateSnapshot(storage, teamKey, team, period, await buildSnapshotOptions());
+            await writeSnapshotRecord(teamKey, period.end, snapshot);
             refreshed++;
           } else if (existing) {
             skipped++;
           } else {
-            await snapshots.generateAndStoreSnapshot(storage, teamKey, team, period);
+            await snapshots.generateAndStoreSnapshot(storage, teamKey, team, period, await buildSnapshotOptions());
             generated++;
           }
         }
@@ -5208,16 +5264,15 @@ module.exports = async function registerRoutes(router, context) {
       // Data health: person metrics
       const personMetrics = { totalFiles: 0, recentlyUpdated: 0, staleFiles: 0, staleThresholdDays: 7 };
       try {
-        const files = await listStorageFiles('people');
-        personMetrics.totalFiles = files.length;
+        const people = await personStore.listPeople();
+        personMetrics.totalFiles = people.length;
         const now = Date.now();
         const staleMs = 7 * 24 * 60 * 60 * 1000;
         let oldestAt = null, newestAt = null;
         const nameNotFound = [];
         let fieldsVersionMismatch = 0;
 
-        for (const file of files) {
-          const data = await readFromStorage('people/' + file);
+        for (const { key, data } of people) {
           if (!data) continue;
           const fetchedAt = data.fetchedAt ? new Date(data.fetchedAt).getTime() : 0;
           if (fetchedAt && (now - fetchedAt) > staleMs) {
@@ -5227,7 +5282,7 @@ module.exports = async function registerRoutes(router, context) {
           }
           if (!oldestAt || (fetchedAt && fetchedAt < oldestAt)) oldestAt = fetchedAt;
           if (!newestAt || (fetchedAt && fetchedAt > newestAt)) newestAt = fetchedAt;
-          if (data.nameNotFound) nameNotFound.push(file.replace('.json', ''));
+          if (data.nameNotFound) nameNotFound.push(key);
           if (data.fieldsVersion !== 'v1') fieldsVersionMismatch++;
         }
 
