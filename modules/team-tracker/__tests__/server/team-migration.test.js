@@ -7,6 +7,7 @@ const { createAuditLog } = require('../../../../shared/server/audit-log')
 const { createTeamStore, MAX_URL_LENGTH } = require('../../../../shared/server/team-store')
 const { teamSchema } = require('../../../../shared/server/models/team')
 const { fieldDefinitionSchema } = require('../../../../shared/server/models/field-definition')
+const { createRegistryStore } = require('../../../../shared/server/registry-store')
 
 function makeStorage(initial = {}) {
   const data = { ...initial }
@@ -24,7 +25,8 @@ function makeStorage(initial = {}) {
 
 function makeStores(storage) {
   const auditLog = createAuditLog(storage)
-  return { fieldStore: createFieldStore(storage, { auditLog }), teamStore: createTeamStore(storage, { auditLog }), auditLog }
+  const registryStore = createRegistryStore(storage)
+  return { fieldStore: createFieldStore(storage, { auditLog, registryStore }), teamStore: createTeamStore(storage, { auditLog, registryStore }), auditLog, registryStore }
 }
 
 function baseRegistry() {
@@ -208,13 +210,14 @@ describe('migrateToInApp', () => {
     const config = { teamStructure: { customFields: [] } }
 
     const auditLog = createAuditLog(storage)
-    const realTeamStore = createTeamStore(storage, { auditLog })
+    const registryStore = createRegistryStore(storage)
+    const realTeamStore = createTeamStore(storage, { auditLog, registryStore })
     const teamStore = {
       readTeams: vi.fn((...args) => realTeamStore.readTeams(...args))
     }
-    const fieldStore = createFieldStore(storage, { auditLog })
+    const fieldStore = createFieldStore(storage, { auditLog, registryStore })
 
-    const result = await migrateToInApp(storage, config, 'admin@test.com', [], { fieldStore, teamStore, auditLog })
+    const result = await migrateToInApp(storage, config, 'admin@test.com', [], { fieldStore, teamStore, auditLog, registryStore })
 
     expect(teamStore.readTeams).toHaveBeenCalled()
     expect(result.migrated).toBe(true)
@@ -572,12 +575,13 @@ describe('migrateToInApp (MongoDB team + field stores)', () => {
     const overrides = [{ key: 'productManager', type: 'free-text', multiValue: false, scope: 'team' }]
 
     const auditLog = createAuditLog(storage)
-    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog })
-    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog })
+    const registryStore = createRegistryStore(storage)
+    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog, registryStore })
+    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog, registryStore })
     expect(teamStore.usesDatabase).toBe(true)
     expect(fieldStore.usesDatabase).toBe(true)
 
-    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore, auditLog })
+    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore, auditLog, registryStore })
 
     expect(result.migrated).toBe(true)
     expect(result.teams).toBe(2)
@@ -608,10 +612,11 @@ describe('migrateToInApp (MongoDB team + field stores)', () => {
 
     const config = { teamStructure: { customFields: [] } }
     const auditLog = createAuditLog(storage)
-    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog })
-    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog })
+    const registryStore = createRegistryStore(storage)
+    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog, registryStore })
+    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog, registryStore })
 
-    const result = await migrateToInApp(storage, config, 'admin@test.com', [], { fieldStore, teamStore, auditLog })
+    const result = await migrateToInApp(storage, config, 'admin@test.com', [], { fieldStore, teamStore, auditLog, registryStore })
 
     // Only Serving should be newly created; Platform is reused.
     expect(result.teams).toBe(1)
@@ -627,10 +632,11 @@ describe('migrateToInApp (MongoDB team + field stores)', () => {
     const overrides = [{ key: 'focus', type: 'free-text', multiValue: false, scope: 'team' }]
 
     const auditLog = createAuditLog(storage)
-    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog })
-    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog })
+    const registryStore = createRegistryStore(storage)
+    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog, registryStore })
+    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog, registryStore })
 
-    await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore, auditLog })
+    await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore, auditLog, registryStore })
 
     const fields = await FieldModel.find({}).lean()
     expect(fields[0].multiValue).toBe(true)
@@ -655,10 +661,11 @@ describe('migrateToInApp (MongoDB team + field stores)', () => {
     const overrides = [{ key: 'productManager', type: 'free-text', multiValue: false, scope: 'person' }]
 
     const auditLog = createAuditLog(storage)
-    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog })
-    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog })
+    const registryStore = createRegistryStore(storage)
+    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog, registryStore })
+    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog, registryStore })
 
-    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore, auditLog })
+    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore, auditLog, registryStore })
     expect(result.fields).toBe(1)
 
     const fields = await FieldModel.find({}).lean()
@@ -677,15 +684,16 @@ describe('migrateToInApp (MongoDB team + field stores)', () => {
     const overrides = [{ key: 'productManager', type: 'free-text', multiValue: false, scope: 'team' }]
 
     const auditLog = createAuditLog(storage)
-    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog })
-    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog })
+    const registryStore = createRegistryStore(storage)
+    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog, registryStore })
+    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog, registryStore })
 
-    const first = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore, auditLog })
+    const first = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore, auditLog, registryStore })
     expect(first.fields).toBe(1)
 
     // Simulate a retry: config._migratedToInApp was never persisted (e.g. the
     // process crashed after Step 2 but before the caller recorded success).
-    const second = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore, auditLog })
+    const second = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore, auditLog, registryStore })
     expect(second.fields).toBe(0)
 
     const fields = await FieldModel.find({}).lean()
@@ -707,10 +715,11 @@ describe('migrateToInApp (MongoDB team + field stores)', () => {
     const config = { teamStructure: { customFields: [] } }
 
     const auditLog = createAuditLog(storage)
-    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog })
-    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog })
+    const registryStore = createRegistryStore(storage)
+    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog, registryStore })
+    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog, registryStore })
 
-    const result = await migrateToInApp(storage, config, 'admin@test.com', [], { fieldStore, teamStore, auditLog })
+    const result = await migrateToInApp(storage, config, 'admin@test.com', [], { fieldStore, teamStore, auditLog, registryStore })
 
     // Migration completes for both teams despite Platform's oversized board url.
     expect(result.migrated).toBe(true)
@@ -738,10 +747,11 @@ describe('migrateToInApp (MongoDB team + field stores)', () => {
     const overrides = [{ key: 'dept', type: 'constrained', multiValue: false, scope: 'person' }]
 
     const auditLog = createAuditLog(storage)
-    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog })
-    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog })
+    const registryStore = createRegistryStore(storage)
+    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog, registryStore })
+    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog, registryStore })
 
-    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore, auditLog })
+    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore, auditLog, registryStore })
 
     // Migration completes rather than throwing mid-Step-2.
     expect(result.migrated).toBe(true)
@@ -772,10 +782,11 @@ describe('migrateToInApp (MongoDB team + field stores)', () => {
     const overrides = [{ key: 'dept', type: 'constrained', multiValue: false, scope: 'person' }]
 
     const auditLog = createAuditLog(storage)
-    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog })
-    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog })
+    const registryStore = createRegistryStore(storage)
+    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog, registryStore })
+    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog, registryStore })
 
-    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore, auditLog })
+    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore, auditLog, registryStore })
     expect(result.migrated).toBe(true)
 
     const fields = await FieldModel.find({}).lean()
@@ -790,8 +801,9 @@ describe('migrateToInApp (MongoDB team + field stores)', () => {
     const storage = makeMigrationStorage(registry)
 
     const auditLog = createAuditLog(storage)
-    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog })
-    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog })
+    const registryStore = createRegistryStore(storage)
+    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog, registryStore })
+    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog, registryStore })
 
     // Admin pre-creates a team field labeled "Component" (no sourceKey).
     const adminField = await fieldStore.createFieldDefinition('team', { label: 'Component', type: 'free-text', multiValue: false }, 'admin@test.com')
@@ -808,7 +820,7 @@ describe('migrateToInApp (MongoDB team + field stores)', () => {
     registry.people.alice.component = 'Widgets'
     registry.people.bob.component = 'Widgets'
 
-    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore, auditLog })
+    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore, auditLog, registryStore })
 
     // A new field definition was created; the admin's was not reused.
     expect(result.fields).toBe(1)
@@ -831,8 +843,9 @@ describe('migrateToInApp (MongoDB team + field stores)', () => {
     const storage = makeMigrationStorage(registry)
 
     const auditLog = createAuditLog(storage)
-    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog })
-    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog })
+    const registryStore = createRegistryStore(storage)
+    const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog, registryStore })
+    const teamStore = createTeamStore(storage, { model: TeamModel, auditLog, registryStore })
 
     // Simulate a field this migration created on a previous run, but this
     // time the caller passes multiValue: false in the overrides.
@@ -845,7 +858,7 @@ describe('migrateToInApp (MongoDB team + field stores)', () => {
     const config = { teamStructure: { customFields: [{ key: 'productManager', displayLabel: 'PM' }] } }
     const overrides = [{ key: 'productManager', type: 'free-text', multiValue: false, scope: 'person' }]
 
-    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore, auditLog })
+    const result = await migrateToInApp(storage, config, 'admin@test.com', overrides, { fieldStore, teamStore, auditLog, registryStore })
 
     // No new field created — the sourceKey-tagged one was reused.
     expect(result.fields).toBe(0)

@@ -26,8 +26,10 @@ function isOrgSyncInProgress() {
 module.exports = function registerOrgTeamsRoutes(router, context) {
   const { storage, requireAdmin, requireScope, fieldStore, teamStore, registryStore: contextRegistryStore } = context;
   const { readFromStorage, writeToStorage } = storage;
-  const { createRegistryStore } = require('../../../../shared/server/registry-store');
-  const registryStore = contextRegistryStore || createRegistryStore(storage);
+  if (!contextRegistryStore) {
+    throw new Error('registerOrgTeamsRoutes requires context.registryStore (from the module context) — there is no fallback');
+  }
+  const registryStore = contextRegistryStore;
   const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
   // Initialize rfe module with secrets

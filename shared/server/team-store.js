@@ -82,9 +82,9 @@ const MAX_DESCRIPTION_LENGTH = 2000;
  * @param {object} [options={}] - Options
  * @param {object} [options.model] - Optional Mongoose Team model for MongoDB path
  * @param {object} options.auditLog - Audit log instance (from the module context). Required — no fallback.
- * @param {object} [options.registryStore] - Optional dual-path registry store (see
- *   registry-store.js), used for the person-side of team assignment. Falls
- *   back to a file-only store built on `storage` when omitted.
+ * @param {object} options.registryStore - Dual-path registry store (from the
+ *   module context), used for the person-side of team assignment. Required —
+ *   no fallback.
  * @returns {object} Team store API
  */
 function createTeamStore(storage, options = {}) {
@@ -92,9 +92,11 @@ function createTeamStore(storage, options = {}) {
   if (!options.auditLog) {
     throw new Error('createTeamStore requires options.auditLog (from the module context) — there is no fallback');
   }
+  if (!options.registryStore) {
+    throw new Error('createTeamStore requires options.registryStore (from the module context) — there is no fallback');
+  }
   const { appendAuditEntry } = options.auditLog;
-  const { createRegistryStore } = require('./registry-store');
-  const registryStore = options.registryStore || createRegistryStore(storage);
+  const registryStore = options.registryStore;
 
   // Map a Mongo document to the file-shaped team object.
   function toTeamShape(doc) {

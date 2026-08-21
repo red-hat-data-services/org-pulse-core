@@ -16,7 +16,6 @@ const { inferUsernames } = require('./username-inference');
 const { validateAmbiguousUsernames } = require('./username-validation');
 const { mergePerson, computeCoverage, processLifecycle } = require('./lifecycle');
 const { DEFAULT_EXCLUDED_TITLES } = require('./constants');
-const { createRegistryStore } = require('../registry-store');
 
 const SYNC_LOG_KEY = 'team-data/sync-log.json';
 
@@ -36,16 +35,18 @@ const ENRICHMENT_FIELDS = [
  *
  * @param {object} storage - Storage module with readFromStorage/writeToStorage
  * @param {object} [credentials]
- * @param {object} [registryStore] - Optional dual-path registry store (see
- *   registry-store.js). When omitted, falls back to a file-only store built
- *   on `storage`, matching the pre-existing file-only behavior exactly.
+ * @param {object} registryStore - Dual-path registry store (see
+ *   registry-store.js, from the module context). Required — no fallback.
  * @returns {object} Sync log with status, summary, coverage
  */
 async function runConsolidatedSync(storage, credentials, registryStore) {
+  if (!registryStore) {
+    throw new Error('runConsolidatedSync requires a registryStore argument (from the module context) — there is no fallback');
+  }
   if (syncInProgress) {
     return { status: 'skipped', message: 'Sync already in progress' };
   }
-  const effectiveRegistryStore = registryStore || createRegistryStore(storage);
+  const effectiveRegistryStore = registryStore;
 
   const config = await loadConfig(storage);
   if (!config || !config.orgRoots || config.orgRoots.length === 0) {

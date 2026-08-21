@@ -156,11 +156,16 @@ async function replaceValues(storage, name, values, label, actorEmail, auditLog)
  * @param {string[]} opts.values - The new canonical values from the source
  * @param {string} [opts.label] - Display label
  * @param {object} [opts.richValues] - Keyed by value name, contains enriched data
+ * @param {object} auditLog - Audit log instance from the module context. Required — no fallback.
+ * @param {object} registryStore - Dual-path registry store from the module context. Required — no fallback.
  * @returns {{ orphanedValues: string[], added: string[], removed: string[] }}
  */
-async function syncFromExternal(storage, name, opts, auditLog) {
+async function syncFromExternal(storage, name, opts, auditLog, registryStore) {
   if (!auditLog) {
     throw new Error('syncFromExternal requires an injected auditLog (from the module context) — there is no fallback');
+  }
+  if (!registryStore) {
+    throw new Error('syncFromExternal requires a registryStore argument (from the module context) — there is no fallback');
   }
   const mutex = getStorageMutex(optionsKey(name));
   return mutex.runExclusive(async () => {
@@ -177,7 +182,7 @@ async function syncFromExternal(storage, name, opts, auditLog) {
 
     // Detect orphaned values -- removed from source but still referenced by records
     const orphanedValues = removed.length > 0
-      ? await findReferencedValues(storage, name, removed)
+      ? await findReferencedValues(storage, name, removed, registryStore)
       : [];
 
     const now = new Date().toISOString();
@@ -224,9 +229,13 @@ async function syncFromExternal(storage, name, opts, auditLog) {
  * @param {object} storage
  * @param {string} optionSetName - The option set name
  * @param {string[]} candidates - Values to check
+ * @param {object} registryStore - Dual-path registry store (from the module context). Required — no fallback.
  * @returns {string[]} Values from candidates that are still in use
  */
 async function findReferencedValues(storage, optionSetName, candidates, registryStore) {
+  if (!registryStore) {
+    throw new Error('findReferencedValues requires a registryStore argument (from the module context) — there is no fallback');
+  }
   if (!candidates || candidates.length === 0) return [];
   const candidateSet = new Set(candidates);
   const referenced = new Set();
@@ -238,8 +247,7 @@ async function findReferencedValues(storage, optionSetName, candidates, registry
 
   // Scan person records
   if (personFieldIds.length > 0) {
-    const { createRegistryStore } = require('../../../shared/server/registry-store');
-    const registry = await (registryStore || createRegistryStore(storage)).readRegistry();
+    const registry = await registryStore.readRegistry();
     if (registry && registry.people) {
       for (const person of Object.values(registry.people)) {
         if (!person._appFields) continue;

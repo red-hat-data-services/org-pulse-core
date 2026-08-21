@@ -1,11 +1,10 @@
 module.exports = async function registerRoutes(router, context) {
   const { storage, requireAdmin, requireTeamAdmin, requireScope, fieldStore: contextFieldStore, teamStore: contextTeamStore, registryStore: contextRegistryStore } = context;
   const { readFromStorage, writeToStorage, deleteStorageDirectory } = storage;
-  // Falls back to a file-only store built on `storage` when the context
-  // doesn't provide one (e.g. tests exercising this module standalone),
-  // matching the pre-existing file-only behavior exactly.
-  const { createRegistryStore } = require('../../../shared/server/registry-store');
-  const registryStore = contextRegistryStore || createRegistryStore(storage);
+  if (!contextRegistryStore) {
+    throw new Error('team-tracker registerRoutes requires context.registryStore (from the module context) — there is no fallback');
+  }
+  const registryStore = contextRegistryStore;
 
   // Register module scopes
   context.registerScopes([
@@ -2913,7 +2912,7 @@ module.exports = async function registerRoutes(router, context) {
         orgId,
         siteId,
         label: req.body.label
-      }, auditLog);
+      }, auditLog, registryStore);
       res.json(result);
     } catch (err) {
       const status = err.message.includes('Unsupported') || err.message.includes('required') ? 400 : 502;
@@ -2990,7 +2989,7 @@ module.exports = async function registerRoutes(router, context) {
     }
 
     try {
-      const result = await fieldOptionsSync.syncOptionSet(storage, jiraRequest, safeName, auditLog);
+      const result = await fieldOptionsSync.syncOptionSet(storage, jiraRequest, safeName, auditLog, registryStore);
       _fieldOptionsSyncState[safeName] = { lastSuccessAt: new Date().toISOString() };
       res.json(result);
     } catch (err) {
@@ -5393,7 +5392,7 @@ module.exports = async function registerRoutes(router, context) {
       description: 'Syncs externally-linked field option sets (e.g., Jira components).',
       handler: async function() {
         if (DEMO_MODE) return { status: 'skipped', reason: 'demo mode' };
-        return await fieldOptionsSync.syncAllLinked(storage, jiraRequest, auditLog);
+        return await fieldOptionsSync.syncAllLinked(storage, jiraRequest, auditLog, registryStore);
       }
     });
   }

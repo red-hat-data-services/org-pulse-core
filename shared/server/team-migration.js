@@ -5,7 +5,6 @@
  */
 
 const { REGISTRY_KEY, MAX_BOARDS, MAX_URL_LENGTH } = require('./team-store');
-const { createRegistryStore } = require('./registry-store');
 const { validateAllowedValues, MAX_ALLOWED_VALUES, MAX_ALLOWED_VALUE_LENGTH } = require('./field-store');
 const { mergePerson } = require('./roster-sync/lifecycle');
 
@@ -859,6 +858,9 @@ async function migrateToInAppFile(storage, config, actorEmail, fieldOverrides, r
  *     definition object in memory rather than looking one up.
  */
 async function migrateToInAppDatabase(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore, auditLog, registryStore }) {
+  if (!registryStore) {
+    throw new Error('migrateToInAppDatabase requires an injected registryStore (from context) — do not construct a file-backed store here');
+  }
   const { getOrgDisplayNames } = require('./roster-sync/config');
 
   const overrideMap = {};
@@ -1197,8 +1199,7 @@ async function migrateToInAppDatabase(storage, config, actorEmail, fieldOverride
 
   // ─── Step 3: Persist the registry. Teams and field definitions were
   // already persisted per-entity above through the stores. ───
-  const effectiveRegistryStore = registryStore || createRegistryStore(storage);
-  await effectiveRegistryStore.writeRegistry(registry);
+  await registryStore.writeRegistry(registry);
 
   await auditLog.appendAuditEntry({
     action: 'migration.sheets_to_inapp',

@@ -17,23 +17,31 @@ function isEmptyCache(data) {
 }
 
 /**
- * @param {object} [stores={}] - Optional dual-path stores from index.js
- *   (personStore, contributionStore, jiraNameMapStore, registryStore). When
- *   omitted, falls back to reading the underlying files directly via
- *   `storage`, matching the pre-existing behavior exactly — this keeps the
- *   export hook usable standalone (as the existing tests do) while letting
- *   index.js pass the real stores in production so the export reflects
- *   whichever path (MongoDB or file) is actually in use for those data sets.
+ * @param {object} stores - Dual-path stores from index.js
+ *   (personStore, contributionStore, jiraNameMapStore, registryStore) so the
+ *   export reflects whichever path (MongoDB or file) is actually in use for
+ *   those data sets.
+ * @param {object} [stores.personStore] - Optional; when omitted, people/*.json
+ *   is read directly from `storage`.
+ * @param {object} [stores.contributionStore] - Optional; when omitted,
+ *   contribution/history files are read directly from `storage`.
+ * @param {object} [stores.jiraNameMapStore] - Optional; when omitted,
+ *   jira-name-map.json is read directly from `storage`.
+ * @param {object} stores.registryStore - Dual-path registry store. Required —
+ *   there is no fallback.
  *   Snapshots and roster-sync-config are not part of this module's MongoDB
  *   migration (exportSnapshots reads the filesystem directly and isn't
  *   converted here) and always come from the file.
  */
 module.exports = async function teamTrackerExport(addFile, storage, mapping, stores = {}) {
+  if (!stores.registryStore) {
+    throw new Error('teamTrackerExport requires stores.registryStore (from the module context) — there is no fallback');
+  }
   const { readFromStorage } = storage;
   const personStore = stores.personStore || null;
   const contributionStore = stores.contributionStore || null;
   const jiraNameMapStore = stores.jiraNameMapStore || null;
-  const registryStore = stores.registryStore || null;
+  const registryStore = stores.registryStore;
 
   // 1. roster (from team-data/registry.json)
   await exportRoster(addFile, storage, mapping, registryStore);

@@ -214,8 +214,10 @@ function createTestContext(overrides = {}) {
   const { createFieldStore } = require('./field-store')
   const { createTeamStore } = require('./team-store')
   const { createAuditLog } = require('./audit-log')
+  const { createRegistryStore } = require('./registry-store')
 
   const testAuditLog = createAuditLog(testStorage)
+  const testRegistryStore = createRegistryStore(testStorage)
 
   const defaults = {
     storage: testStorage,
@@ -230,8 +232,9 @@ function createTestContext(overrides = {}) {
       removeRole: noop,
       getAllRoles: function () { return {} }
     },
-    fieldStore: createFieldStore(testStorage, { auditLog: testAuditLog }),
-    teamStore: createTeamStore(testStorage, { auditLog: testAuditLog }),
+    registryStore: testRegistryStore,
+    fieldStore: createFieldStore(testStorage, { auditLog: testAuditLog, registryStore: testRegistryStore }),
+    teamStore: createTeamStore(testStorage, { auditLog: testAuditLog, registryStore: testRegistryStore }),
     auditLog: testAuditLog,
     registerDiagnostics: noop,
     registerMessageProvider: noop,

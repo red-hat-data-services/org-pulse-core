@@ -5,7 +5,6 @@
  */
 
 const { loadConfig, getOrgDisplayNames } = require('./roster-sync/config');
-const { createRegistryStore } = require('./registry-store');
 
 /**
  * Read registry data and transform to the legacy roster format.
@@ -13,14 +12,15 @@ const { createRegistryStore } = require('./registry-store');
  * with flat githubUsername/gitlabUsername fields for compatibility.
  *
  * @param {{ readFromStorage: Function }} storage
- * @param {object} [registryStore] - Optional dual-path registry store (see
- *   registry-store.js). When omitted, falls back to a file-only store built
- *   on `storage`, matching the pre-existing file-only behavior exactly.
+ * @param {object} registryStore - Dual-path registry store (see
+ *   registry-store.js, from the module context). Required — no fallback.
  * @returns {object|null}
  */
 async function readRosterFull(storage, registryStore) {
-  const effectiveRegistryStore = registryStore || createRegistryStore(storage);
-  const registry = await effectiveRegistryStore.readRegistry();
+  if (!registryStore) {
+    throw new Error('readRosterFull requires a registryStore argument (from the module context) — there is no fallback');
+  }
+  const registry = await registryStore.readRegistry();
   if (!registry || !registry.people) return null;
 
   const config = await loadConfig(storage);

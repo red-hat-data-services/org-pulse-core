@@ -29,10 +29,10 @@ function registerIpaRegistryRoutes(router, context) {
   var requireAdmin = context.requireAdmin;
   var requireScope = context.requireScope;
   var teamStore = context.teamStore;
-  // Falls back to a file-only store built on `storage` when the context
-  // doesn't provide one, matching the pre-existing file-only behavior exactly.
-  var { createRegistryStore } = require('../../../../shared/server/registry-store');
-  var registryStore = context.registryStore || createRegistryStore(storage);
+  if (!context.registryStore) {
+    throw new Error('registerIpaRegistryRoutes requires context.registryStore (from the module context) — there is no fallback');
+  }
+  var registryStore = context.registryStore;
   var auditLog = context.auditLog;
   var DEMO_MODE = process.env.DEMO_MODE === 'true';
 

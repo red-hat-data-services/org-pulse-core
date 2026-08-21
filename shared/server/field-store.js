@@ -61,9 +61,8 @@ function coerceFieldValue(value, fieldDef) {
  * @param {object} [options={}] - Options
  * @param {object} [options.model] - Optional Mongoose FieldDefinition model for MongoDB path
  * @param {object} options.auditLog - Audit log instance (from the module context). Required — no fallback.
- * @param {object} [options.registryStore] - Optional dual-path registry store
- *   (see registry-store.js), used by updatePersonFields. Falls back to a
- *   file-only store built on `storage` when omitted.
+ * @param {object} options.registryStore - Dual-path registry store (from the
+ *   module context), used by updatePersonFields. Required — no fallback.
  * @returns {object} Field store API
  */
 function createFieldStore(storage, options = {}) {
@@ -71,9 +70,11 @@ function createFieldStore(storage, options = {}) {
   if (!options.auditLog) {
     throw new Error('createFieldStore requires options.auditLog (from the module context) — there is no fallback');
   }
+  if (!options.registryStore) {
+    throw new Error('createFieldStore requires options.registryStore (from the module context) — there is no fallback');
+  }
   const auditLog = options.auditLog;
-  const { createRegistryStore } = require('./registry-store');
-  const registryStore = options.registryStore || createRegistryStore(storage);
+  const registryStore = options.registryStore;
 
   // Mutex for file-based path only — MongoDB uses atomic operations
   const filesMutex = Model ? null : getStorageMutex(FIELD_DEFS_KEY);
