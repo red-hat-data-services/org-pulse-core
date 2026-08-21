@@ -6,8 +6,9 @@
 const fieldExceptionsStore = require('../field-exceptions-store');
 
 module.exports = function registerFieldExceptionRoutes(router, context) {
-  const { storage, requireTeamAdmin, requireScope, fieldStore, teamStore, auditLog } = context;
-  const { readFromStorage } = storage;
+  const { storage, requireTeamAdmin, requireScope, fieldStore, teamStore, auditLog, registryStore: contextRegistryStore } = context;
+  const { createRegistryStore } = require('../../../../shared/server/registry-store');
+  const registryStore = contextRegistryStore || createRegistryStore(storage);
 
   const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
@@ -27,7 +28,7 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
     // Manager: filter to managed people and managed teams
     const permissions = require('../../../../shared/server/permissions');
 
-    const registry = await readFromStorage('team-data/registry.json');
+    const registry = await registryStore.readRegistry();
     if (!registry) return [];
 
     const teamsData = await teamStore.readTeams();
@@ -152,7 +153,7 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
 
     // Validate entity exists
     if (entityType === 'person') {
-      const registry = await readFromStorage('team-data/registry.json');
+      const registry = await registryStore.readRegistry();
       if (!registry || !registry.people || !registry.people[entityId]) {
         return res.status(400).json({ error: `Person "${entityId}" not found in registry` });
       }

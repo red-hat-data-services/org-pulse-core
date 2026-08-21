@@ -274,8 +274,8 @@ async function resolveBoardNames(teams, secrets) {
  * Derive teams from people's _teamGrouping (or miroTeam) values.
  * Used as a fallback when no team-boards spreadsheet tab is configured or available.
  */
-async function deriveTeamsFromPeople(storage) {
-  const allPeople = await getAllPeople(storage);
+async function deriveTeamsFromPeople(storage, registryStore) {
+  const allPeople = await getAllPeople(storage, registryStore);
   const orgDisplayNames = await getOrgDisplayNames(storage);
   const teamSet = new Map();
 
@@ -300,7 +300,7 @@ async function deriveTeamsFromPeople(storage) {
  * Does NOT sync people (those come from team-tracker's roster-sync via shared/server/roster.js).
  * sheetId may be null — in that case, teams are derived from people data.
  */
-async function runSync(storage, sheetId, config, secrets, fieldStore) {
+async function runSync(storage, sheetId, config, secrets, fieldStore, registryStore) {
   const teamBoardsTab = config?.teamBoardsTab || null;
   const componentsTab = config?.componentsTab || null;
   const orgNameMapping = config?.orgNameMapping || {};
@@ -348,7 +348,7 @@ async function runSync(storage, sheetId, config, secrets, fieldStore) {
 
   // Fallback: derive teams from people data
   if (rawTeams.length === 0) {
-    rawTeams = await deriveTeamsFromPeople(storage);
+    rawTeams = await deriveTeamsFromPeople(storage, registryStore);
     console.log(`[org-roster sync] Derived ${rawTeams.length} teams from people data`);
   }
 

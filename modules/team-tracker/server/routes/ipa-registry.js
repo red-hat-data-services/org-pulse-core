@@ -12,13 +12,12 @@ const { runConsolidatedSync, isSyncInProgress: isConsolidatedSyncInProgress } = 
 
 const { mergePerson } = require('../../../../shared/server/roster-sync/lifecycle');
 
-const REGISTRY_KEY = 'team-data/registry.json';
 const SYNC_LOG_KEY = 'team-data/sync-log.json';
 const TEAMS_KEY = 'team-data/teams.json';
 const FIELD_DEFS_KEY = 'team-data/field-definitions.json';
 
-async function loadRegistry(storage) {
-  return await storage.readFromStorage(REGISTRY_KEY) || { meta: null, people: {} };
+async function loadRegistry(registryStore) {
+  return await registryStore.readRegistry() || { meta: null, people: {} };
 }
 
 async function loadSyncLog(storage) {
@@ -30,6 +29,10 @@ function registerIpaRegistryRoutes(router, context) {
   var requireAdmin = context.requireAdmin;
   var requireScope = context.requireScope;
   var teamStore = context.teamStore;
+  // Falls back to a file-only store built on `storage` when the context
+  // doesn't provide one, matching the pre-existing file-only behavior exactly.
+  var { createRegistryStore } = require('../../../../shared/server/registry-store');
+  var registryStore = context.registryStore || createRegistryStore(storage);
   var auditLog = context.auditLog;
   var DEMO_MODE = process.env.DEMO_MODE === 'true';
 
@@ -37,7 +40,7 @@ function registerIpaRegistryRoutes(router, context) {
   var rateLimitMap = new Map();
 
   async function getPeopleMap() {
-    return (await loadRegistry(storage)).people || {};
+    return (await loadRegistry(registryStore)).people || {};
   }
 
   async function getEnabledLdapExtraAttrs() {
@@ -50,10 +53,14 @@ function registerIpaRegistryRoutes(router, context) {
   }
 
   async function writePeopleUpdate(uid, updater) {
-    var reg = await loadRegistry(storage);
+    var reg = await loadRegistry(registryStore);
     if (!reg.people || !Object.prototype.hasOwnProperty.call(reg.people, uid)) return null;
     updater(reg.people[uid]);
-    await storage.writeToStorage(REGISTRY_KEY, reg);
+    // Targeted single-person write on both paths — this always touched only
+    // one person, so no whole-registry write is needed even on the file
+    // path (upsertPerson still writes the whole file there, since that's
+    // the unit files are written in, but only this one uid's data changes).
+    await registryStore.upsertPerson(uid, reg.people[uid]);
     return reg.people[uid];
   }
 
@@ -129,7 +136,7 @@ function registerIpaRegistryRoutes(router, context) {
     if (DEMO_MODE) {
       return res.json({ status: 'skipped', message: 'Sync disabled in demo mode' });
     }
-    runConsolidatedSync(storage).then(function(result) {
+    runConsolidatedSync(storage, undefined, registryStore).then(function(result) {
       res.json(result);
     }).catch(function(err) {
       res.status(500).json({ status: 'error', message: err.message });
@@ -172,7 +179,7 @@ function registerIpaRegistryRoutes(router, context) {
     // on registry people, so we can read them directly rather than going
     // through getAllPeople(). But we still use getAllPeople for backward compat.
     var orgDisplayNames = await getOrgDisplayNames(storage);
-    var rosterPeople = await getAllPeople(storage);
+    var rosterPeople = await getAllPeople(storage, registryStore);
     var rosterConfig = await loadConfig(storage);
     var registryInAppMode = (rosterConfig?.teamDataSource || 'sheets') === 'in-app';
 
@@ -440,10 +447,10 @@ function registerIpaRegistryRoutes(router, context) {
    *         description: Person not found
    */
   router.delete('/registry/people/:uid', requireAdmin, requireScope('roster:write'), async function(req, res) {
-    var reg = await loadRegistry(storage);
+    var reg = await loadRegistry(registryStore);
     if (!reg.people || !Object.prototype.hasOwnProperty.call(reg.people, req.params.uid)) return res.status(404).json({ error: 'Person not found' });
     delete reg.people[req.params.uid];
-    await storage.writeToStorage(REGISTRY_KEY, reg);
+    await registryStore.deletePerson(req.params.uid);
     res.json({ status: 'purged' });
   });
 
@@ -460,7 +467,7 @@ function registerIpaRegistryRoutes(router, context) {
    *         description: Org tree hierarchy
    */
   router.get('/registry/orgs', requireScope('roster:read'), async function(req, res) {
-    var reg = await loadRegistry(storage);
+    var reg = await loadRegistry(registryStore);
     var people = reg.people || {};
     var meta = reg.meta || {};
     var orgRoots = meta.orgRoots || [];
@@ -712,7 +719,7 @@ function registerIpaRegistryRoutes(router, context) {
     }
 
     // Check if already in registry
-    var reg = await loadRegistry(storage);
+    var reg = await loadRegistry(registryStore);
     if (reg.people && reg.people[uid]) {
       return res.json({ person: reg.people[uid], created: false });
     }
@@ -747,6 +754,7 @@ function registerIpaRegistryRoutes(router, context) {
         var result = mergePerson(null, ldapPerson, '_auxiliary', now);
         result.person.orgType = 'auxiliary';
         reg.people[uid] = result.person;
+        var addedUids = [uid];
 
         // Walk manager chain
         var lookupCache = {};
@@ -767,11 +775,21 @@ function registerIpaRegistryRoutes(router, context) {
           var mgrResult = mergePerson(null, mgrPerson, '_auxiliary', now);
           mgrResult.person.orgType = 'auxiliary';
           reg.people[mgrUid] = mgrResult.person;
+          addedUids.push(mgrUid);
           current = mgrResult.person;
           depth++;
         }
 
-        await storage.writeToStorage(REGISTRY_KEY, reg);
+        // Every uid added above is brand new, so targeted per-person upserts
+        // are equivalent to (and, on the MongoDB path, safer than) writing
+        // the whole registry back.
+        if (registryStore.usesDatabase) {
+          for (var au = 0; au < addedUids.length; au++) {
+            await registryStore.upsertPerson(addedUids[au], reg.people[addedUids[au]]);
+          }
+        } else {
+          await registryStore.writeRegistry(reg);
+        }
 
         // Audit log
         var actorEmail = req.auditActor || req.userEmail || 'unknown';
@@ -807,7 +825,7 @@ function registerIpaRegistryRoutes(router, context) {
     var intervalMs = (config.autoSync.intervalHours || 24) * 60 * 60 * 1000;
     autoSyncTimer = setInterval(function() {
       console.log('[team-tracker/ipa] Running scheduled auto-sync...');
-      runConsolidatedSync(storage).catch(function(err) { console.error('[team-tracker/ipa] Auto-sync error:', err); });
+      runConsolidatedSync(storage, undefined, registryStore).catch(function(err) { console.error('[team-tracker/ipa] Auto-sync error:', err); });
     }, intervalMs);
     if (autoSyncTimer.unref) autoSyncTimer.unref();
   }
