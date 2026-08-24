@@ -490,24 +490,16 @@ module.exports = async function registerRoutes(router, context) {
 
   /**
    * requireTeamPurview middleware.
-   * Allows admins, team-admins, or managers who have purview over the team
-   * (i.e., at least one of their managed reports is assigned to the team).
+   * Allows admins, team-admins, or explicit team managers (listed in team.managers).
    */
   async function requireTeamPurview(req, res, next) {
     if (req.isAdmin) return next();
     if (req.isTeamAdmin) return next();
     if (!req.userUid) return res.status(403).json({ error: 'Cannot determine your identity' });
-    const managed = permissions.getManagedUids(req.userUid, managerMap);
-    if (managed.size === 0) return res.status(403).json({ error: 'Not authorized for this team' });
-    const registry = await readFromStorage('team-data/registry.json');
-    if (!registry || !registry.people) return res.status(403).json({ error: 'Not authorized for this team' });
     const teamId = req.params.teamId;
-    for (const uid of managed) {
-      const person = registry.people[uid];
-      if (person && Array.isArray(person.teamIds) && person.teamIds.includes(teamId)) {
-        return next();
-      }
-    }
+    const teamsData = await contextTeamStore.readTeams();
+    const managers = contextTeamStore.getTeamManagers(teamId, teamsData);
+    if (managers.includes(req.userUid)) return next();
     return res.status(403).json({ error: 'Not authorized for this team' });
   }
 
@@ -541,33 +533,35 @@ module.exports = async function registerRoutes(router, context) {
     const managed = req.userUid
       ? [...permissions.getManagedUids(req.userUid, managerMap)]
       : [];
+    const teamsData = await contextTeamStore.readTeams();
+    const managedTeamIds = req.userUid
+      ? contextTeamStore.getManagedTeamIds(req.userUid, teamsData)
+      : [];
     res.json({
       email: req.userEmail,
       uid: req.userUid,
       roles: req.userRoles || [],
       isManager: req.isManager || false,
-      managedUids: managed
+      managedUids: managed,
+      managedTeamIds
     });
   });
 
   // ─── Manager Dashboard ───
-
-  const { getManagerPurview } = require('./manager-purview');
 
   /**
    * @openapi
    * /api/modules/team-tracker/manager/dashboard:
    *   get:
    *     tags: ['TT: Manager']
-   *     summary: Get manager dashboard data (purview, reports, teams, field definitions)
+   *     summary: Get manager dashboard data (reports via LDAP, teams via explicit managers)
    *     responses:
    *       200:
-   *         description: Manager purview data
+   *         description: Manager dashboard data
    *       403:
    *         description: User is not a manager
    */
   router.get('/manager/dashboard', requireScope('roster:read'), async function(req, res) {
-    // Handle null userUid (e.g. local dev where email isn't in registry)
     if (!req.userUid) {
       return res.json({
         manager: null,
@@ -591,10 +585,16 @@ module.exports = async function registerRoutes(router, context) {
 
     const managerPerson = registry.people[req.userUid];
 
-    // Check if user has direct reports (is a manager)
+    // LDAP-based: direct/indirect reports for the "My Reports" tab
     const directReportSet = permissions.getDirectReports(req.userUid, registry);
-    if (directReportSet.size === 0) {
-      // If the user is admin or team-admin, return no-direct-reports rather than 403
+    const directReportUids = [...directReportSet];
+
+    // Explicit: teams where user is a registered manager for the "My Teams" tab
+    const teamsData = await contextTeamStore.readTeams();
+    const managedTeamIds = contextTeamStore.getManagedTeamIds(req.userUid, teamsData);
+
+    // If user has no reports AND no managed teams, check for admin/team-admin fallback
+    if (directReportSet.size === 0 && managedTeamIds.length === 0) {
       if (req.isAdmin || req.isTeamAdmin) {
         return res.json({
           manager: managerPerson ? {
@@ -613,37 +613,72 @@ module.exports = async function registerRoutes(router, context) {
 
     const fieldOptionsStore = require('./field-options-store');
     const { enrichPerson, resolveFieldDefinitions, buildReferencedPeopleMap, buildAllPeopleList } = require('./field-payload');
-    const teamsData = await contextTeamStore.readTeams();
     const optionsResolver = async (ref) => await fieldOptionsStore.getValues(storage, ref);
     const { personFieldDefs, teamFieldDefs } = await resolveFieldDefinitions(contextFieldStore, optionsResolver);
 
     const includeIndirect = req.query?.includeIndirect === 'true';
-    const purview = getManagerPurview(req.userUid, registry, teamsData, { includeIndirect });
 
-    // Build enriched direct reports with customFields
-    const directReports = purview.directReportUids
+    // Build enriched direct reports
+    const directReports = directReportUids
       .map(uid => enrichPerson(registry.people[uid], personFieldDefs))
       .filter(Boolean);
 
     // Build enriched indirect reports when requested
     let indirectReports;
-    if (includeIndirect && purview.indirectReportUids) {
-      indirectReports = purview.indirectReportUids
+    let indirectReportUids;
+    if (includeIndirect) {
+      const allManaged = permissions.getManagedUids(req.userUid, managerMap);
+      indirectReportUids = [...allManaged].filter(uid => !directReportSet.has(uid));
+      indirectReports = indirectReportUids
         .map(uid => enrichPerson(registry.people[uid], personFieldDefs, { includeManagerUid: true }))
         .filter(Boolean);
     }
 
-    // Collect distinct orgRoot values from direct reports to determine available teams
+    // Build team member counts
+    const teamMemberCounts = new Map();
+    for (const person of Object.values(registry.people)) {
+      if (person.status !== 'active') continue;
+      if (!Array.isArray(person.teamIds)) continue;
+      for (const teamId of person.teamIds) {
+        teamMemberCounts.set(teamId, (teamMemberCounts.get(teamId) || 0) + 1);
+      }
+    }
+
+    // Build teams array from explicit manager assignments
+    const teams = managedTeamIds.map(teamId => {
+      const teamObj = teamsData.teams[teamId];
+      if (!teamObj) return null;
+      // Find which of the manager's direct reports are on this team
+      const teamDirectReports = directReportUids.filter(uid => {
+        const person = registry.people[uid];
+        return person && Array.isArray(person.teamIds) && person.teamIds.includes(teamId);
+      });
+      return {
+        id: teamObj.id,
+        name: teamObj.name,
+        orgKey: teamObj.orgKey,
+        managers: teamObj.managers || [],
+        directReportUids: teamDirectReports,
+        totalMemberCount: teamMemberCounts.get(teamId) || 0,
+        metadata: teamObj.metadata || {},
+        boards: teamObj.boards || []
+      };
+    }).filter(Boolean);
+
+    // Collect distinct orgRoot values for available-teams dropdown
     const orgRoots = new Set();
     const allReportUids = includeIndirect
-      ? [...purview.directReportUids, ...(purview.indirectReportUids || [])]
-      : purview.directReportUids;
+      ? [...directReportUids, ...(indirectReportUids || [])]
+      : directReportUids;
     for (const uid of allReportUids) {
       const person = registry.people[uid];
       if (person && person.orgRoot) orgRoots.add(person.orgRoot);
     }
-    // Also include the manager's own orgRoot as a fallback
     if (managerPerson && managerPerson.orgRoot) orgRoots.add(managerPerson.orgRoot);
+    // Also include orgKeys from managed teams
+    for (const team of teams) {
+      if (team.orgKey) orgRoots.add(team.orgKey);
+    }
 
     const allOrgTeams = teamsData && teamsData.teams
       ? Object.values(teamsData.teams)
@@ -651,20 +686,19 @@ module.exports = async function registerRoutes(router, context) {
           .map(t => ({ id: t.id, name: t.name, orgKey: t.orgKey }))
       : [];
 
-    const referencedPeople = buildReferencedPeopleMap(purview.teams, teamFieldDefs, registry.people);
+    const referencedPeople = buildReferencedPeopleMap(teams, teamFieldDefs, registry.people);
     const allPeople = buildAllPeopleList(registry.people);
 
-    // Enrich teams with org display names
     const orgDisplayNames = await getOrgDisplayNames();
-    for (const team of purview.teams) {
+    for (const team of teams) {
       team.orgDisplayName = orgDisplayNames[team.orgKey] || team.orgKey;
     }
 
     // Load field exceptions filtered to manager's purview
     const fieldExceptionsStoreForDashboard = require('./field-exceptions-store');
     const allExceptions = await fieldExceptionsStoreForDashboard.listExceptions(storage);
-    const directReportUidSet = new Set(purview.directReportUids);
-    const purviewTeamIds = new Set(purview.teams.map(t => t.id));
+    const directReportUidSet = new Set(directReportUids);
+    const purviewTeamIds = new Set(managedTeamIds);
     const filteredExceptions = allExceptions.filter(ex => {
       if (ex.entityType === 'person') return directReportUidSet.has(ex.entityId);
       if (ex.entityType === 'team') return purviewTeamIds.has(ex.entityId);
@@ -678,7 +712,7 @@ module.exports = async function registerRoutes(router, context) {
         email: managerPerson.email || null
       } : null,
       directReports,
-      teams: purview.teams,
+      teams,
       allOrgTeams,
       allPeople,
       referencedPeople,
@@ -1158,6 +1192,104 @@ module.exports = async function registerRoutes(router, context) {
     res.json(result);
   });
 
+  // ─── Team Managers ───
+
+  /**
+   * @openapi
+   * /api/modules/team-tracker/structure/teams/{teamId}/managers:
+   *   get:
+   *     tags: ['TT: Structure']
+   *     summary: List managers of a team
+   *     parameters:
+   *       - in: path
+   *         name: teamId
+   *         required: true
+   *         schema:
+   *           type: string
+   *         description: The team ID
+   *     responses:
+   *       200:
+   *         description: List of manager UIDs with display info
+   */
+  router.get('/structure/teams/:teamId/managers', requireScope('team-tracker:read'), async function(req, res) {
+    const teamsData = await contextTeamStore.readTeams();
+    const team = teamsData.teams && teamsData.teams[req.params.teamId];
+    if (!team) return res.status(404).json({ error: 'Team not found' });
+    const managerUids = team.managers || [];
+    const registry = await readFromStorage('team-data/registry.json');
+    const managers = managerUids.map(uid => {
+      const person = registry && registry.people && registry.people[uid];
+      return {
+        uid,
+        name: person ? person.name : null,
+        email: person ? person.email : null
+      };
+    });
+    res.json({ managers });
+  });
+
+  /**
+   * @openapi
+   * /api/modules/team-tracker/structure/teams/{teamId}/managers:
+   *   post:
+   *     tags: ['TT: Structure']
+   *     summary: Add a manager to a team
+   *     parameters:
+   *       - in: path
+   *         name: teamId
+   *         required: true
+   *         schema:
+   *           type: string
+   *         description: The team ID
+   *     responses:
+   *       200:
+   *         description: Manager added
+   */
+  router.post('/structure/teams/:teamId/managers', requireTeamPurview, requireScope('team-tracker:write'), async function(req, res) {
+    const guard = demoWriteGuard(res);
+    if (guard) return;
+    const { uid } = req.body;
+    if (!uid || typeof uid !== 'string') return res.status(400).json({ error: 'uid is required' });
+    const registry = await readFromStorage('team-data/registry.json');
+    if (!registry || !registry.people || !registry.people[uid]) {
+      return res.status(400).json({ error: 'Person not found in registry' });
+    }
+    const result = await contextTeamStore.addTeamManager(req.params.teamId, uid, req.auditActor);
+    if (result.error) return res.status(404).json(result);
+    res.json(result);
+  });
+
+  /**
+   * @openapi
+   * /api/modules/team-tracker/structure/teams/{teamId}/managers/{uid}:
+   *   delete:
+   *     tags: ['TT: Structure']
+   *     summary: Remove a manager from a team
+   *     parameters:
+   *       - in: path
+   *         name: teamId
+   *         required: true
+   *         schema:
+   *           type: string
+   *         description: The team ID
+   *       - in: path
+   *         name: uid
+   *         required: true
+   *         schema:
+   *           type: string
+   *         description: The manager's UID
+   *     responses:
+   *       200:
+   *         description: Manager removed
+   */
+  router.delete('/structure/teams/:teamId/managers/:uid', requireTeamPurview, requireScope('team-tracker:write'), async function(req, res) {
+    const guard = demoWriteGuard(res);
+    if (guard) return;
+    const result = await contextTeamStore.removeTeamManager(req.params.teamId, req.params.uid, req.auditActor);
+    if (result.error) return res.status(404).json(result);
+    res.json(result);
+  });
+
   // ─── Team Member Assignment ───
 
   /**
@@ -1178,7 +1310,7 @@ module.exports = async function registerRoutes(router, context) {
    *         description: Assignment result
    */
   router.post('/structure/teams/:teamId/members',
-    requireManagerOrAdmin(req => req.body.uid),
+    requireTeamPurview,
     requireScope('team-tracker:write'),
     async function(req, res) {
       const guard = demoWriteGuard(res);
@@ -1209,21 +1341,12 @@ module.exports = async function registerRoutes(router, context) {
    *       200:
    *         description: Bulk assignment result
    */
-  router.post('/structure/teams/:teamId/members/bulk', requireScope('team-tracker:write'), async function(req, res) {
+  router.post('/structure/teams/:teamId/members/bulk', requireTeamPurview, requireScope('team-tracker:write'), async function(req, res) {
     const guard = demoWriteGuard(res);
     if (guard) return;
     const { uids } = req.body;
     if (!Array.isArray(uids) || uids.length === 0) {
       return res.status(400).json({ error: 'uids array is required' });
-    }
-    // All-or-nothing permission check
-    if (!req.isAdmin && !req.isTeamAdmin) {
-      if (!req.userUid) return res.status(403).json({ error: 'Cannot determine your identity' });
-      const managed = permissions.getManagedUids(req.userUid, managerMap);
-      const denied = uids.filter(uid => !managed.has(uid));
-      if (denied.length > 0) {
-        return res.status(403).json({ error: 'Not authorized for all requested people', denied });
-      }
     }
     const result = await contextTeamStore.assignMembersBulk(req.params.teamId, uids, req.auditActor);
     if (result.error) return res.status(404).json(result);
@@ -1255,7 +1378,7 @@ module.exports = async function registerRoutes(router, context) {
    *         description: Unassignment result
    */
   router.delete('/structure/teams/:teamId/members/:uid',
-    requireManagerOrAdmin(req => req.params.uid),
+    requireTeamPurview,
     requireScope('team-tracker:write'),
     async function(req, res) {
       const guard = demoWriteGuard(res);
@@ -2041,6 +2164,76 @@ module.exports = async function registerRoutes(router, context) {
       res.json(result);
     } catch (err) {
       console.error('[migration] Migration failed:', err);
+      res.status(500).json({ error: 'Migration failed: ' + err.message });
+    }
+  });
+
+  // ─── Team Manager Migration (LDAP purview → explicit managers) ───
+
+  /**
+   * @openapi
+   * /api/modules/team-tracker/structure/migrate/team-managers:
+   *   post:
+   *     tags: ['TT: Admin']
+   *     summary: Seed team managers from current LDAP-derived purview
+   *     description: >
+   *       One-time migration: for each team, finds managers who currently have
+   *       LDAP-derived purview (their reports are on the team) and sets them as
+   *       explicit team managers. Skips teams that already have managers set.
+   *     responses:
+   *       200:
+   *         description: Migration report
+   */
+  router.post('/structure/migrate/team-managers', requireAdmin, requireScope('team-tracker:write'), async function(req, res) {
+    const guard = demoWriteGuard(res);
+    if (guard) return;
+    try {
+      const registry = await readFromStorage('team-data/registry.json');
+      if (!registry || !registry.people) {
+        return res.status(400).json({ error: 'No registry found' });
+      }
+      const teamsData = await contextTeamStore.readTeams();
+      if (!teamsData || !teamsData.teams || Object.keys(teamsData.teams).length === 0) {
+        return res.status(400).json({ error: 'No teams found' });
+      }
+
+      const report = { migrated: [], skipped: [], errors: [] };
+
+      for (const [teamId, team] of Object.entries(teamsData.teams)) {
+        if (Array.isArray(team.managers) && team.managers.length > 0) {
+          report.skipped.push({ teamId, name: team.name, reason: 'already has managers' });
+          continue;
+        }
+
+        // Find direct managers of people on this team (one level up only)
+        const teamManagerUids = new Set();
+        for (const person of Object.values(registry.people)) {
+          if (person.status !== 'active') continue;
+          if (!person.managerUid) continue;
+          if (!Array.isArray(person.teamIds) || !person.teamIds.includes(teamId)) continue;
+          if (registry.people[person.managerUid]) {
+            teamManagerUids.add(person.managerUid);
+          }
+        }
+
+        if (teamManagerUids.size === 0) {
+          report.skipped.push({ teamId, name: team.name, reason: 'no LDAP managers found' });
+          continue;
+        }
+
+        const managerList = [...teamManagerUids];
+        for (const uid of managerList) {
+          const result = await contextTeamStore.addTeamManager(teamId, uid, req.auditActor);
+          if (result.error) {
+            report.errors.push({ teamId, uid, error: result.error });
+          }
+        }
+        report.migrated.push({ teamId, name: team.name, managers: managerList });
+      }
+
+      res.json(report);
+    } catch (err) {
+      console.error('[migration] Team manager migration failed:', err);
       res.status(500).json({ error: 'Migration failed: ' + err.message });
     }
   });
@@ -5308,8 +5501,6 @@ module.exports = async function registerRoutes(router, context) {
   // ─── Message Provider: Field Completeness ───
 
   if (context.registerMessageProvider) {
-    const { getManagerPurview } = require('./manager-purview');
-
     context.registerMessageProvider('team-tracker:field-completeness', async function(user) {
       // Early bailout: skip all disk I/O for non-managers.
       if (!user.uid) return [];
@@ -5347,16 +5538,18 @@ module.exports = async function registerRoutes(router, context) {
         if (hasEmpty) incompletePersonCount++;
       }
 
-      // Count incomplete teams
+      // Count incomplete teams (using explicit managers)
       const teamsData = await contextTeamStore.readTeams();
-      const purview = getManagerPurview(user.uid, registry, teamsData, { includeIndirect: false });
+      const managedIds = contextTeamStore.getManagedTeamIds(user.uid, teamsData);
       let incompleteTeamCount = 0;
-      for (const team of purview.teams) {
+      for (const teamId of managedIds) {
+        const team = teamsData.teams[teamId];
+        if (!team) continue;
         const hasEmptyBoards = (!team.boards || team.boards.length === 0)
-          && !exceptionMap.has(`team:${team.id}:__boards__`);
+          && !exceptionMap.has(`team:${teamId}:__boards__`);
         const hasEmptyField = teamFields.some(f =>
           isFieldEmpty(team.metadata?.[f.id], f) &&
-          !exceptionMap.has(`team:${team.id}:${f.id}`)
+          !exceptionMap.has(`team:${teamId}:${f.id}`)
         );
         if (hasEmptyBoards || hasEmptyField) incompleteTeamCount++;
       }

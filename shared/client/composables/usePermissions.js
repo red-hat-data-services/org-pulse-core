@@ -25,6 +25,7 @@ export function usePermissions() {
 
   const roles = computed(() => permissionData.value?.roles || [])
   const managedUids = computed(() => new Set(permissionData.value?.managedUids || []))
+  const managedTeamIds = computed(() => new Set(permissionData.value?.managedTeamIds || []))
   const userUid = computed(() => permissionData.value?.uid || null)
   const isAdmin = computed(() => roles.value.includes('admin'))
   const isTeamAdmin = computed(() =>
@@ -40,14 +41,17 @@ export function usePermissions() {
     return managedUids.value.has(uid)
   }
 
-  function canEditTeam(_teamId) {
-    return isAdmin.value || isTeamAdmin.value
+  function canEditTeam(teamId) {
+    if (isAdmin.value) return true
+    if (isTeamAdmin.value) return true
+    return managedTeamIds.value.has(teamId)
   }
 
   return {
     loading,
     roles,
     managedUids,
+    managedTeamIds,
     userUid,
     isAdmin,
     isTeamAdmin,

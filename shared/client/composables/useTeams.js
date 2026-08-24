@@ -98,6 +98,29 @@ export function useTeams() {
     return result
   }
 
+  async function fetchTeamManagers(teamId) {
+    const data = await apiRequest(`/modules/team-tracker/structure/teams/${teamId}/managers`)
+    return data.managers || []
+  }
+
+  async function addTeamManager(teamId, uid) {
+    const result = await apiRequest(`/modules/team-tracker/structure/teams/${teamId}/managers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uid })
+    })
+    if (isDemoResponse(result)) { demoToast.value = result.message; return result }
+    return result
+  }
+
+  async function removeTeamManager(teamId, uid) {
+    const result = await apiRequest(`/modules/team-tracker/structure/teams/${teamId}/managers/${uid}`, {
+      method: 'DELETE'
+    })
+    if (isDemoResponse(result)) { demoToast.value = result.message; return result }
+    return result
+  }
+
   return {
     teams,
     loading,
@@ -110,6 +133,9 @@ export function useTeams() {
     assignMembersBulk,
     unassignMember,
     fetchUnassigned,
-    updateTeamFields
+    updateTeamFields,
+    fetchTeamManagers,
+    addTeamManager,
+    removeTeamManager
   }
 }

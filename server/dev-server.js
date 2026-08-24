@@ -46,14 +46,15 @@ async function startServer(options = {}) {
   // ─── Database Connection ───
   const { connectDatabase, disconnectDatabase } = require('../shared/server/database');
   let dbConnection = null;
-  try {
-    dbConnection = await connectDatabase();
-  } catch (err) {
-    console.error(`[database] Failed to connect: ${err.message}`);
-    if (process.env.MONGODB_URI) {
+  if (process.env.MONGODB_URI) {
+    try {
+      dbConnection = await connectDatabase();
+    } catch (err) {
+      console.error(`[database] Failed to connect: ${err.message}`);
       throw err;
     }
-    console.warn('[database] Continuing without MongoDB — context.db will be null');
+  } else {
+    console.warn('[database] MONGODB_URI not set — using file-based storage');
   }
 
   // Initialize storage with configured paths BEFORE loading any consumer modules

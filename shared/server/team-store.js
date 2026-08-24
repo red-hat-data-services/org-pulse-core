@@ -99,6 +99,7 @@ function createTeamStore(storage, options = {}) {
       createdAt: doc.createdAt,
       createdBy: doc.createdBy,
       description: doc.description == null ? null : doc.description,
+      managers: doc.managers || [],
       metadata: doc.metadata || {},
       boards: doc.boards || []
     };
@@ -812,6 +813,143 @@ function createTeamStore(storage, options = {}) {
     });
   }
 
+  async function addTeamManager(teamId, uid, actorEmail) {
+    if (!isSafeKey(teamId)) return { error: 'Invalid team ID' };
+    if (!isSafeKey(uid)) return { error: 'Invalid UID' };
+
+    if (Model) {
+      const doc = await Model.findOne({ teamId }).lean();
+      if (!doc) return { error: 'Team not found' };
+      const managers = doc.managers || [];
+      if (managers.includes(uid)) return { skipped: true, reason: 'Already a manager' };
+
+      await Model.updateOne({ teamId }, { $addToSet: { managers: uid } });
+
+      await appendAuditEntry({
+        action: 'team.manager.add',
+        actor: actorEmail,
+        entityType: 'team',
+        entityId: teamId,
+        entityLabel: doc.name,
+        field: 'managers',
+        oldValue: managers,
+        newValue: [...managers, uid],
+        detail: `Added manager "${uid}" to team "${doc.name}"`
+      });
+
+      return { added: true };
+    }
+
+    const mutex = getStorageMutex(TEAMS_KEY);
+    return mutex.runExclusive(async () => {
+      const data = await readTeamsFile();
+      const team = data.teams[teamId];
+      if (!team) return { error: 'Team not found' };
+
+      if (!Array.isArray(team.managers)) team.managers = [];
+      if (team.managers.includes(uid)) return { skipped: true, reason: 'Already a manager' };
+
+      const oldManagers = [...team.managers];
+      team.managers.push(uid);
+      await writeTeamsFile(data);
+
+      await appendAuditEntry({
+        action: 'team.manager.add',
+        actor: actorEmail,
+        entityType: 'team',
+        entityId: teamId,
+        entityLabel: team.name,
+        field: 'managers',
+        oldValue: oldManagers,
+        newValue: [...team.managers],
+        detail: `Added manager "${uid}" to team "${team.name}"`
+      });
+
+      return { added: true };
+    });
+  }
+
+  async function removeTeamManager(teamId, uid, actorEmail) {
+    if (!isSafeKey(teamId)) return { error: 'Invalid team ID' };
+    if (!isSafeKey(uid)) return { error: 'Invalid UID' };
+
+    if (Model) {
+      const doc = await Model.findOne({ teamId }).lean();
+      if (!doc) return { error: 'Team not found' };
+      const managers = doc.managers || [];
+      if (!managers.includes(uid)) return { skipped: true, reason: 'Not a manager' };
+
+      await Model.updateOne({ teamId }, { $pull: { managers: uid } });
+
+      await appendAuditEntry({
+        action: 'team.manager.remove',
+        actor: actorEmail,
+        entityType: 'team',
+        entityId: teamId,
+        entityLabel: doc.name,
+        field: 'managers',
+        oldValue: managers,
+        newValue: managers.filter(m => m !== uid),
+        detail: `Removed manager "${uid}" from team "${doc.name}"`
+      });
+
+      return { removed: true };
+    }
+
+    const mutex = getStorageMutex(TEAMS_KEY);
+    return mutex.runExclusive(async () => {
+      const data = await readTeamsFile();
+      const team = data.teams[teamId];
+      if (!team) return { error: 'Team not found' };
+
+      if (!Array.isArray(team.managers) || !team.managers.includes(uid)) {
+        return { skipped: true, reason: 'Not a manager' };
+      }
+
+      const oldManagers = [...team.managers];
+      team.managers = team.managers.filter(m => m !== uid);
+      await writeTeamsFile(data);
+
+      await appendAuditEntry({
+        action: 'team.manager.remove',
+        actor: actorEmail,
+        entityType: 'team',
+        entityId: teamId,
+        entityLabel: team.name,
+        field: 'managers',
+        oldValue: oldManagers,
+        newValue: [...team.managers],
+        detail: `Removed manager "${uid}" from team "${team.name}"`
+      });
+
+      return { removed: true };
+    });
+  }
+
+  function getTeamManagers(teamId, teamsData) {
+    if (!teamsData || !teamsData.teams || !teamsData.teams[teamId]) return [];
+    return teamsData.teams[teamId].managers || [];
+  }
+
+  function isTeamManager(uid, teamsData) {
+    if (!uid || !teamsData || !teamsData.teams) return false;
+    for (const team of Object.values(teamsData.teams)) {
+      if (Array.isArray(team.managers) && team.managers.includes(uid)) return true;
+    }
+    return false;
+  }
+
+  function getManagedTeamIds(uid, teamsData) {
+    if (!uid || !teamsData || !teamsData.teams) return [];
+    const ids = [];
+    for (const team of Object.values(teamsData.teams)) {
+      if (Array.isArray(team.managers) && team.managers.includes(uid)) {
+        ids.push(team.id);
+      }
+    }
+    return ids;
+  }
+
   return {
     readTeams,
     writeTeams,
@@ -825,6 +963,11 @@ function createTeamStore(storage, options = {}) {
     getUnassigned,
     updateTeamFields,
     updateTeamBoards,
+    addTeamManager,
+    removeTeamManager,
+    getTeamManagers,
+    isTeamManager,
+    getManagedTeamIds,
     usesDatabase: !!Model
   };
 }
