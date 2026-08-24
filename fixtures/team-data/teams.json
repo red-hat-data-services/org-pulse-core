@@ -6,6 +6,7 @@
       "orgKey": "achen",
       "createdAt": "2026-01-01T00:00:00.000Z",
       "createdBy": "admin@example.com",
+      "managers": ["bsmith"],
       "description": "Owns the **core platform services** and developer experience.\n\n- API gateway and service mesh\n- CI/CD pipeline tooling\n- Platform dashboard and observability",
       "metadata": {
         "field_g7h8i9": "pmanager",
@@ -19,6 +20,7 @@
       "orgKey": "achen",
       "createdAt": "2026-01-01T00:00:00.000Z",
       "createdBy": "admin@example.com",
+      "managers": ["bsmith"],
       "metadata": {
         "field_tf0001": "Forming",
         "field_comp01": ["Infrastructure Services"]
@@ -30,6 +32,7 @@
       "orgKey": "fjohnson",
       "createdAt": "2026-01-01T00:00:00.000Z",
       "createdBy": "admin@example.com",
+      "managers": ["gjones"],
       "metadata": {
         "field_tf0001": "Active",
         "field_comp01": ["ML Models"]
@@ -41,6 +44,7 @@
       "orgKey": "fjohnson",
       "createdAt": "2026-01-01T00:00:00.000Z",
       "createdBy": "admin@example.com",
+      "managers": ["gjones"],
       "metadata": {
         "field_comp01": ["Data Pipelines"]
       }

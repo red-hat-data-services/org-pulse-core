@@ -404,6 +404,7 @@ Stores all in-app managed teams. Created when `teamDataSource` is set to `"in-ap
       "createdAt": "2026-01-01T00:00:00.000Z",
       "createdBy": "admin@example.com",
       "description": "Owns the **core platform services** and developer experience.",
+      "managers": ["bsmith"],
       "metadata": {
         "field_g7h8i9": "Pat Manager"
       },
@@ -421,6 +422,7 @@ Stores all in-app managed teams. Created when `teamDataSource` is set to `"in-ap
 - Team IDs follow the pattern `team_` + 6 hex characters (e.g., `team_a1b2c3`), generated via `crypto.randomBytes(3)`.
 - `orgKey` links the team to an org root UID.
 - `description` is an optional Markdown string (max 2000 chars) describing the team's mission or scope. `null` when not set.
+- `managers` is an array of UIDs identifying the explicit managers of this team. Used for team-level permissions (purview, membership, fields, boards). Defaults to `[]`.
 - `metadata` stores team-level custom field values, keyed by field definition ID. Empty object `{}` when no team fields are set.
 - `createdBy` is the email of the user who created the team.
 - `boards` is an array of `{ url, name }` objects representing user-managed Jira board links. `url` is required (non-empty string), `name` is optional (empty string means no display name set). Defaults to `[]` on new teams. Populated during Sheets-to-In-App migration from `teams-metadata.json` board data.

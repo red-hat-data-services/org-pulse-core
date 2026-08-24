@@ -112,8 +112,8 @@ function baseStorageData() {
     },
     'team-data/teams.json': {
       teams: {
-        team_a: { id: 'team_a', name: 'Alpha', orgKey: 'org1', metadata: { sprint: '42' }, boards: [{ url: 'https://board.example.com', name: 'Board' }] },
-        team_b: { id: 'team_b', name: 'Beta', orgKey: 'org1', metadata: {}, boards: [] }
+        team_a: { id: 'team_a', name: 'Alpha', orgKey: 'org1', managers: ['mgr1'], metadata: { sprint: '42' }, boards: [{ url: 'https://board.example.com', name: 'Board' }] },
+        team_b: { id: 'team_b', name: 'Beta', orgKey: 'org1', managers: ['mgr1'], metadata: {}, boards: [] }
       }
     },
     'team-data/field-definitions.json': {

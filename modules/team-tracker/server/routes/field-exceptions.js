@@ -24,9 +24,8 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
     if (req.isAdmin || req.isTeamAdmin) return exceptions;
     if (!req.isAdmin && !req.isTeamAdmin && !req.isManager) return [];
 
-    // Manager: filter to managed people and purview teams
+    // Manager: filter to managed people and managed teams
     const permissions = require('../../../../shared/server/permissions');
-    const { getManagerPurview } = require('../manager-purview');
 
     const registry = await readFromStorage('team-data/registry.json');
     if (!registry) return [];
@@ -34,12 +33,11 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
     const teamsData = await teamStore.readTeams();
 
     const managedUids = permissions.getManagedUids(req.userUid, permissions.buildManagerMap(registry));
-    const purview = getManagerPurview(req.userUid, registry, teamsData, { includeIndirect: false });
-    const purviewTeamIds = new Set(purview.teams.map(t => t.id));
+    const managedTeamIds = new Set(teamStore.getManagedTeamIds(req.userUid, teamsData));
 
     return exceptions.filter(ex => {
       if (ex.entityType === 'person') return managedUids.has(ex.entityId);
-      if (ex.entityType === 'team') return purviewTeamIds.has(ex.entityId);
+      if (ex.entityType === 'team') return managedTeamIds.has(ex.entityId);
       return false;
     });
   }
