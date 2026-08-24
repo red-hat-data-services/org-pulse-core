@@ -63,6 +63,57 @@
           </div>
         </div>
 
+        <!-- Team managers -->
+        <div v-if="isInAppMode && !managersLoading" class="mt-2 flex flex-wrap items-center gap-x-1.5 text-sm text-gray-600 dark:text-gray-400">
+          <template v-if="teamManagers.length > 0">
+            <span class="text-gray-400 dark:text-gray-500 shrink-0">Manager{{ teamManagers.length > 1 ? 's' : '' }}:</span>
+            <template v-for="(mgr, i) in teamManagers" :key="mgr.uid">
+              <template v-if="i > 0">, </template>
+              <button
+                @click="navigateToPerson(mgr.uid)"
+                class="text-primary-600 dark:text-primary-400 hover:underline"
+              >{{ mgr.name || mgr.uid }}</button>
+            </template>
+            <button
+              v-if="canManageMembers"
+              @click="showManagersModal = true"
+              class="ml-1 p-0.5 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
+              title="Edit managers"
+            >
+              <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+              </svg>
+            </button>
+          </template>
+          <template v-else>
+            <span class="text-gray-400 dark:text-gray-500 italic">
+              No manager configured.
+              <template v-if="teamAdminNames.length > 0">
+                Contact a Team Admin ({{ teamAdminNames.join(', ') }}) to assign one.
+              </template>
+              <template v-else>
+                Contact an admin to assign one.
+              </template>
+            </span>
+            <button
+              v-if="canManageMembers"
+              @click="showManagersModal = true"
+              class="ml-1 text-primary-600 dark:text-primary-400 hover:underline text-xs"
+            >
+              + Add manager
+            </button>
+          </template>
+        </div>
+
+        <!-- Team Managers Modal -->
+        <TeamManagersModal
+          v-if="showManagersModal"
+          :teamId="team.teamId"
+          :teamName="team.displayName"
+          @close="showManagersModal = false"
+          @updated="handleManagersUpdated"
+        />
+
         <!-- Team description -->
         <div v-if="isInAppMode && (team.description || canManageMembers)" class="mt-3">
           <template v-if="!editingDescription">
@@ -337,6 +388,7 @@ import TeamDeliveryTab from '../components/TeamDeliveryTab.vue'
 import TeamBacklogTab from '../components/TeamBacklogTab.vue'
 import TeamAutofixTab from '../components/autofix/TeamAutofixTab.vue'
 import TeamFieldEditor from '../components/TeamFieldEditor.vue'
+import TeamManagersModal from '../components/TeamManagersModal.vue'
 import ContributionBoundary from '@shared/client/components/ContributionBoundary.vue'
 import { getTeamDetailTabs, runGuard } from '../contributions'
 import RefreshModal from '@shared/client/components/RefreshModal.vue'
@@ -347,6 +399,7 @@ import { usePermissions } from '@shared/client/composables/usePermissions'
 import { useFieldDefinitions } from '@shared/client/composables/useFieldDefinitions'
 import { useOrgRoster } from '../composables/useOrgRoster'
 import { refreshMetrics, getTeamMetrics, apiRequest } from '@shared/client/services/api'
+import { useTeams } from '@shared/client/composables/useTeams'
 import { useManagerTutorial } from '../composables/useManagerTutorial'
 import { Marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -358,9 +411,40 @@ const { loadGitlabStats } = useGitlabStats()
 const { isAdmin } = useAuth()
 const { canEditTeam, managedUids } = usePermissions()
 const { definitions, fetchDefinitions } = useFieldDefinitions()
+const { fetchTeamManagers } = useTeams()
 const { resumeTourIfActive, destroyTour } = useManagerTutorial()
 
 const fromSotu = computed(() => nav.params.value?.from === 'sotu')
+
+// --- Team managers ---
+const teamManagers = ref([])
+const managersLoading = ref(true)
+const showManagersModal = ref(false)
+const teamAdminNames = ref([])
+
+async function fetchManagersForTeam() {
+  if (!team.value?.teamId) return
+  managersLoading.value = true
+  try {
+    teamManagers.value = await fetchTeamManagers(team.value.teamId)
+  } catch {
+    teamManagers.value = []
+  }
+  if (teamManagers.value.length === 0) {
+    try {
+      const data = await apiRequest('/roles/members/team-admin')
+      teamAdminNames.value = (data.members || []).map(m => m.name)
+    } catch {
+      teamAdminNames.value = []
+    }
+  }
+  managersLoading.value = false
+}
+
+async function handleManagersUpdated() {
+  await fetchManagersForTeam()
+  await reloadRoster()
+}
 
 function handleBack() {
   if (fromSotu.value) {
@@ -726,6 +810,7 @@ onMounted(() => {
   fetchRfeConfig()
   loadGitlabStats()
   fetchDefinitions()
+  fetchManagersForTeam()
   resumeTourIfActive('team-detail')
 })
 
@@ -737,6 +822,7 @@ watch(() => nav.params.value?.teamKey, () => {
   fetchTeamMetrics()
   fetchTeamDetail()
   fetchRfeConfig()
+  fetchManagersForTeam()
 })
 
 // Retry loading once team resolves from roster async load
@@ -744,6 +830,7 @@ watch(team, (newVal, oldVal) => {
   if (newVal && !oldVal) {
     if (!teamMetrics.value) fetchTeamMetrics()
     if (!teamDetail.value) fetchTeamDetail()
+    if (managersLoading.value) fetchManagersForTeam()
   }
 })
 </script>

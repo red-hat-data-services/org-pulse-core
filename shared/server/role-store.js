@@ -350,6 +350,19 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
       .map(([email]) => email);
   }
 
+  async function getUsersByRole(role) {
+    if (!role) return [];
+    if (RoleModel) {
+      const docs = await RoleModel.find({ roles: role }, { email: 1 }).lean();
+      return docs.map(d => d.email);
+    }
+
+    const data = await readRolesFile();
+    return Object.entries(data.assignments)
+      .filter(([, entry]) => entry.roles.includes(role))
+      .map(([email]) => email);
+  }
+
   async function migrateFromAllowlist() {
     if (RoleModel) {
       const count = await RoleModel.countDocuments();
@@ -525,6 +538,7 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
     revokeRole,
     listAssignments,
     getAdminEmails,
+    getUsersByRole,
     migrateFromAllowlist,
     migrateEmailDomains,
     invalidateCache
