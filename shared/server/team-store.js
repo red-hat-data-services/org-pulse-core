@@ -99,6 +99,7 @@ function createTeamStore(storage, options = {}) {
       createdAt: doc.createdAt,
       createdBy: doc.createdBy,
       description: doc.description == null ? null : doc.description,
+      managers: doc.managers || [],
       metadata: doc.metadata || {},
       boards: doc.boards || []
     };
@@ -824,7 +825,7 @@ function createTeamStore(storage, options = {}) {
 
       await Model.updateOne({ teamId }, { $addToSet: { managers: uid } });
 
-      await appendAuditEntry(storage, {
+      await appendAuditEntry({
         action: 'team.manager.add',
         actor: actorEmail,
         entityType: 'team',
@@ -852,7 +853,7 @@ function createTeamStore(storage, options = {}) {
       team.managers.push(uid);
       await writeTeamsFile(data);
 
-      await appendAuditEntry(storage, {
+      await appendAuditEntry({
         action: 'team.manager.add',
         actor: actorEmail,
         entityType: 'team',
@@ -880,7 +881,7 @@ function createTeamStore(storage, options = {}) {
 
       await Model.updateOne({ teamId }, { $pull: { managers: uid } });
 
-      await appendAuditEntry(storage, {
+      await appendAuditEntry({
         action: 'team.manager.remove',
         actor: actorEmail,
         entityType: 'team',
@@ -909,7 +910,7 @@ function createTeamStore(storage, options = {}) {
       team.managers = team.managers.filter(m => m !== uid);
       await writeTeamsFile(data);
 
-      await appendAuditEntry(storage, {
+      await appendAuditEntry({
         action: 'team.manager.remove',
         actor: actorEmail,
         entityType: 'team',
