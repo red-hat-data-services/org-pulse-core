@@ -562,6 +562,8 @@ async function startServer(options = {}) {
 
   // ─── Platform Module-View Extensions ───
 
+  const mountFailures = [];
+
   for (const ext of moduleViewExtensions) {
     if (!enabledSlugs.has(ext.targetModule)) {
       console.log(`[platform] Skipping module-views extension "${ext.id}" — target module "${ext.targetModule}" is disabled`);
@@ -582,11 +584,13 @@ async function startServer(options = {}) {
       console.log(`[platform] Mounted module-views extension "${ext.id}" at /api/modules/${ext.targetModule}`);
     } catch (err) {
       console.error(`[platform] Failed to mount module-views extension "${ext.id}":`, err.message);
+      mountFailures.push({ id: ext.id, targetModule: ext.targetModule, error: err.message });
     }
   }
 
-  // Store extensions for manifest merging
+  // Store extensions and mount failures for manifest merging and health reporting
   routeContext.moduleViewExtensions = moduleViewExtensions;
+  routeContext.mountFailures = mountFailures;
 
   // ─── Health Metrics (core feature, not a module) ───
   const { createHealthMetricsRouter } = require('./health-metrics/routes');

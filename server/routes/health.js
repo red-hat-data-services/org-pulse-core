@@ -29,7 +29,9 @@ function registerPreAuthRoutes(app, context) {
 
   // Root-level health check — not in Swagger docs
   app.get('/healthz', function(req, res) {
-    res.json({ status: 'ok' });
+    const mountFailures = context.mountFailures || [];
+    const status = mountFailures.length > 0 ? 'degraded' : 'ok';
+    res.json({ status, mountFailures });
   });
 
   /**
@@ -41,7 +43,7 @@ function registerPreAuthRoutes(app, context) {
    *     security: []
    *     responses:
    *       200:
-   *         description: Server is healthy
+   *         description: Server health status
    *         content:
    *           application/json:
    *             schema:
@@ -49,10 +51,25 @@ function registerPreAuthRoutes(app, context) {
    *               properties:
    *                 status:
    *                   type: string
-   *                   example: ok
+   *                   enum: [ok, degraded]
+   *                   description: '"ok" when all extensions mounted; "degraded" when one or more failed'
+   *                 mountFailures:
+   *                   type: array
+   *                   description: Platform extensions that failed to mount at startup
+   *                   items:
+   *                     type: object
+   *                     properties:
+   *                       id:
+   *                         type: string
+   *                       targetModule:
+   *                         type: string
+   *                       error:
+   *                         type: string
    */
   app.get('/api/healthz', function(req, res) {
-    res.json({ status: 'ok' });
+    const mountFailures = context.mountFailures || [];
+    const status = mountFailures.length > 0 ? 'degraded' : 'ok';
+    res.json({ status, mountFailures });
   });
 
   /**

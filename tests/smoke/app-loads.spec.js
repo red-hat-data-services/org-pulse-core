@@ -160,6 +160,13 @@ test.describe('Frontend Smoke Tests', () => {
     expect(body[1]).toBe(0x8b);
   });
 
+  test('should have no platform extension mount failures', async ({ page }) => {
+    const response = await page.request.get('/api/healthz');
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body.mountFailures ?? []).toHaveLength(0);
+  });
+
   test('should render without critical accessibility violations', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
