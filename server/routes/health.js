@@ -25,10 +25,11 @@ function isValidDomain(domain) {
  * Register routes that must come BEFORE authMiddleware.
  */
 function registerPreAuthRoutes(app, context) {
-  const { builtInModules, mountFailures = [] } = context;
+  const { builtInModules } = context;
 
   // Root-level health check — not in Swagger docs
   app.get('/healthz', function(req, res) {
+    const mountFailures = context.mountFailures || [];
     const status = mountFailures.length > 0 ? 'degraded' : 'ok';
     res.json({ status, mountFailures });
   });
@@ -66,6 +67,7 @@ function registerPreAuthRoutes(app, context) {
    *                         type: string
    */
   app.get('/api/healthz', function(req, res) {
+    const mountFailures = context.mountFailures || [];
     const status = mountFailures.length > 0 ? 'degraded' : 'ok';
     res.json({ status, mountFailures });
   });
