@@ -53,7 +53,7 @@
           <span class="flex-1 min-w-0 inline-flex items-center text-sm font-light tracking-wide">
             <!-- Fixed-width icon gutter keeps every row's label left-aligned -->
             <span class="w-5 mr-2 flex-shrink-0 inline-flex items-center justify-center">
-              <svg v-if="item.type === 'history'" class="w-3.5 h-3.5 opacity-40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg v-if="item.type === 'history'" class="w-3.5 h-3.5 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" />
               </svg>
               <img v-else-if="item.avatarSrc" :src="item.avatarSrc" :alt="item.label" class="w-5 h-5 rounded-full" />
@@ -67,6 +67,15 @@
               </span>
               <span v-else class="text-gray-700" v-html="highlightMatch(formatLabel(item))" />
               <span v-if="item.matchedKeyword" class="text-gray-400 text-xs ml-1.5" v-html="'— ' + highlightMatch(truncateAroundMatch(item.matchedKeyword))" />
+            </span>
+            <span
+              v-if="item.active"
+              class="active-marker inline-flex items-center gap-0.5 flex-shrink-0 ml-2 px-1.5 py-0.5 text-[10px] font-medium rounded-md leading-none"
+            >
+              <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 6L9 17l-5-5" />
+              </svg>
+              Current
             </span>
           </span>
           <button
@@ -129,7 +138,8 @@ const props = defineProps({
   isManager: { type: Boolean, default: false },
   roles: { type: Array, default: () => [] },
   teamDataSource: { type: String, default: '' },
-  searchIndexItems: { type: Array, default: () => [] }
+  searchIndexItems: { type: Array, default: () => [] },
+  themeMode: { type: String, default: '' }
 })
 
 const emit = defineEmits(['navigate', 'action', 'close'])
@@ -177,7 +187,8 @@ const {
   roles: computed(() => props.roles),
   teamDataSource: computed(() => props.teamDataSource),
   searchIndexItems: computed(() => props.searchIndexItems),
-  pinnedItems
+  pinnedItems,
+  themeMode: computed(() => props.themeMode)
 })
 
 function escapeHtml(text) {
@@ -354,6 +365,11 @@ onBeforeUnmount(() => {
   background: rgba(236, 122, 8, 0.12);
   color: #b35c00;
   border: none;
+}
+.active-marker {
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
+  border: 1px solid rgba(16, 185, 129, 0.22);
 }
 .command-palette-suggestions {
   background: rgba(255, 255, 255, 0.92);

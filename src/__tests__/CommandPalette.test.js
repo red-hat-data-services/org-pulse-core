@@ -41,7 +41,7 @@ function resetMocks() {
   mockFilteredResults = computed(() => [
     { id: 'team-tracker::home', label: 'Team Directory', sublabel: 'People & Teams', type: 'page', slug: 'team-tracker', viewId: 'home' },
     { id: 'releases::schedule', label: 'Schedule', sublabel: 'Releases', type: 'page', slug: 'releases', viewId: 'schedule', params: { tab: 'main' } },
-    { id: 'toggle-theme', label: 'Toggle Theme', sublabel: 'Switch theme', type: 'action' }
+    { id: 'set-theme-dark', label: 'Theme: Dark', sublabel: 'Use dark appearance', type: 'action' }
   ])
   mockSelectNext.mockClear()
   mockSelectPrev.mockClear()
@@ -257,7 +257,7 @@ describe('CommandPalette keyboard events', () => {
     const wrapper = mountPalette()
     await wrapper.find('.fixed').trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('action')).toBeTruthy()
-    expect(wrapper.emitted('action')[0]).toEqual(['toggle-theme'])
+    expect(wrapper.emitted('action')[0]).toEqual(['set-theme-dark'])
     wrapper.unmount()
   })
 
@@ -288,7 +288,7 @@ describe('CommandPalette selectItem via click', () => {
     const rows = wrapper.findAll('.command-palette-suggestions > div')
     await rows[2].trigger('click')
     expect(wrapper.emitted('action')).toBeTruthy()
-    expect(wrapper.emitted('action')[0]).toEqual(['toggle-theme'])
+    expect(wrapper.emitted('action')[0]).toEqual(['set-theme-dark'])
     wrapper.unmount()
   })
 })
@@ -318,7 +318,7 @@ describe('CommandPalette formatLabel rendering', () => {
     const rows = wrapper.findAll('.command-palette-suggestions > div')
     const actionText = rows[2].find('.text-gray-700')
     expect(actionText.element.innerHTML).not.toContain('→')
-    expect(actionText.element.innerHTML).toContain('Toggle Theme')
+    expect(actionText.element.innerHTML).toContain('Theme: Dark')
     wrapper.unmount()
   })
 })
@@ -583,6 +583,19 @@ describe('CommandPalette history items', () => {
     wrapper.unmount()
   })
 
+  // Regression: the clock icon must set an explicit color, not inherit
+  // currentColor — otherwise it turns light and vanishes in dark mode.
+  it('history clock icon has an explicit text color (visible in dark mode)', () => {
+    mockFilteredResults = computed(() => [
+      { id: 'history::0::conforma', label: 'conforma', sublabel: 'Recent search', type: 'history', historyQuery: 'conforma' }
+    ])
+    const wrapper = mountPalette()
+    const svg = wrapper.find('.command-palette-suggestions > div svg')
+    expect(svg.classes()).toContain('text-gray-400')
+    expect(svg.classes()).not.toContain('opacity-40')
+    wrapper.unmount()
+  })
+
   it('Enter on history item sets searchQuery without emitting navigate', async () => {
     mockFilteredResults = computed(() => [
       { id: 'history::0::conforma', label: 'conforma', sublabel: 'Recent search', type: 'history', historyQuery: 'conforma' }
@@ -634,6 +647,44 @@ describe('CommandPalette history items', () => {
     expect(historyRow.find('kbd').exists()).toBe(false)
     expect(pageRow.find('button[title="Remove from history"]').exists()).toBe(false)
     expect(pageRow.find('kbd').exists()).toBe(true)
+    wrapper.unmount()
+  })
+})
+
+describe('CommandPalette active theme marker', () => {
+  it('renders a "Current" marker on the active theme action', () => {
+    mockFilteredResults = computed(() => [
+      { id: 'set-theme-light', label: 'Theme: Light', sublabel: 'Use light appearance', type: 'action', active: false },
+      { id: 'set-theme-dark', label: 'Theme: Dark', sublabel: 'Use dark appearance', type: 'action', active: true },
+      { id: 'set-theme-system', label: 'Theme: System', sublabel: 'Match your OS preference', type: 'action', active: false }
+    ])
+    const wrapper = mountPalette()
+    const rows = wrapper.findAll('.command-palette-suggestions > div')
+    expect(rows[0].find('.active-marker').exists()).toBe(false)
+    expect(rows[1].find('.active-marker').exists()).toBe(true)
+    expect(rows[1].find('.active-marker').text()).toContain('Current')
+    expect(rows[2].find('.active-marker').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('renders no marker when no action is active', () => {
+    mockFilteredResults = computed(() => [
+      { id: 'set-theme-light', label: 'Theme: Light', sublabel: 'Use light appearance', type: 'action', active: false },
+      { id: 'set-theme-dark', label: 'Theme: Dark', sublabel: 'Use dark appearance', type: 'action', active: false }
+    ])
+    const wrapper = mountPalette()
+    expect(wrapper.find('.active-marker').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('click on a theme action emits action with its id', async () => {
+    mockFilteredResults = computed(() => [
+      { id: 'set-theme-light', label: 'Theme: Light', sublabel: 'Use light appearance', type: 'action', active: false }
+    ])
+    const wrapper = mountPalette()
+    const rows = wrapper.findAll('.command-palette-suggestions > div')
+    await rows[0].trigger('click')
+    expect(wrapper.emitted('action')[0]).toEqual(['set-theme-light'])
     wrapper.unmount()
   })
 })

@@ -7,8 +7,15 @@ const LINK_ACTIONS = [...RESOURCE_LINKS, ...ISSUE_TEMPLATES].map(link => ({
   icon: link.icon, url: link.url, keywords: link.keywords
 }))
 
+// Theme modes surfaced as individual palette actions (see themeActions below).
+// Each sets a specific mode directly rather than cycling.
+const THEME_MODES = [
+  { id: 'set-theme-light', mode: 'light', label: 'Theme: Light', sublabel: 'Use light appearance', icon: 'Sun', keywords: ['light', 'theme', 'mode', 'appearance', 'bright'] },
+  { id: 'set-theme-dark', mode: 'dark', label: 'Theme: Dark', sublabel: 'Use dark appearance', icon: 'Moon', keywords: ['dark', 'theme', 'mode', 'appearance', 'night'] },
+  { id: 'set-theme-system', mode: 'system', label: 'Theme: System', sublabel: 'Match your OS preference', icon: 'Monitor', keywords: ['system', 'auto', 'theme', 'mode', 'appearance', 'os'] }
+]
+
 const ACTIONS = [
-  { type: 'action', id: 'toggle-theme', label: 'Toggle Theme', sublabel: 'Switch between light, dark, and system', icon: 'Sun', keywords: ['dark', 'light', 'mode', 'theme'] },
   { type: 'action', id: 'toggle-sidebar', label: 'Toggle Sidebar', sublabel: 'Collapse or expand the sidebar', icon: 'PanelLeftClose', keywords: ['collapse', 'expand', 'sidebar', 'panel'] },
   { type: 'action', id: 'go-settings', label: 'Open Settings', sublabel: 'App configuration', icon: 'Settings', keywords: ['settings', 'config', 'preferences'] },
   { type: 'action', id: 'go-about', label: 'About', sublabel: 'App info and documentation', icon: 'Info', keywords: ['about', 'help', 'docs', 'version'] },
@@ -94,7 +101,7 @@ function persistHistory(history, scope) {
   try { localStorage.setItem(historyKey(scope), JSON.stringify(history)) } catch { /* storage unavailable */ }
 }
 
-export function useCommandPalette({ manifests, isAdmin, roles, isTeamAdmin, isManager, teamDataSource, searchIndexItems, pinnedItems }) {
+export function useCommandPalette({ manifests, isAdmin, roles, isTeamAdmin, isManager, teamDataSource, searchIndexItems, pinnedItems, themeMode }) {
   const searchQuery = ref('')
   const selectedIndex = ref(0)
   const searchHistory = ref(loadHistory())
@@ -155,8 +162,21 @@ export function useCommandPalette({ manifests, isAdmin, roles, isTeamAdmin, isMa
 
   const resolvedPinnedItems = computed(() => pinnedItems?.value ?? pinnedItems ?? [])
 
+  const themeActions = computed(() => {
+    const current = themeMode?.value ?? themeMode ?? null
+    return THEME_MODES.map(t => ({
+      type: 'action',
+      id: t.id,
+      label: t.label,
+      sublabel: t.sublabel,
+      icon: t.icon,
+      keywords: t.keywords,
+      active: current === t.mode
+    }))
+  })
+
   const allItems = computed(() => {
-    return [...resolvedPinnedItems.value, ...pageItems.value, ...discoveredItems, ...dataItems.value, ...ACTIONS]
+    return [...resolvedPinnedItems.value, ...pageItems.value, ...discoveredItems, ...dataItems.value, ...themeActions.value, ...ACTIONS]
   })
 
   const searchCapableViews = computed(() => {
