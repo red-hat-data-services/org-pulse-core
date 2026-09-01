@@ -66,7 +66,8 @@ function createPalette(overrides = {}) {
     roles: ref(overrides.roles ?? []),
     teamDataSource: ref(overrides.teamDataSource ?? ''),
     searchIndexItems: ref(overrides.searchIndexItems ?? []),
-    pinnedItems: ref(overrides.pinnedItems ?? [])
+    pinnedItems: ref(overrides.pinnedItems ?? []),
+    themeMode: ref(overrides.themeMode ?? 'system')
   })
 }
 
@@ -97,7 +98,7 @@ describe('useCommandPalette', () => {
       const { searchQuery, filteredResults } = createPalette()
       searchQuery.value = 'dark'
       const actions = filteredResults.value.filter(r => r.type === 'action')
-      expect(actions.some(a => a.id === 'toggle-theme')).toBe(true)
+      expect(actions.some(a => a.id === 'set-theme-dark')).toBe(true)
     })
 
     it('returns empty when no match', () => {
@@ -658,10 +659,10 @@ describe('useCommandPalette', () => {
   })
 
   describe('ACTIONS built-in items', () => {
-    it('includes 11 built-in action items', () => {
+    it('includes 13 built-in action items', () => {
       const { allItems } = createPalette()
       const actions = allItems.value.filter(r => r.type === 'action')
-      expect(actions.length).toBe(11)
+      expect(actions.length).toBe(13)
     })
 
     it('all action items have correct structure', () => {
@@ -677,7 +678,9 @@ describe('useCommandPalette', () => {
     it('has expected action IDs', () => {
       const { allItems } = createPalette()
       const actionIds = allItems.value.filter(r => r.type === 'action').map(r => r.id)
-      expect(actionIds).toContain('toggle-theme')
+      expect(actionIds).toContain('set-theme-light')
+      expect(actionIds).toContain('set-theme-dark')
+      expect(actionIds).toContain('set-theme-system')
       expect(actionIds).toContain('toggle-sidebar')
       expect(actionIds).toContain('go-settings')
       expect(actionIds).toContain('go-about')
@@ -687,6 +690,25 @@ describe('useCommandPalette', () => {
       expect(actionIds).toContain('source-code')
       expect(actionIds).toContain('contributing-guide')
       expect(actionIds).toContain('api-docs')
+    })
+
+    it.each([
+      ['light', 'set-theme-light'],
+      ['dark', 'set-theme-dark'],
+      ['system', 'set-theme-system']
+    ])('marks only the %s theme action as active', (mode, activeId) => {
+      const { allItems } = createPalette({ themeMode: mode })
+      const themeActions = allItems.value.filter(r => r.id.startsWith('set-theme-'))
+      expect(themeActions).toHaveLength(3)
+      for (const a of themeActions) {
+        expect(a.active).toBe(a.id === activeId)
+      }
+    })
+
+    it('marks no theme action active for an unknown mode', () => {
+      const { allItems } = createPalette({ themeMode: 'nonsense' })
+      const themeActions = allItems.value.filter(r => r.id.startsWith('set-theme-'))
+      expect(themeActions.every(a => a.active === false)).toBe(true)
     })
 
     it('external link actions have url fields', () => {
