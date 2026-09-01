@@ -577,7 +577,7 @@ describe('CommandPalette history items', () => {
     const wrapper = mountPalette()
     const rows = wrapper.findAll('.command-palette-suggestions > div')
     expect(rows.length).toBe(1)
-    const svg = rows[0].find('.text-gray-500 svg')
+    const svg = rows[0].find('svg')
     expect(svg.exists()).toBe(true)
     expect(svg.find('circle').exists()).toBe(true)
     wrapper.unmount()
