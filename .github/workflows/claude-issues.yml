@@ -86,7 +86,7 @@ jobs:
 
       - name: Claude Issue Assistant
         if: steps.check-claimed.outputs.is_claimed != 'true'
-        uses: anthropics/claude-code-action@v1.0.200
+        uses: anthropics/claude-code-action@v1.0.210
         continue-on-error: true
         with:
           use_vertex: "true"
