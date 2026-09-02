@@ -77,7 +77,7 @@ COPY fixtures/allowlist.json fixtures/api-tokens.json fixtures/audit-log.json ./
 COPY fixtures/github-contributions.json fixtures/github-history.json ./fixtures/
 COPY fixtures/gitlab-contributions.json fixtures/gitlab-history.json ./fixtures/
 COPY fixtures/site-config.json ./fixtures/
-COPY fixtures/core-modules-state.json ./fixtures/modules-state.json
+COPY fixtures/modules-state.json ./fixtures/modules-state.json
 
 # Create data directory for PVC mount
 RUN mkdir -p /app/data && chown -R 65532:0 /app/data && chmod -R g+rwX /app/data
