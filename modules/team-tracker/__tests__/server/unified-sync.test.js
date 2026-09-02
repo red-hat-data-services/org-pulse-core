@@ -93,20 +93,31 @@ vi.mock('../../../../shared/server/google-sheets', () => ({
   fetchRawSheet: vi.fn(async () => ({ headers: [], rows: [] }))
 }))
 
-async function createApp() {
+async function createApp(contextOverrides = {}) {
   const app = express()
   app.use(express.json())
   const router = express.Router()
 
   const { createRegistryStore } = require('../../../../shared/server/registry-store')
+  const { createConfigStore } = require('../../../../shared/server/config-store')
+  const { createAuditLog } = require('../../../../shared/server/audit-log')
+  const { createFieldStore } = require('../../../../shared/server/field-store')
+  const { createTeamStore } = require('../../../../shared/server/team-store')
   const registerRoutes = require('../../server/index.js')
+  const auditLog = createAuditLog(storageMock)
+  const registryStore = createRegistryStore(storageMock)
   await registerRoutes(router, {
     storage: storageMock,
     requireAdmin: (req, res, next) => next(),
     requireTeamAdmin: (req, res, next) => next(),
     requireScope: () => (req, res, next) => next(),
-    registryStore: createRegistryStore(storageMock),
-    registerScopes: vi.fn()
+    auditLog,
+    registryStore,
+    fieldStore: createFieldStore(storageMock, { auditLog, registryStore }),
+    teamStore: createTeamStore(storageMock, { auditLog, registryStore }),
+    configStore: createConfigStore(storageMock),
+    registerScopes: vi.fn(),
+    ...contextOverrides
   })
 
   app.use('/api/modules/team-tracker', router)
@@ -160,15 +171,25 @@ describe('Unified Sync Endpoint', () => {
       app2.use(express2.json())
       const router2 = express2.Router()
       const { createRegistryStore } = require('../../../../shared/server/registry-store')
+      const { createConfigStore } = require('../../../../shared/server/config-store')
+      const { createAuditLog } = require('../../../../shared/server/audit-log')
+      const { createFieldStore } = require('../../../../shared/server/field-store')
+      const { createTeamStore } = require('../../../../shared/server/team-store')
       const mod = await import('../../server/index.js')
       const registerRoutes2 = mod.default || mod
-      registerRoutes2(router2, {
+      const auditLog = createAuditLog(storageMock)
+      const registryStore = createRegistryStore(storageMock)
+      await registerRoutes2(router2, {
         storage: storageMock,
         requireAdmin: (req, res, next) => next(),
-    requireTeamAdmin: (req, res, next) => next(),
-    requireScope: () => (req, res, next) => next(),
-    registryStore: createRegistryStore(storageMock),
-    registerScopes: vi.fn()
+        requireTeamAdmin: (req, res, next) => next(),
+        requireScope: () => (req, res, next) => next(),
+        auditLog,
+        registryStore,
+        fieldStore: createFieldStore(storageMock, { auditLog, registryStore }),
+        teamStore: createTeamStore(storageMock, { auditLog, registryStore }),
+        configStore: createConfigStore(storageMock),
+        registerScopes: vi.fn()
       })
       app2.use('/api/modules/team-tracker', router2)
 
@@ -356,6 +377,26 @@ describe('Extended Status Endpoint', () => {
     expect(data).toHaveProperty('syncing')
     expect(data).toHaveProperty('lastSyncAt')
     expect(data).toHaveProperty('lastSyncStatus')
+  })
+
+  it('reads metadata status through the injected configStore', async () => {
+    mockStorage['team-data/config.json'] = {
+      orgRoots: [{ uid: 'test', displayName: 'Test' }],
+      lastSyncAt: new Date().toISOString(),
+      lastSyncStatus: 'success'
+    }
+    const configStore = {
+      readFromStorage: vi.fn(async key => key === 'org-roster/sync-status.json'
+        ? { lastSyncAt: new Date().toISOString(), status: 'success', teamCount: 9 }
+        : null),
+      writeToStorage: vi.fn()
+    }
+
+    const app = await createApp({ configStore })
+    const { data } = await makeRequest(app, 'GET', '/api/modules/team-tracker/admin/roster-sync/status')
+
+    expect(configStore.readFromStorage).toHaveBeenCalledWith('org-roster/sync-status.json')
+    expect(data.metadataSync.teamCount).toBe(9)
   })
 
   it('reports stale when sync timestamps are old', async () => {

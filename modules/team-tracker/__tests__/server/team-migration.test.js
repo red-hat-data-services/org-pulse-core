@@ -8,6 +8,8 @@ const { createTeamStore, MAX_URL_LENGTH } = require('../../../../shared/server/t
 const { teamSchema } = require('../../../../shared/server/models/team')
 const { fieldDefinitionSchema } = require('../../../../shared/server/models/field-definition')
 const { createRegistryStore } = require('../../../../shared/server/registry-store')
+const { createConfigStore } = require('../../../../shared/server/config-store')
+const { configSchema } = require('../../../../shared/server/models/config')
 
 function makeStorage(initial = {}) {
   const data = { ...initial }
@@ -533,6 +535,7 @@ describe('migrateToInApp (MongoDB team + field stores)', () => {
   let connection
   let TeamModel
   let FieldModel
+  let ConfigModel
   const dbName = 'test_team_migration_' + process.pid
 
   function makeMigrationStorage(registry, extraData = {}) {
@@ -550,6 +553,7 @@ describe('migrateToInApp (MongoDB team + field stores)', () => {
     connection = await mongoose.createConnection(uri, { dbName })
     TeamModel = connection.model('core__teams', teamSchema, 'core__teams')
     FieldModel = connection.model('core__field_definitions', fieldDefinitionSchema, 'core__field_definitions')
+    ConfigModel = connection.model('core__config', configSchema, 'core__config')
   })
 
   afterAll(async () => {
@@ -562,6 +566,7 @@ describe('migrateToInApp (MongoDB team + field stores)', () => {
   beforeEach(async () => {
     if (TeamModel) await TeamModel.deleteMany({})
     if (FieldModel) await FieldModel.deleteMany({})
+    if (ConfigModel) await ConfigModel.deleteMany({})
   })
 
   it.skipIf(!process.env.MONGODB_URI)('creates teams and fields through the stores, never writing the teams.json/field-definitions.json blobs', async () => {
@@ -703,28 +708,29 @@ describe('migrateToInApp (MongoDB team + field stores)', () => {
   it.skipIf(!process.env.MONGODB_URI)('does not abort the migration when a team has a board violating the store limits', async () => {
     const registry = baseRegistry()
     const oversizedUrl = 'https://jira.example.com/board?' + 'x'.repeat(MAX_URL_LENGTH)
-    const storage = makeMigrationStorage(registry, {
-      'org-roster/teams-metadata.json': {
-        teams: [
-          { org: 'Org One', name: 'Platform', boardUrls: [oversizedUrl, 'https://jira.example.com/board/2'] },
-          { org: 'Org One', name: 'Serving', boardUrls: ['https://jira.example.com/board/3'] }
-        ],
-        boardNames: {}
-      }
-    })
+    const storage = makeMigrationStorage(registry)
     const config = { teamStructure: { customFields: [] } }
 
     const auditLog = createAuditLog(storage)
     const registryStore = createRegistryStore(storage)
+    const configStore = createConfigStore(storage, { model: ConfigModel })
+    await configStore.writeToStorage('org-roster/teams-metadata.json', {
+      teams: [
+        { org: 'Org One', name: 'Platform', boardUrls: [oversizedUrl, 'https://jira.example.com/board/2'] },
+        { org: 'Org One', name: 'Serving', boardUrls: ['https://jira.example.com/board/3'] }
+      ],
+      boardNames: {}
+    })
     const teamStore = createTeamStore(storage, { model: TeamModel, auditLog, registryStore })
     const fieldStore = createFieldStore(storage, { model: FieldModel, auditLog, registryStore })
 
-    const result = await migrateToInApp(storage, config, 'admin@test.com', [], { fieldStore, teamStore, auditLog, registryStore })
+    const result = await migrateToInApp(storage, config, 'admin@test.com', [], { fieldStore, teamStore, auditLog, registryStore, configStore })
 
     // Migration completes for both teams despite Platform's oversized board url.
     expect(result.migrated).toBe(true)
     expect(result.teams).toBe(2)
     expect(result.boardsMigrated).toBe(2)
+    expect(storage._data['org-roster/teams-metadata.json']).toBeUndefined()
 
     const teams = await TeamModel.find({}).lean()
     const platform = teams.find(t => t.name === 'Platform')

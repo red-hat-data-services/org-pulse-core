@@ -9,13 +9,11 @@ const apiTokenSchema = new mongoose.Schema({
   // scopes, touch lastUsedAt).
   id: { type: String, required: true, index: true },
   name: { type: String, required: true },
-  // SHA-256 hex of the raw token. Looked up on every authenticated request
-  // (validateToken), so it needs an index to avoid a collection scan. Not
-  // unique for the same reason `id` isn't: 128 bits of random entropy makes
-  // a collision practically impossible, and the file path's in-memory index
-  // (a Map keyed by hash) never enforced uniqueness — a colliding write
-  // would just shadow the earlier record, not throw.
-  tokenHash: { type: String, required: true, index: true },
+  // SHA-256 hex of the raw token. MongoDB treats the hash as the token's
+  // authoritative identity; file mode keeps its existing Map collision
+  // behavior. The startup migration also creates this index explicitly for
+  // deployments where Mongoose auto-indexing is disabled.
+  tokenHash: { type: String, required: true, unique: true, index: true },
   tokenPrefix: { type: String, required: true },
   ownerEmail: { type: String, required: true, index: true },
   // null = full access, ['*'] = wildcard, or an array of scope keys —

@@ -48,6 +48,18 @@ describe('TeamSprintsTab', () => {
     expect(mockApiRequest).toHaveBeenCalledWith('/modules/team-tracker/boards/456/trend')
   })
 
+  it('includes the effective team ID in sprint requests', async () => {
+    mockApiRequest.mockResolvedValue({ sprints: [] })
+
+    mount(TeamSprintsTab, {
+      props: { boards: [{ ...boardsWithUrl[0], teamId: 'platform-filtered' }] }
+    })
+    await flushPromises()
+
+    expect(mockApiRequest).toHaveBeenCalledWith('/modules/team-tracker/boards/456/sprints?teamId=platform-filtered')
+    expect(mockApiRequest).toHaveBeenCalledWith('/modules/team-tracker/boards/456/trend?teamId=platform-filtered')
+  })
+
   it('shows board selector for multiple boards', async () => {
     mockApiRequest.mockResolvedValue({ sprints: [] })
     const multipleBoards = [

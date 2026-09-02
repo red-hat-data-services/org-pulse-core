@@ -18,6 +18,7 @@ const { buildMapping } = require('../shared/server/anonymize')
  *
  * @param {object} options
  * @param {object} options.storageModule - shared storage module
+ * @param {object} [options.configStore] - dual-path singleton config store
  * @param {object[]} options.builtInModules - discovered built-in modules
  * @param {Set} options.enabledSlugs - set of enabled module slugs
  * @param {Function} options.collectModuleDiagnostics - from module-loader
@@ -36,6 +37,7 @@ async function collect(options) {
     gitSync,
     secretRegistry,
     registryStore,
+    configStore,
     redact = 'minimal'
   } = options
 
@@ -58,10 +60,10 @@ async function collect(options) {
   bundle.storage = collectStorageInfo(storageModule)
 
   // 6. Allowlist
-  bundle.allowlist = await collectAllowlistInfo(storageModule)
+  bundle.allowlist = await collectAllowlistInfo(configStore || storageModule)
 
   // 7. Git-static modules
-  bundle.gitStaticModules = await collectGitStaticInfo(storageModule, gitSync)
+  bundle.gitStaticModules = await collectGitStaticInfo(configStore || storageModule, gitSync)
 
   // 8. Module diagnostics
   if (collectModuleDiagnostics) {
@@ -87,7 +89,7 @@ async function collect(options) {
   bundle.recentErrors = errorBuffer.getEntries()
 
   // 11. Redact
-  return redactBundle(bundle, redact, storageModule, registryStore)
+  return redactBundle(bundle, redact, configStore || storageModule, registryStore)
 }
 
 function collectSystemInfo() {
@@ -194,16 +196,16 @@ async function collectAllowlistInfo(storageModule) {
   }
 }
 
-async function collectGitStaticInfo(storageModule, gitSync) {
+async function collectGitStaticInfo(configStore, gitSync) {
   const result = { count: 0, slugs: [], syncStatus: null }
 
   try {
     const modulesConfig = require('./modules/config')
-    const config = (await modulesConfig.loadModulesConfig(storageModule)) || { modules: [] }
+    const config = (await modulesConfig.loadModulesConfig(configStore)) || { modules: [] }
     result.count = config.modules.length
     result.slugs = config.modules.map(function(m) { return m.slug })
     if (gitSync) {
-      result.syncStatus = await gitSync.getSyncStatus(storageModule)
+      result.syncStatus = await gitSync.getSyncStatus(configStore)
     }
   } catch { /* ignore */ }
 
@@ -212,14 +214,14 @@ async function collectGitStaticInfo(storageModule, gitSync) {
 
 // ─── Redaction ───
 
-async function redactBundle(bundle, mode, storageModule, registryStore) {
+async function redactBundle(bundle, mode, configStore, registryStore) {
   if (mode === 'minimal') {
     return stripSecrets(bundle)
   }
 
   // Aggressive: build mapping from roster, then walk the tree
   const { readRosterFull } = require('../shared/server/roster')
-  const roster = await readRosterFull(storageModule, registryStore)
+  const roster = await readRosterFull(configStore, registryStore)
   const mapping = roster ? buildMapping(roster) : null
   const stripped = stripSecrets(bundle)
   if (!mapping) return stripped

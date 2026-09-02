@@ -109,6 +109,150 @@ function createRegistryStore(storage, options = {}) {
     });
   }
 
+  /** Atomically update selected custom fields without replacing the person document. */
+  async function updatePersonFields(uid, fieldValues) {
+    if (!isSafeUid(uid)) throw new Error(`Invalid person UID: ${uid}`);
+    if (Model) {
+      const $set = {};
+      for (const [fieldId, value] of Object.entries(fieldValues)) {
+        if (!isSafeUid(fieldId) || fieldId.includes('.') || fieldId.startsWith('$')) {
+          throw new Error(`Invalid field key: ${fieldId}`);
+        }
+        $set[`data._appFields.${fieldId}`] = value;
+      }
+      if (Object.keys($set).length === 0) {
+        const person = await getPerson(uid);
+        return person ? { before: person, fields: person._appFields || {} } : null;
+      }
+      const before = await Model.findOneAndUpdate(
+        { uid },
+        { $set },
+        { returnDocument: 'before', lean: true }
+      );
+      if (!before) return null;
+      return {
+        before: before.data,
+        fields: { ...(before.data._appFields || {}), ...fieldValues }
+      };
+    }
+
+    const mutex = getStorageMutex(REGISTRY_KEY);
+    return mutex.runExclusive(async () => {
+      const registry = await readRegistryFile();
+      const person = registry.people && registry.people[uid];
+      if (!person) return null;
+      const before = structuredClone(person);
+      person._appFields = { ...(person._appFields || {}), ...fieldValues };
+      await writeRegistryFile(registry);
+      return { before, fields: person._appFields };
+    });
+  }
+
+  /** Atomically remove selected custom fields. */
+  async function deletePersonFields(uid, fieldIds) {
+    if (!isSafeUid(uid)) throw new Error(`Invalid person UID: ${uid}`);
+    if (Model) {
+      const $unset = {};
+      for (const fieldId of fieldIds) {
+        if (!isSafeUid(fieldId) || fieldId.includes('.') || fieldId.startsWith('$')) {
+          throw new Error(`Invalid field key: ${fieldId}`);
+        }
+        $unset[`data._appFields.${fieldId}`] = '';
+      }
+      if (Object.keys($unset).length === 0) return getPerson(uid);
+      const doc = await Model.findOneAndUpdate({ uid }, { $unset }, { returnDocument: 'after', lean: true });
+      return doc ? doc.data : null;
+    }
+    const mutex = getStorageMutex(REGISTRY_KEY);
+    return mutex.runExclusive(async () => {
+      const registry = await readRegistryFile();
+      const person = registry.people && registry.people[uid];
+      if (!person) return null;
+      for (const fieldId of fieldIds) delete person._appFields?.[fieldId];
+      await writeRegistryFile(registry);
+      return person;
+    });
+  }
+
+  /** Atomically add a team membership. */
+  async function addTeamToPerson(uid, teamId) {
+    if (!isSafeUid(uid)) throw new Error(`Invalid person UID: ${uid}`);
+    if (Model) {
+      const before = await Model.findOneAndUpdate(
+        { uid, 'data.teamIds': { $ne: teamId } },
+        { $addToSet: { 'data.teamIds': teamId } },
+        { returnDocument: 'before', lean: true }
+      );
+      if (before) return { changed: true, person: before.data };
+      return { changed: false, person: await getPerson(uid) };
+    }
+
+    const mutex = getStorageMutex(REGISTRY_KEY);
+    return mutex.runExclusive(async () => {
+      const registry = await readRegistryFile();
+      const person = registry.people && registry.people[uid];
+      if (!person) return { changed: false, person: null };
+      if (!Array.isArray(person.teamIds)) person.teamIds = [];
+      if (person.teamIds.includes(teamId)) return { changed: false, person };
+      const before = structuredClone(person);
+      person.teamIds.push(teamId);
+      await writeRegistryFile(registry);
+      return { changed: true, person: before };
+    });
+  }
+
+  /** Atomically remove a team membership. */
+  async function removeTeamFromPerson(uid, teamId) {
+    if (!isSafeUid(uid)) throw new Error(`Invalid person UID: ${uid}`);
+    if (Model) {
+      const before = await Model.findOneAndUpdate(
+        { uid, 'data.teamIds': teamId },
+        { $pull: { 'data.teamIds': teamId } },
+        { returnDocument: 'before', lean: true }
+      );
+      if (before) return { changed: true, person: before.data };
+      return { changed: false, person: await getPerson(uid) };
+    }
+
+    const mutex = getStorageMutex(REGISTRY_KEY);
+    return mutex.runExclusive(async () => {
+      const registry = await readRegistryFile();
+      const person = registry.people && registry.people[uid];
+      if (!person || !Array.isArray(person.teamIds) || !person.teamIds.includes(teamId)) {
+        return { changed: false, person: person || null };
+      }
+      const before = structuredClone(person);
+      person.teamIds = person.teamIds.filter(id => id !== teamId);
+      await writeRegistryFile(registry);
+      return { changed: true, person: before };
+    });
+  }
+
+  /** Remove a team membership from every person without replacing any person document. */
+  async function removeTeamFromAllPeople(teamId) {
+    if (Model) {
+      const result = await Model.updateMany(
+        { uid: { $ne: META_UID }, 'data.teamIds': teamId },
+        { $pull: { 'data.teamIds': teamId } }
+      );
+      return result.modifiedCount || 0;
+    }
+
+    const mutex = getStorageMutex(REGISTRY_KEY);
+    return mutex.runExclusive(async () => {
+      const registry = await readRegistryFile();
+      let changed = 0;
+      for (const person of Object.values(registry.people || {})) {
+        if (Array.isArray(person.teamIds) && person.teamIds.includes(teamId)) {
+          person.teamIds = person.teamIds.filter(id => id !== teamId);
+          changed++;
+        }
+      }
+      if (changed) await writeRegistryFile(registry);
+      return changed;
+    });
+  }
+
   /**
    * Permanently remove one person's record. No-op (returns false) if absent.
    */
@@ -178,6 +322,11 @@ function createRegistryStore(storage, options = {}) {
     readRegistry,
     getPerson,
     upsertPerson,
+    updatePersonFields,
+    deletePersonFields,
+    addTeamToPerson,
+    removeTeamFromPerson,
+    removeTeamFromAllPeople,
     deletePerson,
     writeRegistry,
     usesDatabase: !!Model

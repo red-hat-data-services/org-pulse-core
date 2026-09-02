@@ -21,6 +21,16 @@ const DEFAULT_CONFIG = {
   }]
 };
 
+async function updateModulesConfig(storage, updater) {
+  if (typeof storage.updateFromStorage === 'function') {
+    return storage.updateFromStorage(CONFIG_KEY, updater);
+  }
+  const current = (await loadModulesConfig(storage)) || { modules: [] };
+  const next = updater(current);
+  await saveModulesConfig(storage, next);
+  return next;
+}
+
 async function loadModulesConfig(storage) {
   const config = await storage.readFromStorage(CONFIG_KEY);
   if (config) return config;
@@ -96,81 +106,73 @@ function validateModule(mod, existingModules, excludeSlug) {
 }
 
 async function addModule(storage, mod) {
-  const config = (await loadModulesConfig(storage)) || { modules: [] };
-  const errors = validateModule(mod, config.modules);
-  if (errors.length > 0) {
-    return { error: errors.join('; ') };
-  }
-
-  const newModule = {
-    name: mod.name.trim(),
-    slug: mod.slug,
-    type: mod.type,
-    description: (mod.description || '').trim(),
-    icon: mod.icon || 'box',
-    order: typeof mod.order === 'number' ? mod.order : config.modules.length
-  };
-
-  if (mod.type === 'git-static') {
-    newModule.gitUrl = mod.gitUrl;
-    newModule.gitBranch = mod.gitBranch || 'main';
-    newModule.gitSubdirectory = mod.gitSubdirectory || '/';
-    newModule.gitToken = mod.gitToken || null;
-    newModule.lastSyncAt = null;
-    newModule.lastSyncStatus = null;
-    newModule.lastSyncError = null;
-  }
-
-  config.modules.push(newModule);
-  await saveModulesConfig(storage, config);
+  let newModule;
+  let validationError;
+  await updateModulesConfig(storage, config => {
+    const errors = validateModule(mod, config.modules);
+    if (errors.length > 0) {
+      validationError = errors.join('; ');
+      return config;
+    }
+    newModule = {
+      name: mod.name.trim(), slug: mod.slug, type: mod.type,
+      description: (mod.description || '').trim(), icon: mod.icon || 'box',
+      order: typeof mod.order === 'number' ? mod.order : config.modules.length
+    };
+    if (mod.type === 'git-static') {
+      Object.assign(newModule, {
+        gitUrl: mod.gitUrl, gitBranch: mod.gitBranch || 'main',
+        gitSubdirectory: mod.gitSubdirectory || '/', gitToken: mod.gitToken || null,
+        lastSyncAt: null, lastSyncStatus: null, lastSyncError: null
+      });
+    }
+    config.modules.push(newModule);
+    return config;
+  });
+  if (validationError) return { error: validationError };
   return { module: newModule };
 }
 
 async function updateModule(storage, slug, updates) {
-  const config = await loadModulesConfig(storage);
-  if (!config) return { error: 'No modules config found' };
-
-  const idx = config.modules.findIndex(m => m.slug === slug);
-  if (idx === -1) return { error: `Module "${slug}" not found` };
-
-  const existing = config.modules[idx];
-
-  // Build merged module for validation
-  const merged = { ...existing, ...updates };
-  // Don't allow changing slug
-  merged.slug = existing.slug;
-
-  const errors = validateModule(merged, config.modules, slug);
-  if (errors.length > 0) {
-    return { error: errors.join('; ') };
-  }
-
-  // Apply safe updates
-  const allowedFields = ['name', 'description', 'icon', 'order', 'gitUrl', 'gitBranch', 'gitSubdirectory', 'gitToken'];
-  for (const field of allowedFields) {
-    if (updates[field] !== undefined) {
-      existing[field] = updates[field];
+  let updatedModule;
+  let updateError;
+  await updateModulesConfig(storage, config => {
+    const idx = config.modules.findIndex(m => m.slug === slug);
+    if (idx === -1) {
+      updateError = `Module "${slug}" not found`;
+      return config;
     }
-  }
-
-  await saveModulesConfig(storage, config);
-  return { module: existing };
+    const existing = config.modules[idx];
+    const merged = { ...existing, ...updates, slug: existing.slug };
+    const errors = validateModule(merged, config.modules, slug);
+    if (errors.length > 0) {
+      updateError = errors.join('; ');
+      return config;
+    }
+    const allowedFields = ['name', 'description', 'icon', 'order', 'gitUrl', 'gitBranch', 'gitSubdirectory', 'gitToken'];
+    for (const field of allowedFields) {
+      if (updates[field] !== undefined) existing[field] = updates[field];
+    }
+    updatedModule = existing;
+    return config;
+  });
+  if (updateError) return { error: updateError };
+  return { module: updatedModule };
 }
 
-async function removeModule(storage, slug) {
-  const config = await loadModulesConfig(storage);
-  if (!config) return { error: 'No modules config found' };
-
-  const idx = config.modules.findIndex(m => m.slug === slug);
-  if (idx === -1) return { error: `Module "${slug}" not found` };
-
-  const removed = config.modules.splice(idx, 1)[0];
-  await saveModulesConfig(storage, config);
+async function removeModule(storage, slug, contentStorage = storage) {
+  let removed;
+  await updateModulesConfig(storage, config => {
+    const idx = config.modules.findIndex(m => m.slug === slug);
+    if (idx !== -1) removed = config.modules.splice(idx, 1)[0];
+    return config;
+  });
+  if (!removed) return { error: `Module "${slug}" not found` };
 
   // Clean up module content directory
-  if (removed.type === 'git-static' && storage.DATA_DIR) {
-    const moduleDir = path.join(storage.DATA_DIR, 'modules', slug);
-    const expectedPrefix = path.join(storage.DATA_DIR, 'modules');
+  if (removed.type === 'git-static' && contentStorage.DATA_DIR) {
+    const moduleDir = path.join(contentStorage.DATA_DIR, 'modules', slug);
+    const expectedPrefix = path.join(contentStorage.DATA_DIR, 'modules');
     const resolved = path.resolve(moduleDir);
     if (resolved.startsWith(expectedPrefix + path.sep) && fs.existsSync(resolved)) {
       try {
@@ -214,14 +216,15 @@ function sanitizeForAdmin(mod) {
 }
 
 async function updateSyncStatus(storage, slug, status, error) {
-  const config = await loadModulesConfig(storage);
-  if (!config) return;
-  const mod = config.modules.find(m => m.slug === slug);
-  if (!mod) return;
-  mod.lastSyncAt = new Date().toISOString();
-  mod.lastSyncStatus = status;
-  mod.lastSyncError = error || null;
-  await saveModulesConfig(storage, config);
+  await updateModulesConfig(storage, config => {
+    const mod = config.modules.find(m => m.slug === slug);
+    if (mod) {
+      mod.lastSyncAt = new Date().toISOString();
+      mod.lastSyncStatus = status;
+      mod.lastSyncError = error || null;
+    }
+    return config;
+  });
 }
 
 module.exports = {

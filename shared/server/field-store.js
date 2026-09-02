@@ -593,16 +593,15 @@ function createFieldStore(storage, options = {}) {
    */
   async function updatePersonFields(uid, fieldValues, actorEmail) {
     if (registryStore.usesDatabase) {
-      const person = await registryStore.getPerson(uid);
-      if (!person) return null;
-      if (!person._appFields) person._appFields = {};
+      for (const fieldId of Object.keys(fieldValues)) {
+        if (!isSafeKey(fieldId)) throw new Error(`Invalid field key: ${fieldId}`);
+      }
+      const result = await registryStore.updatePersonFields(uid, fieldValues);
+      if (!result) return null;
+      const person = result.before;
 
       for (const [fieldId, value] of Object.entries(fieldValues)) {
-        if (!isSafeKey(fieldId)) {
-          throw new Error(`Invalid field key: ${fieldId}`);
-        }
-        const oldValue = person._appFields[fieldId] || null;
-        person._appFields[fieldId] = value;
+        const oldValue = person._appFields?.[fieldId] || null;
 
         await auditLog.appendAuditEntry({
           action: 'person.field.update',
@@ -616,8 +615,7 @@ function createFieldStore(storage, options = {}) {
         });
       }
 
-      await registryStore.upsertPerson(uid, person);
-      return person._appFields;
+      return result.fields;
     }
 
     const mutex = getStorageMutex(REGISTRY_KEY);

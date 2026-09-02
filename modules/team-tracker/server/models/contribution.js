@@ -24,6 +24,8 @@ const contributionSchema = new mongoose.Schema({
   totalContributions: { type: Number, default: 0 },
   contributionsFetchedAt: { type: String, default: null },
   months: { type: mongoose.Schema.Types.Mixed, default: {} },
+  instances: { type: mongoose.Schema.Types.Mixed, default: undefined },
+  source: { type: String, default: undefined },
   historyFetchedAt: { type: String, default: null },
   // Only set on the `__meta__` sentinel document.
   batchFetchedAt: { type: String, default: null }

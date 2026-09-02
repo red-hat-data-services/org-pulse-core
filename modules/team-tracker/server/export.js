@@ -18,7 +18,8 @@ function isEmptyCache(data) {
 
 /**
  * @param {object} stores - Dual-path stores from index.js
- *   (personStore, contributionStore, jiraNameMapStore, registryStore) so the
+ *   (personStore, contributionStore, jiraNameMapStore, registryStore,
+ *   configStore, snapshotModel) so the
  *   export reflects whichever path (MongoDB or file) is actually in use for
  *   those data sets.
  * @param {object} [stores.personStore] - Optional; when omitted, people/*.json
@@ -29,22 +30,28 @@ function isEmptyCache(data) {
  *   jira-name-map.json is read directly from `storage`.
  * @param {object} stores.registryStore - Dual-path registry store. Required —
  *   there is no fallback.
- *   Snapshots and roster-sync-config are not part of this module's MongoDB
- *   migration (exportSnapshots reads the filesystem directly and isn't
- *   converted here) and always come from the file.
+ * @param {object} stores.configStore - Dual-path singleton config store.
+ *   Required — there is no fallback.
+ * @param {object} [stores.snapshotModel] - Optional Mongoose snapshot model.
  */
 module.exports = async function teamTrackerExport(addFile, storage, mapping, stores = {}) {
   if (!stores.registryStore) {
     throw new Error('teamTrackerExport requires stores.registryStore (from the module context) — there is no fallback');
+  }
+  if (!stores.configStore) {
+    throw new Error('teamTrackerExport requires stores.configStore (from the module context) — there is no fallback');
   }
   const { readFromStorage } = storage;
   const personStore = stores.personStore || null;
   const contributionStore = stores.contributionStore || null;
   const jiraNameMapStore = stores.jiraNameMapStore || null;
   const registryStore = stores.registryStore;
+  const configStore = stores.configStore;
+  const snapshotModel = stores.snapshotModel || null;
+  const orgRosterContext = createOrgRosterAnonymizationContext(mapping);
 
   // 1. roster (from team-data/registry.json)
-  await exportRoster(addFile, storage, mapping, registryStore);
+  await exportRoster(addFile, storage, mapping, registryStore, configStore);
 
   // 2. people/*.json
   await exportPeopleFiles(addFile, storage, mapping, personStore);
@@ -62,20 +69,137 @@ module.exports = async function teamTrackerExport(addFile, storage, mapping, sto
   await exportGitlabHistory(addFile, readFromStorage, mapping, contributionStore);
 
   // 7. snapshots
-  await exportSnapshots(addFile, storage, mapping);
+  await exportSnapshots(addFile, storage, mapping, snapshotModel);
 
   // 8. jira-name-map.json
   await exportJiraNameMap(addFile, readFromStorage, mapping, jiraNameMapStore);
 
   // 9. roster-sync-config (from team-data/config.json)
-  await exportRosterSyncConfig(addFile, readFromStorage, mapping);
+  await exportRosterSyncConfig(addFile, configStore, mapping);
 
   // 10. last-refreshed.json (pass through)
-  const lastRefreshed = await readFromStorage('last-refreshed.json');
+  const lastRefreshed = await configStore.readFromStorage('last-refreshed.json');
   if (lastRefreshed) {
     addFile('last-refreshed.json', lastRefreshed);
   }
+
+  // 11. Exported org-roster singleton data
+  for (const key of [
+    'org-roster/teams-metadata.json',
+    'org-roster/components.json',
+    'org-roster/rfe-backlog.json'
+  ]) {
+    const data = await configStore.readFromStorage(key);
+    if (data) addFile(key, anonymizeOrgRosterData(key, data, mapping, orgRosterContext));
+  }
 };
+
+function createFallbackMapping(prefix) {
+  const values = new Map();
+  return function (value) {
+    if (!value || typeof value !== 'string') return value;
+    if (!values.has(value)) values.set(value, `${prefix} ${values.size + 1}`);
+    return values.get(value);
+  };
+}
+
+function createOrgRosterAnonymizationContext(mapping) {
+  const anonymizeOrg = createFallbackMapping('Org');
+  const anonymizeTeam = createFallbackMapping('Team');
+  const anonymizeComponent = createFallbackMapping('Component');
+  const boardUrls = new Map();
+
+  function personOrFallback(value) {
+    const mapped = mapping.anonymizeValue(value);
+    return mapped === value ? anonymizeOrg(value) : mapped;
+  }
+
+  function anonymizeBoardUrl(value) {
+    if (!value || typeof value !== 'string') return value;
+    if (!boardUrls.has(value)) boardUrls.set(value, mapping.anonymizeBoardUrl(value, boardUrls.size + 1));
+    return boardUrls.get(value);
+  }
+
+  return { anonymizeOrg, anonymizeTeam, anonymizeComponent, personOrFallback, anonymizeBoardUrl };
+}
+
+function anonymizeOrgRosterData(key, data, mapping, context) {
+  const { anonymizeTeam, anonymizeComponent, personOrFallback, anonymizeBoardUrl } = context;
+
+  if (key.endsWith('teams-metadata.json')) {
+    const result = { ...data };
+    if (Array.isArray(data.teams)) {
+      result.teams = data.teams.map(team => ({
+        ...team,
+        org: personOrFallback(team.org),
+        name: anonymizeTeam(team.name),
+        boardUrls: Array.isArray(team.boardUrls)
+          ? team.boardUrls.map(anonymizeBoardUrl)
+          : team.boardUrls,
+        pms: Array.isArray(team.pms) ? team.pms.map(personOrFallback) : team.pms
+      }));
+    }
+    if (data.boardNames && typeof data.boardNames === 'object') {
+      result.boardNames = Object.fromEntries(
+        Object.entries(data.boardNames).map(([url, name]) => [
+          anonymizeBoardUrl(url),
+          anonymizeTeam(name)
+        ])
+      );
+    }
+    return result;
+  }
+
+  if (key.endsWith('components.json')) {
+    return {
+      ...data,
+      components: data.components && typeof data.components === 'object'
+        ? Object.fromEntries(Object.entries(data.components).map(([component, teams]) => [
+          anonymizeComponent(component),
+          Array.isArray(teams) ? teams.map(anonymizeTeam) : teams
+        ]))
+        : data.components
+    };
+  }
+
+  if (key.endsWith('rfe-backlog.json')) {
+    const result = { ...data };
+    if (data.byComponent && typeof data.byComponent === 'object') {
+      result.byComponent = Object.fromEntries(Object.entries(data.byComponent).map(([component, value]) => [
+        anonymizeComponent(component),
+        anonymizeRfeEntry(value, mapping, anonymizeComponent)
+      ]));
+    }
+    if (data.byTeam && typeof data.byTeam === 'object') {
+      result.byTeam = Object.fromEntries(Object.entries(data.byTeam).map(([teamKey, value]) => [
+        teamKey.split('::').map((part, index) => index === 0 ? personOrFallback(part) : anonymizeTeam(part)).join('::'),
+        anonymizeRfeEntry(value, mapping, anonymizeComponent)
+      ]));
+    }
+    return result;
+  }
+
+  return data;
+}
+
+function anonymizeRfeEntry(value, mapping, anonymizeComponent) {
+  if (!value || typeof value !== 'object') return value;
+  const result = { ...value };
+  if (Array.isArray(value.issues)) {
+    result.issues = value.issues.map(issue => {
+      const anonymized = {
+        ...issue,
+        key: mapping.anonymizeJiraKey(issue.key),
+        summary: mapping.anonymizeIssueSummary(issue.key)
+      };
+      if (typeof issue.component === 'string') anonymized.component = anonymizeComponent(issue.component);
+      if (Array.isArray(issue.components)) anonymized.components = issue.components.map(anonymizeComponent);
+      return anonymized;
+    });
+  }
+  if (typeof value.error === 'string') result.error = 'Unable to fetch RFE data';
+  return result;
+}
 
 // Fields known to contain person names (from Google Sheets enrichment)
 const NAME_FIELDS = ['productManager', 'engineeringLead', 'sheetManager'];
@@ -107,9 +231,9 @@ function anonymizePerson(person, mapping) {
   return result;
 }
 
-async function exportRoster(addFile, storage, mapping, registryStore) {
+async function exportRoster(addFile, storage, mapping, registryStore, configStore) {
   const { readRosterFull } = require('../../../shared/server/roster');
-  const roster = await readRosterFull(storage, registryStore);
+  const roster = await readRosterFull(configStore, registryStore);
   if (!roster) return;
 
   const anonymized = {};
@@ -232,17 +356,33 @@ async function exportGitlabContributions(addFile, readFromStorage, mapping, cont
     for (const [username, userData] of Object.entries(data.users)) {
       const fakeUsername = mapping.getOrCreateGitlabMapping(username);
       const entry = { ...userData, username: fakeUsername };
-      if (entry.instances && Array.isArray(entry.instances)) {
-        entry.instances = entry.instances.map((inst, i) => ({
-          ...inst,
-          baseUrl: `https://gitlab-${i + 1}.example.com`,
-          label: `GitLab Instance ${i + 1}`
-        }));
-      }
+      if (entry.instances) entry.instances = anonymizeGitlabInstances(entry.instances);
       anonymized.users[fakeUsername] = entry;
     }
   }
   addFile('gitlab-contributions.json', anonymized);
+}
+
+function anonymizeGitlabInstances(instances) {
+  if (Array.isArray(instances)) {
+    return instances.map((instance, index) => ({
+      ...instance,
+      baseUrl: `https://gitlab-${index + 1}.example.com`,
+      label: `GitLab Instance ${index + 1}`
+    }));
+  }
+  if (typeof instances !== 'object') return instances;
+
+  const anonymized = {};
+  Object.values(instances).forEach((instance, index) => {
+    const fakeBaseUrl = `https://gitlab-${index + 1}.example.com`;
+    const fakeLabel = `GitLab Instance ${index + 1}`;
+    const value = { ...instance };
+    if (Object.prototype.hasOwnProperty.call(value, 'baseUrl')) value.baseUrl = fakeBaseUrl;
+    if (Object.prototype.hasOwnProperty.call(value, 'label')) value.label = fakeLabel;
+    anonymized[fakeBaseUrl] = value;
+  });
+  return anonymized;
 }
 
 async function exportGitlabHistory(addFile, readFromStorage, mapping, contributionStore) {
@@ -261,7 +401,18 @@ async function exportGitlabHistory(addFile, readFromStorage, mapping, contributi
   addFile('gitlab-history.json', anonymized);
 }
 
-async function exportSnapshots(addFile, storage, mapping) {
+async function exportSnapshots(addFile, storage, mapping, snapshotModel) {
+  if (snapshotModel) {
+    const { sanitizeTeamKey } = require('./snapshots');
+    const docs = await snapshotModel.find({}).lean();
+    for (const doc of docs) {
+      const teamParts = doc.team.split('::');
+      if (teamParts.length > 1) teamParts[0] = mapping.anonymizeValue(teamParts[0]) || teamParts[0];
+      const dir = sanitizeTeamKey(teamParts.join('::'));
+      addFile(`snapshots/${dir}/${doc.date}.json`, anonymizeSnapshotData(doc.data, mapping));
+    }
+    return;
+  }
   // Snapshots are in snapshots/<orgKey::teamName>/<date>.json
   // We need to list snapshot directories and their files
   // listStorageFiles only lists .json files, but snapshot dirs are subdirectories
@@ -360,9 +511,13 @@ async function exportJiraNameMap(addFile, readFromStorage, mapping, jiraNameMapS
   addFile('jira-name-map.json', anonymized);
 }
 
-async function exportRosterSyncConfig(addFile, readFromStorage, mapping) {
+async function exportRosterSyncConfig(addFile, configStore, mapping) {
   const rosterSyncConfig = require('../../../shared/server/roster-sync/config');
-  const data = await rosterSyncConfig.loadConfig({ readFromStorage });
+  // Export remains read-only: legacy migration only runs during normal config
+  // reads where both store methods are available.
+  const data = await rosterSyncConfig.loadConfig({
+    readFromStorage: configStore.readFromStorage
+  });
   if (!data) return;
 
   const anonymized = { ...data };

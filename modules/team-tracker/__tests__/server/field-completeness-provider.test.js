@@ -2,6 +2,7 @@ const { createFieldStore } = require('../../../../shared/server/field-store')
 const { createAuditLog } = require('../../../../shared/server/audit-log')
 const { createTeamStore } = require('../../../../shared/server/team-store')
 const { createRegistryStore } = require('../../../../shared/server/registry-store')
+const { createConfigStore } = require('../../../../shared/server/config-store')
 import { describe, it, expect, vi } from 'vitest'
 
 
@@ -34,6 +35,7 @@ async function setupAndGetProvider(storageData) {
   const storage = makeStorage(storageData)
   const auditLog = createAuditLog(storage)
   const registryStore = createRegistryStore(storage)
+  const configStore = createConfigStore(storage)
   const fieldStore = createFieldStore(storage, { auditLog, registryStore })
   const teamStore = createTeamStore(storage, { auditLog, registryStore })
   const mockRoleStore = {
@@ -51,6 +53,7 @@ async function setupAndGetProvider(storageData) {
     fieldStore,
     teamStore,
     registryStore,
+    configStore,
     auditLog,
     registerScopes: vi.fn(),
     registerMessageProvider(id, fn) {

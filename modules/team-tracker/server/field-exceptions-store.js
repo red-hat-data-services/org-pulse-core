@@ -1,181 +1,170 @@
-/**
- * Field exceptions store for team-tracker.
- * Manages per-field exceptions that exclude specific fields from completeness
- * checks for individual people or teams.
- * Single file at data/team-data/field-exceptions.json.
- */
+/** Dual-path field exceptions store. */
+const crypto = require('crypto')
+const { getStorageMutex } = require('../../../shared/server/storage-mutex')
 
-const crypto = require('crypto');
-const { Mutex } = require('async-mutex');
-
-const STORAGE_KEY = 'team-data/field-exceptions.json';
-
-const storageMutexes = new Map();
-function getStorageMutex(key) {
-  if (!storageMutexes.has(key)) storageMutexes.set(key, new Mutex());
-  return storageMutexes.get(key);
-}
+const STORAGE_KEY = 'team-data/field-exceptions.json'
 
 function generateId() {
-  return 'fex_' + crypto.randomBytes(4).toString('hex');
+  return 'fex_' + crypto.randomBytes(4).toString('hex')
 }
 
-async function readExceptions(storage) {
-  return (await storage.readFromStorage(STORAGE_KEY)) || { version: 1, exceptions: [] };
-}
+function createFieldExceptionsStore(storage, options = {}) {
+  const Model = options.model || null
+  const auditLog = options.auditLog
+  if (!auditLog) throw new Error('createFieldExceptionsStore requires options.auditLog (from the module context)')
 
-async function writeExceptions(storage, data) {
-  await storage.writeToStorage(STORAGE_KEY, data);
-}
-
-/**
- * List exceptions with optional filters.
- */
-async function listExceptions(storage, filters = {}) {
-  const data = await readExceptions(storage);
-  let results = data.exceptions;
-
-  if (filters.entityType) {
-    results = results.filter(e => e.entityType === filters.entityType);
-  }
-  if (filters.entityId) {
-    results = results.filter(e => e.entityId === filters.entityId);
-  }
-  if (filters.fieldId) {
-    results = results.filter(e => e.fieldId === filters.fieldId);
-  }
-
-  return results;
-}
-
-/**
- * Get a single exception by ID.
- */
-async function getException(storage, id) {
-  const data = await readExceptions(storage);
-  return data.exceptions.find(e => e.id === id) || null;
-}
-
-/**
- * Find an exception by its natural key tuple.
- */
-async function findException(storage, entityType, entityId, fieldId) {
-  const data = await readExceptions(storage);
-  return data.exceptions.find(
-    e => e.entityType === entityType && e.entityId === entityId && e.fieldId === fieldId
-  ) || null;
-}
-
-/**
- * Create or upsert an exception.
- * Returns { exception, created } where created is true for new, false for upsert.
- * @param {object} auditLog - Audit log instance from the module context. Required — no fallback.
- */
-async function createException(storage, { entityType, entityId, fieldId, reason }, actorEmail, auditLog) {
-  if (!auditLog) {
-    throw new Error('createException requires an injected auditLog (from the module context) — there is no fallback');
-  }
-  const mutex = getStorageMutex(STORAGE_KEY);
-  return mutex.runExclusive(async () => {
-    const data = await readExceptions(storage);
-    const existing = data.exceptions.find(
-      e => e.entityType === entityType && e.entityId === entityId && e.fieldId === fieldId
-    );
-
-    if (existing) {
-      // Upsert: update reason
-      existing.reason = reason;
-      existing.createdAt = new Date().toISOString();
-      existing.createdBy = actorEmail;
-      await writeExceptions(storage, data);
-
-      await auditLog.appendAuditEntry({
-        action: 'field-exception.update',
-        actor: actorEmail,
-        entityType: 'field-exception',
-        entityId: existing.id,
-        detail: `Updated exception reason for ${entityType} "${entityId}" on field "${fieldId}"`
-      });
-
-      return { exception: existing, created: false };
+  function toShape(doc) {
+    return {
+      id: doc.exceptionId,
+      entityType: doc.entityType,
+      entityId: doc.entityId,
+      fieldId: doc.fieldId,
+      reason: doc.reason,
+      createdAt: doc.createdAt,
+      createdBy: doc.createdBy
     }
+  }
 
-    const exception = {
-      id: generateId(),
-      entityType,
-      entityId,
-      fieldId,
-      reason,
-      createdAt: new Date().toISOString(),
-      createdBy: actorEmail
-    };
+  async function readExceptions() {
+    if (Model) {
+      const docs = await Model.find({}).sort({ _id: 1 }).lean()
+      return { version: 1, exceptions: docs.map(toShape) }
+    }
+    return (await storage.readFromStorage(STORAGE_KEY)) || { version: 1, exceptions: [] }
+  }
 
-    data.exceptions.push(exception);
-    await writeExceptions(storage, data);
+  async function writeExceptions(data) {
+    if (Model) throw new Error('writeExceptions is not supported on the MongoDB path; use targeted operations')
+    await storage.writeToStorage(STORAGE_KEY, data)
+  }
 
+  async function listExceptions(filters = {}) {
+    if (Model) {
+      const query = {}
+      for (const key of ['entityType', 'entityId', 'fieldId']) {
+        if (filters[key]) query[key] = filters[key]
+      }
+      return (await Model.find(query).sort({ _id: 1 }).lean()).map(toShape)
+    }
+    let results = (await readExceptions()).exceptions
+    for (const key of ['entityType', 'entityId', 'fieldId']) {
+      if (filters[key]) results = results.filter(exception => exception[key] === filters[key])
+    }
+    return results
+  }
+
+  async function getException(id) {
+    if (Model) {
+      const doc = await Model.findOne({ exceptionId: id }).lean()
+      return doc ? toShape(doc) : null
+    }
+    return (await readExceptions()).exceptions.find(exception => exception.id === id) || null
+  }
+
+  async function findException(entityType, entityId, fieldId) {
+    if (Model) {
+      const doc = await Model.findOne({ entityType, entityId, fieldId }).lean()
+      return doc ? toShape(doc) : null
+    }
+    return (await readExceptions()).exceptions.find(exception =>
+      exception.entityType === entityType && exception.entityId === entityId && exception.fieldId === fieldId
+    ) || null
+  }
+
+  async function createException({ entityType, entityId, fieldId, reason }, actorEmail) {
+    let exception
+    let created
+    if (Model) {
+      const now = new Date().toISOString()
+      const result = await Model.updateOne(
+        { entityType, entityId, fieldId },
+        {
+          $set: { reason, createdAt: now, createdBy: actorEmail },
+          $setOnInsert: { exceptionId: generateId(), entityType, entityId, fieldId }
+        },
+        { upsert: true }
+      )
+      created = result.upsertedCount === 1
+      exception = toShape(await Model.findOne({ entityType, entityId, fieldId }).lean())
+    } else {
+      return getStorageMutex(STORAGE_KEY).runExclusive(async () => {
+        const data = await readExceptions()
+        const existing = data.exceptions.find(item =>
+          item.entityType === entityType && item.entityId === entityId && item.fieldId === fieldId
+        )
+        created = !existing
+        exception = existing || { id: generateId(), entityType, entityId, fieldId }
+        Object.assign(exception, { reason, createdAt: new Date().toISOString(), createdBy: actorEmail })
+        if (created) data.exceptions.push(exception)
+        await writeExceptions(data)
+        await appendAudit(exception, created, actorEmail)
+        return { exception, created }
+      })
+    }
+    await appendAudit(exception, created, actorEmail)
+    return { exception, created }
+  }
+
+  async function appendAudit(exception, created, actorEmail) {
     await auditLog.appendAuditEntry({
-      action: 'field-exception.create',
+      action: created ? 'field-exception.create' : 'field-exception.update',
       actor: actorEmail,
       entityType: 'field-exception',
       entityId: exception.id,
-      detail: `Created exception for ${entityType} "${entityId}" on field "${fieldId}": ${reason}`
-    });
-
-    return { exception, created: true };
-  });
-}
-
-/**
- * Remove an exception by ID.
- * Returns the removed exception, or null if not found.
- * @param {object} auditLog - Audit log instance from the module context. Required — no fallback.
- */
-async function removeException(storage, id, actorEmail, auditLog) {
-  if (!auditLog) {
-    throw new Error('removeException requires an injected auditLog (from the module context) — there is no fallback');
+      detail: `${created ? 'Created exception for' : 'Updated exception reason for'} ${exception.entityType} "${exception.entityId}" on field "${exception.fieldId}"${created ? `: ${exception.reason}` : ''}`
+    })
   }
-  const mutex = getStorageMutex(STORAGE_KEY);
-  return mutex.runExclusive(async () => {
-    const data = await readExceptions(storage);
-    const idx = data.exceptions.findIndex(e => e.id === id);
-    if (idx === -1) return null;
 
-    const [removed] = data.exceptions.splice(idx, 1);
-    await writeExceptions(storage, data);
+  async function removeException(id, actorEmail) {
+    let removed
+    if (Model) {
+      const doc = await Model.findOneAndDelete({ exceptionId: id }).lean()
+      removed = doc ? toShape(doc) : null
+    } else {
+      return getStorageMutex(STORAGE_KEY).runExclusive(async () => {
+        const data = await readExceptions()
+        const index = data.exceptions.findIndex(exception => exception.id === id)
+        if (index === -1) return null
+        const [fileRemoved] = data.exceptions.splice(index, 1)
+        await writeExceptions(data)
+        await appendRemoveAudit(fileRemoved, actorEmail)
+        return fileRemoved
+      })
+    }
+    if (!removed) return null
+    await appendRemoveAudit(removed, actorEmail)
+    return removed
+  }
 
+  async function appendRemoveAudit(removed, actorEmail) {
     await auditLog.appendAuditEntry({
       action: 'field-exception.remove',
       actor: actorEmail,
       entityType: 'field-exception',
-      entityId: id,
+      entityId: removed.id,
       detail: `Removed exception for ${removed.entityType} "${removed.entityId}" on field "${removed.fieldId}"`
-    });
-
-    return removed;
-  });
-}
-
-/**
- * Build an exception map for O(1) lookups during completeness checks.
- * Key format: "entityType:entityId:fieldId"
- */
-async function getExceptionMap(storage) {
-  const data = await readExceptions(storage);
-  const map = new Map();
-  for (const ex of data.exceptions) {
-    map.set(`${ex.entityType}:${ex.entityId}:${ex.fieldId}`, ex);
+    })
   }
-  return map;
+
+  async function getExceptionMap() {
+    const map = new Map()
+    for (const exception of await listExceptions()) {
+      map.set(`${exception.entityType}:${exception.entityId}:${exception.fieldId}`, exception)
+    }
+    return map
+  }
+
+  return {
+    readExceptions,
+    writeExceptions,
+    listExceptions,
+    getException,
+    findException,
+    createException,
+    removeException,
+    getExceptionMap,
+    usesDatabase: !!Model
+  }
 }
 
-module.exports = {
-  readExceptions,
-  writeExceptions,
-  listExceptions,
-  getException,
-  findException,
-  createException,
-  removeException,
-  getExceptionMap,
-  STORAGE_KEY
-};
+module.exports = { createFieldExceptionsStore, STORAGE_KEY }

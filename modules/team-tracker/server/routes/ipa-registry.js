@@ -13,15 +13,13 @@ const { runConsolidatedSync, isSyncInProgress: isConsolidatedSyncInProgress } = 
 const { mergePerson } = require('../../../../shared/server/roster-sync/lifecycle');
 
 const SYNC_LOG_KEY = 'team-data/sync-log.json';
-const TEAMS_KEY = 'team-data/teams.json';
-const FIELD_DEFS_KEY = 'team-data/field-definitions.json';
 
 async function loadRegistry(registryStore) {
   return await registryStore.readRegistry() || { meta: null, people: {} };
 }
 
-async function loadSyncLog(storage) {
-  return await storage.readFromStorage(SYNC_LOG_KEY) || null;
+async function loadSyncLog(configStore) {
+  return await configStore.readFromStorage(SYNC_LOG_KEY) || null;
 }
 
 function registerIpaRegistryRoutes(router, context) {
@@ -33,6 +31,10 @@ function registerIpaRegistryRoutes(router, context) {
     throw new Error('registerIpaRegistryRoutes requires context.registryStore (from the module context) — there is no fallback');
   }
   var registryStore = context.registryStore;
+  if (!context.configStore) {
+    throw new Error('registerIpaRegistryRoutes requires context.configStore (from the module context) — there is no fallback');
+  }
+  var configStore = context.configStore;
   var auditLog = context.auditLog;
   var DEMO_MODE = process.env.DEMO_MODE === 'true';
 
@@ -44,7 +46,7 @@ function registerIpaRegistryRoutes(router, context) {
   }
 
   async function getEnabledLdapExtraAttrs() {
-    var config = await loadConfig(storage);
+    var config = await loadConfig(configStore);
     var enabled = config?.ldapFields?.enabled;
     if (!Array.isArray(enabled) || enabled.length === 0) return [];
     return enabled
@@ -77,7 +79,7 @@ function registerIpaRegistryRoutes(router, context) {
    *         description: Config and IPA status
    */
   router.get('/ipa/config', requireAdmin, requireScope('roster:write'), async function(req, res) {
-    res.json({ config: await loadConfig(storage), ipa: ipaClient.getIpaStatus() });
+    res.json({ config: await loadConfig(configStore), ipa: ipaClient.getIpaStatus() });
   });
 
   /**
@@ -91,14 +93,14 @@ function registerIpaRegistryRoutes(router, context) {
    *         description: Saved config
    */
   router.post('/ipa/config', requireAdmin, requireScope('roster:write'), async function(req, res) {
-    var config = await loadConfig(storage) || {};
+    var config = await loadConfig(configStore) || {};
     var body = req.body;
     if (body.orgRoots !== undefined) config.orgRoots = body.orgRoots;
     if (body.gracePeriodDays !== undefined) config.gracePeriodDays = body.gracePeriodDays;
     if (body.autoSync !== undefined) config.autoSync = body.autoSync;
     if (body.excludedTitles !== undefined) config.excludedTitles = body.excludedTitles;
     var rosterSyncConfig = require('../../../../shared/server/roster-sync/config');
-    await rosterSyncConfig.saveConfig(storage, config);
+    await rosterSyncConfig.saveConfig(configStore, config);
     res.json({ status: 'saved', config: config });
   });
 
@@ -136,7 +138,7 @@ function registerIpaRegistryRoutes(router, context) {
     if (DEMO_MODE) {
       return res.json({ status: 'skipped', message: 'Sync disabled in demo mode' });
     }
-    runConsolidatedSync(storage, undefined, registryStore).then(function(result) {
+    runConsolidatedSync(storage, undefined, registryStore, configStore, context.fieldStore, teamStore).then(function(result) {
       res.json(result);
     }).catch(function(err) {
       res.status(500).json({ status: 'error', message: err.message });
@@ -154,7 +156,7 @@ function registerIpaRegistryRoutes(router, context) {
    *         description: Sync status
    */
   router.get('/ipa/sync/status', requireScope('roster:read'), async function(req, res) {
-    var log = await loadSyncLog(storage);
+    var log = await loadSyncLog(configStore);
     res.json({ running: isConsolidatedSyncInProgress(), startedAt: null, lastResult: log });
   });
 
@@ -178,9 +180,9 @@ function registerIpaRegistryRoutes(router, context) {
     // Build team lookup — after consolidation, enrichment fields are directly
     // on registry people, so we can read them directly rather than going
     // through getAllPeople(). But we still use getAllPeople for backward compat.
-    var orgDisplayNames = await getOrgDisplayNames(storage);
-    var rosterPeople = await getAllPeople(storage, registryStore);
-    var rosterConfig = await loadConfig(storage);
+    var orgDisplayNames = await getOrgDisplayNames(configStore);
+    var rosterPeople = await getAllPeople(configStore, registryStore);
+    var rosterConfig = await loadConfig(configStore);
     var registryInAppMode = (rosterConfig?.teamDataSource || 'sheets') === 'in-app';
 
     var teamIdToName = {};
@@ -530,7 +532,7 @@ function registerIpaRegistryRoutes(router, context) {
         byGeo[geo] = (byGeo[geo] || 0) + 1;
       } else { inactive++; }
     }
-    var orgDisplayNames = await getOrgDisplayNames(storage);
+    var orgDisplayNames = await getOrgDisplayNames(configStore);
     orgDisplayNames['_auxiliary'] = 'Non-Engineering';
 
     res.json({ total: uids.length, active: active, inactive: inactive, auxiliaryCount: auxiliaryCount, byOrgType: byOrgType, coverage: computeCoverage(people), byOrg: byOrg, byGeo: byGeo, orgDisplayNames: orgDisplayNames });
@@ -539,7 +541,7 @@ function registerIpaRegistryRoutes(router, context) {
   // ─── Helpers for person-reference association ───
 
   async function getPersonRefFieldIds() {
-    var fieldDefs = await storage.readFromStorage(FIELD_DEFS_KEY);
+    var fieldDefs = await context.fieldStore.readFieldDefinitions();
     if (!fieldDefs || !fieldDefs.teamFields) return [];
     return fieldDefs.teamFields
       .filter(function(f) { return f.type === 'person-reference-linked' && !f.deleted; })
@@ -549,7 +551,7 @@ function registerIpaRegistryRoutes(router, context) {
   async function getAssociatedTeams(uid) {
     var refFields = await getPersonRefFieldIds();
     if (refFields.length === 0) return [];
-    var teamsData = await storage.readFromStorage(TEAMS_KEY);
+    var teamsData = await teamStore.readTeams();
     if (!teamsData || !teamsData.teams) return [];
     var results = [];
     var teamIds = Object.keys(teamsData.teams);
@@ -825,13 +827,13 @@ function registerIpaRegistryRoutes(router, context) {
     var intervalMs = (config.autoSync.intervalHours || 24) * 60 * 60 * 1000;
     autoSyncTimer = setInterval(function() {
       console.log('[team-tracker/ipa] Running scheduled auto-sync...');
-      runConsolidatedSync(storage, undefined, registryStore).catch(function(err) { console.error('[team-tracker/ipa] Auto-sync error:', err); });
+      runConsolidatedSync(storage, undefined, registryStore, configStore, context.fieldStore, teamStore).catch(function(err) { console.error('[team-tracker/ipa] Auto-sync error:', err); });
     }, intervalMs);
     if (autoSyncTimer.unref) autoSyncTimer.unref();
   }
 
   if (!DEMO_MODE) {
-    loadConfig(storage).then(function(config) {
+    loadConfig(configStore).then(function(config) {
       scheduleAutoSync(config || {});
     });
   }

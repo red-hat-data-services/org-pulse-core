@@ -1,6 +1,7 @@
 const { createFieldStore } = require('../../../../shared/server/field-store')
 const { createAuditLog } = require('../../../../shared/server/audit-log')
 const { createRegistryStore } = require('../../../../shared/server/registry-store')
+const { createConfigStore } = require('../../../../shared/server/config-store')
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import express from 'express'
 import http from 'http'
@@ -52,15 +53,22 @@ async function createTestApp() {
   const registerRoutes = require('../../server/index.js')
   const router = express.Router()
   const registryStore = createRegistryStore({ readFromStorage, writeToStorage })
-  const fieldStore = createFieldStore({ readFromStorage, writeToStorage }, { auditLog: createAuditLog({ readFromStorage, writeToStorage }), registryStore })
+  const configStore = createConfigStore({ readFromStorage, writeToStorage })
+  const storage = { readFromStorage, writeToStorage }
+  const auditLog = createAuditLog(storage)
+  const fieldStore = createFieldStore(storage, { auditLog, registryStore })
+  const { createTeamStore } = require('../../../../shared/server/team-store')
   const context = {
-    storage: { readFromStorage, writeToStorage },
+    storage,
     requireAdmin: (req, res, next) => next(),
     requireTeamAdmin: (req, res, next) => next(),
     requireScope: () => (req, res, next) => next(),
     registerDiagnostics: vi.fn(),
     fieldStore,
+    teamStore: createTeamStore(storage, { auditLog, registryStore }),
+    auditLog,
     registryStore,
+    configStore,
     registerScopes: vi.fn()
   }
   await registerRoutes(router, context)

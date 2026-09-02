@@ -62,6 +62,35 @@ describe('contribution-store (file path)', () => {
     expect(await store.readCache('gitlab')).toEqual({ users: {}, fetchedAt: null });
   });
 
+  it('does not erase stored history when a refresh result omits months', async () => {
+    const storage = createMockStorage({});
+    const store = createContributionStore(storage);
+    await store.writeResults('github', { bobsmith: results.bobsmith });
+    await store.writeResults('github', {
+      bobsmith: { totalContributions: 245, fetchedAt: '2026-03-10T13:00:00.000Z' }
+    });
+
+    expect((await store.readHistory('github')).users.bobsmith.months).toEqual(results.bobsmith.months);
+    expect((await store.readCache('github')).users.bobsmith.months).toEqual(results.bobsmith.months);
+  });
+
+  it('preserves stored history and instances when a fetch result is null', async () => {
+    const storage = createMockStorage({});
+    const store = createContributionStore(storage);
+    const previous = {
+      ...results.bobsmith,
+      instances: { 'https://gitlab.example.com': { totalContributions: 245, months: results.bobsmith.months } }
+    };
+    await store.writeResults('gitlab', { bobsmith: previous });
+    const fetchedAt = (await store.readCache('gitlab')).fetchedAt;
+    await store.writeResults('gitlab', { bobsmith: null });
+
+    const cache = await store.readCache('gitlab');
+    expect(cache.users.bobsmith).toEqual(previous);
+    expect(cache.fetchedAt).toBe(fetchedAt);
+    expect((await store.readHistory('gitlab')).users.bobsmith.months).toEqual(previous.months);
+  });
+
   it('usesDatabase is false with no model', () => {
     expect(createContributionStore(createMockStorage({})).usesDatabase).toBe(false);
   });
@@ -106,6 +135,7 @@ describe('contribution-store (MongoDB)', () => {
     expect(cache.users.bobsmith).toEqual({
       username: 'bobsmith',
       totalContributions: 245,
+      months: results.bobsmith.months,
       fetchedAt: '2026-03-10T12:00:00.000Z'
     });
     expect(cache.fetchedAt).toBeTruthy();
@@ -130,6 +160,56 @@ describe('contribution-store (MongoDB)', () => {
     const cache = await store.readCache('github');
     expect(cache.users.bobsmith.totalContributions).toBe(245);
     expect(cache.users.carolw.totalContributions).toBe(189);
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('round-trips months, instances, and source without losing history on an incomplete refresh', async () => {
+    const store = makeStore();
+    if (!store) return;
+    const gitlabResult = {
+      totalContributions: 12,
+      months: { '2026-02': 12 },
+      instances: {
+        'https://gitlab.example.com': { totalContributions: 12, months: { '2026-02': 12 } }
+      },
+      source: 'graphql',
+      fetchedAt: '2026-03-10T12:00:00.000Z'
+    };
+    await store.writeResults('gitlab', { bobsmith: gitlabResult });
+
+    expect((await store.readCache('gitlab')).users.bobsmith).toEqual({
+      username: 'bobsmith',
+      ...gitlabResult
+    });
+
+    await store.writeResults('gitlab', {
+      bobsmith: { totalContributions: 12, fetchedAt: '2026-03-10T13:00:00.000Z' }
+    });
+    const cache = await store.readCache('gitlab');
+    expect(cache.users.bobsmith.months).toEqual(gitlabResult.months);
+    expect(cache.users.bobsmith.instances).toEqual(gitlabResult.instances);
+    expect(cache.users.bobsmith.source).toBe('graphql');
+    expect((await store.readHistory('gitlab')).users.bobsmith.months).toEqual(gitlabResult.months);
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('preserves stored history and instances when a fetch result is null', async () => {
+    const store = makeStore();
+    if (!store) return;
+    const previous = {
+      ...results.bobsmith,
+      instances: { 'https://gitlab.example.com': { totalContributions: 245, months: results.bobsmith.months } }
+    };
+    await store.writeResults('gitlab', { bobsmith: previous });
+    await ContributionModel.updateOne(
+      { provider: 'gitlab', username: '__meta__' },
+      { $set: { batchFetchedAt: '2026-03-10T12:00:00.000Z' } }
+    );
+    await store.writeResults('gitlab', { bobsmith: null });
+
+    const cache = await store.readCache('gitlab');
+    expect(cache.fetchedAt).toBe('2026-03-10T12:00:00.000Z');
+    expect(cache.users.bobsmith.instances).toEqual(previous.instances);
+    expect(cache.users.bobsmith.months).toEqual(previous.months);
+    expect((await store.readHistory('gitlab')).users.bobsmith.months).toEqual(previous.months);
   });
 
   it.skipIf(!process.env.MONGODB_URI)('keeps github and gitlab documents independent', async () => {

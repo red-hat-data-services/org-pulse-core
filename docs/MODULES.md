@@ -390,7 +390,7 @@ Modules that persist data via `writeToStorage` **must** register an export hook 
 }
 ```
 
-The `files` array is documentation-only — it describes what the export hook produces. The actual export logic lives in the registered hook.
+The `files` array advertises files that other modules may read through `readFromStorage()`. List only data that remains file-backed at runtime. Store-backed data may still be added to the anonymized export tarball by the hook, but must be omitted here until cross-module reads have an HTTP API. The actual export logic lives in the registered hook.
 
 ### Registering an Export Hook
 

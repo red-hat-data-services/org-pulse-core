@@ -606,6 +606,7 @@ function registerAdminRoutes(app, context) {
         gitSync,
         secretRegistry,
         registryStore: context.registryStore,
+        configStore: context.configStore,
         redact
       });
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -641,7 +642,7 @@ function registerAdminRoutes(app, context) {
    *         $ref: '#/components/responses/ServerError'
    */
   app.get('/api/export/test-data', requireAuth, context.exportRateLimit, function(req, res) {
-    handleExport(req, res, storage, exportRegistry, context.registryStore);
+    handleExport(req, res, storage, exportRegistry, context.registryStore, context.configStore);
   });
 }
 

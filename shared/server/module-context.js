@@ -17,7 +17,9 @@
  * @property {object} roleStore        - Role store instance (getRole, setRole, etc.)
  * @property {object} fieldStore       - Field store instance (readFieldDefinitions, createFieldDefinition, etc.; also exposes `usesDatabase: boolean`)
  * @property {object} teamStore        - Team store instance (readTeams, createTeam, etc.; also exposes `usesDatabase: boolean`)
+ * @property {object} registryStore    - Person registry store instance
  * @property {object} auditLog         - Audit log instance (appendAuditEntry, queryAuditLog)
+ * @property {object} configStore      - Singleton config store (readFromStorage, writeToStorage keyed by filename; also exposes `usesDatabase: boolean`)
  * @property {object} [roleRegistry]   - Role registry for registerRole
  * @property {object} [scopeRegistry]  - Scope registry for registerScopes
  * @property {object} [secretRegistry] - Secret registry for module secrets
@@ -48,7 +50,9 @@
  * @property {object} roleStore        - Role store instance
  * @property {object} fieldStore       - Field store instance
  * @property {object} teamStore        - Team store instance
+ * @property {object} registryStore    - Person registry store instance
  * @property {object} auditLog         - Audit log instance
+ * @property {object} configStore      - Singleton config store instance
  * @property {Function} registerDiagnostics - Register a diagnostics function for admin health checks
  * @property {Function} registerMessageProvider - Register a message provider (id, fn)
  * @property {Function} registerRefresh - Register a refresh handler (id, config)
@@ -104,6 +108,7 @@ function buildModuleContext(coreServices, slug, registries = {}) {
     teamStore: coreServices.teamStore,
     registryStore: coreServices.registryStore,
     auditLog: coreServices.auditLog,
+    configStore: coreServices.configStore,
 
     registerRole: roleRegistry
       ? function (id, config) {
@@ -215,9 +220,11 @@ function createTestContext(overrides = {}) {
   const { createTeamStore } = require('./team-store')
   const { createAuditLog } = require('./audit-log')
   const { createRegistryStore } = require('./registry-store')
+  const { createConfigStore } = require('./config-store')
 
   const testAuditLog = createAuditLog(testStorage)
   const testRegistryStore = createRegistryStore(testStorage)
+  const testConfigStore = createConfigStore(testStorage)
 
   const defaults = {
     storage: testStorage,
@@ -236,6 +243,7 @@ function createTestContext(overrides = {}) {
     fieldStore: createFieldStore(testStorage, { auditLog: testAuditLog, registryStore: testRegistryStore }),
     teamStore: createTeamStore(testStorage, { auditLog: testAuditLog, registryStore: testRegistryStore }),
     auditLog: testAuditLog,
+    configStore: testConfigStore,
     registerDiagnostics: noop,
     registerMessageProvider: noop,
     registerRefresh: noop,

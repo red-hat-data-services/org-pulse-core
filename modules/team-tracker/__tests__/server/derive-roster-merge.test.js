@@ -116,12 +116,22 @@ async function createTestServer(storageData) {
   const router = express.Router()
   const storage = makeStorage(storageData)
   const { createRegistryStore } = require('../../../../shared/server/registry-store')
+  const { createConfigStore } = require('../../../../shared/server/config-store')
+  const { createAuditLog } = require('../../../../shared/server/audit-log')
+  const { createFieldStore } = require('../../../../shared/server/field-store')
+  const { createTeamStore } = require('../../../../shared/server/team-store')
+  const auditLog = createAuditLog(storage)
+  const registryStore = createRegistryStore(storage)
   await registerRoutes(router, {
     storage,
     requireAdmin: (_req, _res, next) => next(),
     requireTeamAdmin: (_req, _res, next) => next(),
     requireScope: () => (_req, _res, next) => next(),
-    registryStore: createRegistryStore(storage),
+    auditLog,
+    registryStore,
+    fieldStore: createFieldStore(storage, { auditLog, registryStore }),
+    teamStore: createTeamStore(storage, { auditLog, registryStore }),
+    configStore: createConfigStore(storage),
     registerScopes: vi.fn()
   })
   app.use(router)

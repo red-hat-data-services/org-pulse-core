@@ -1,8 +1,30 @@
 import { describe, it, expect, vi } from 'vitest'
 
-const fieldOptionsSync = require('../../server/field-options-sync')
+const fieldOptionsSyncModule = require('../../server/field-options-sync')
+const { createFieldOptionsStore } = require('../../server/field-options-store')
+const { createFieldStore } = require('../../../../shared/server/field-store')
+const { createTeamStore } = require('../../../../shared/server/team-store')
 const { createAuditLog } = require('../../../../shared/server/audit-log')
 const { createRegistryStore } = require('../../../../shared/server/registry-store')
+
+const stores = new WeakMap()
+function getStore(storage) {
+  if (!stores.has(storage)) {
+    const auditLog = createAuditLog(storage)
+    const registryStore = createRegistryStore(storage)
+    const fieldStore = createFieldStore(storage, { auditLog, registryStore })
+    const teamStore = createTeamStore(storage, { auditLog, registryStore })
+    stores.set(storage, createFieldOptionsStore(storage, { auditLog, registryStore, fieldStore, teamStore }))
+  }
+  return stores.get(storage)
+}
+const fieldOptionsSync = {
+  ...fieldOptionsSyncModule,
+  linkToJira: (storage, jiraRequest, ...args) => fieldOptionsSyncModule.linkToJira(getStore(storage), jiraRequest, ...args),
+  unlinkFromJira: (storage, ...args) => fieldOptionsSyncModule.unlinkFromJira(getStore(storage), ...args),
+  syncOptionSet: (storage, jiraRequest, ...args) => fieldOptionsSyncModule.syncOptionSet(getStore(storage), jiraRequest, ...args),
+  syncAllLinked: (storage, jiraRequest, ...args) => fieldOptionsSyncModule.syncAllLinked(getStore(storage), jiraRequest, ...args)
+}
 
 function makeStorage(initial = {}) {
   const data = { ...initial }

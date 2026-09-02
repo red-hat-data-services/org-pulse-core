@@ -6,7 +6,7 @@
  */
 
 function registerRoleRoutes(app, context) {
-  const { requireAdmin, requireScope, blockDuringImpersonation, roleStore, roleRegistry, storage } = context;
+  const { requireAdmin, requireScope, blockDuringImpersonation, roleStore, roleRegistry, registryStore } = context;
 
   /**
    * @openapi
@@ -207,7 +207,7 @@ function registerRoleRoutes(app, context) {
 
       let registry;
       try {
-        registry = await storage.readFromStorage('team-data/registry.json');
+        registry = await registryStore.readRegistry();
       } catch {
         registry = null;
       }

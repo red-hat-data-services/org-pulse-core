@@ -443,6 +443,7 @@ describe('api-tokens (MongoDB path)', () => {
     if (!uri) return
     connection = await mongoose.createConnection(uri, { dbName })
     ApiTokenModel = connection.model('core__api_tokens', apiTokenSchema, 'core__api_tokens')
+    await ApiTokenModel.init()
   })
 
   afterAll(async () => {

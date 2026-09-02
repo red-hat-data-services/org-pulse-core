@@ -58,6 +58,52 @@ describe('must-gather collect', () => {
     expect(bundle.recentErrors).toBeDefined()
   })
 
+  it('reads allowlist diagnostics from configStore', async () => {
+    const bundle = await collect({
+      storageModule: makeStorage({ 'allowlist.json': { emails: ['stale@test.com'] } }),
+      configStore: makeStorage({
+        'allowlist.json': { emails: ['one@test.com', 'two@test.com'] }
+      }),
+      builtInModules: [],
+      enabledSlugs: new Set(),
+      collectModuleDiagnostics: async () => ({}),
+      diagnosticsRegistry: {},
+      gitSync: null,
+      redact: 'minimal'
+    })
+
+    expect(bundle.allowlist.emailCount).toBe(2)
+  })
+
+  it('reads git-static module diagnostics from configStore', async () => {
+    const gitSync = {
+      async getSyncStatus(store) {
+        const config = await store.readFromStorage('modules-config.json')
+        return { modules: config.modules.map(module => ({ slug: module.slug })) }
+      }
+    }
+    const bundle = await collect({
+      storageModule: makeStorage({
+        'modules-config.json': { modules: [{ slug: 'stale-file-module' }] }
+      }),
+      configStore: makeStorage({
+        'modules-config.json': { modules: [{ slug: 'mongo-module' }] }
+      }),
+      builtInModules: [],
+      enabledSlugs: new Set(),
+      collectModuleDiagnostics: async () => ({}),
+      diagnosticsRegistry: {},
+      gitSync,
+      redact: 'minimal'
+    })
+
+    expect(bundle.gitStaticModules).toEqual({
+      count: 1,
+      slugs: ['mongo-module'],
+      syncStatus: { modules: [{ slug: 'mongo-module' }] }
+    })
+  })
+
   it('system.env reports token presence not values', async () => {
     const origToken = process.env.JIRA_TOKEN
     process.env.JIRA_TOKEN = 'secret-value'
