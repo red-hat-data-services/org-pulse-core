@@ -217,6 +217,7 @@
       :roles="authRoles"
       :team-data-source="rosterData?.teamDataSource || ''"
       :search-index-items="searchIndexItems"
+      :theme-mode="themeMode"
       @navigate="handlePaletteNavigate"
       @action="handlePaletteAction"
       @close="showCommandPalette = false"
@@ -285,7 +286,7 @@ export default {
     const { loadGithubStats, reloadGithubStats } = useGithubStats()
     const { loadGitlabStats, reloadGitlabStats } = useGitlabStats()
     const { modulesData, loadModules, reloadModules, enabledBuiltInSlugs, loadEnabledBuiltInSlugs } = useModules()
-    const { mode: themeMode, cycle: cycleTheme } = useTheme()
+    const { mode: themeMode, cycle: cycleTheme, setMode: setThemeMode } = useTheme()
     const { messages: appMessages, fetchMessages, dismiss: dismissMessage } = useMessages()
     const floatingWidgets = shallowRef({})
     const titlePrefix = ref('')
@@ -514,6 +515,7 @@ export default {
       routeParams,
       themeMode,
       cycleTheme,
+      setThemeMode,
       platformAboutTabs,
       floatingWidgets,
       appMessages,
@@ -617,7 +619,9 @@ export default {
 
     handlePaletteAction(actionId) {
       this.showCommandPalette = false
-      if (actionId === 'toggle-theme') this.cycleTheme()
+      if (actionId === 'set-theme-light') this.setThemeMode('light')
+      else if (actionId === 'set-theme-dark') this.setThemeMode('dark')
+      else if (actionId === 'set-theme-system') this.setThemeMode('system')
       else if (actionId === 'toggle-sidebar') this.sidebarCollapsed = !this.sidebarCollapsed
       else if (actionId === 'go-settings') window.location.hash = '#/settings'
       else if (actionId === 'go-about') window.location.hash = '#/about'
