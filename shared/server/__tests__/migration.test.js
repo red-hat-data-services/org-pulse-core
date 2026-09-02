@@ -116,6 +116,40 @@ describe('legacy file migration', () => {
     expect(await connection.collection('core__config').countDocuments({ key: 'site-config.json' })).toBe(1);
   });
 
+  it('runs newly supplied versioned module migrations under the existing marker', async () => {
+    await connection.collection('_migrations').insertOne({
+      _id: MIGRATION_ID,
+      status: 'complete',
+      version: MIGRATION_VERSION
+    });
+    const migrate = vi.fn(async context => {
+      expect(context).toMatchObject({ connection, storage, dataDir });
+    });
+    const moduleMigrations = [{ id: 'consumer-data', version: 1, migrate }];
+
+    await expect(run({ moduleMigrations })).resolves.toEqual({ migrated: true, version: MIGRATION_VERSION });
+    await expect(run({ moduleMigrations })).resolves.toEqual({ migrated: false, version: MIGRATION_VERSION });
+    expect(migrate).toHaveBeenCalledTimes(1);
+    expect(await connection.collection('_migrations').findOne({ _id: MIGRATION_ID }))
+      .toMatchObject({ moduleVersions: { 'consumer-data': 1 } });
+  });
+
+  it('does not repeat a completed callback when a later callback is retried', async () => {
+    const first = vi.fn(async () => {});
+    const second = vi.fn()
+      .mockRejectedValueOnce(new Error('consumer import failed'))
+      .mockResolvedValueOnce();
+    const moduleMigrations = [
+      { id: 'first', version: 1, migrate: first },
+      { id: 'second', version: 1, migrate: second }
+    ];
+
+    await expect(run({ moduleMigrations })).rejects.toThrow('consumer import failed');
+    await expect(run({ moduleMigrations })).resolves.toEqual({ migrated: true, version: MIGRATION_VERSION });
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps an existing MongoDB token authoritative and imports duplicate legacy hashes last-wins', async () => {
     await write('api-tokens.json', {
       tokens: [

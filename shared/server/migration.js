@@ -4,7 +4,8 @@ const path = require('path');
 const mongoose = require('mongoose');
 
 const MIGRATION_ID = 'legacy-files-to-mongodb';
-const MIGRATION_VERSION = 1;
+const CORE_IMPORT_VERSION = 1;
+const MIGRATION_VERSION = 2;
 const DEFAULT_LEASE_MS = 60_000;
 const DEFAULT_POLL_MS = 50;
 
@@ -482,12 +483,24 @@ async function runWithLease(collection, id, work, options = {}) {
 async function runMigration(options) {
   const { connection } = options;
   const version = options.version || MIGRATION_VERSION;
+  const moduleMigrations = options.moduleMigrations || [];
+  const ids = new Set();
+  for (const migration of moduleMigrations) {
+    if (!migration || !/^[a-z0-9_-]+$/i.test(migration.id) || !Number.isInteger(migration.version) || migration.version < 1 || typeof migration.migrate !== 'function') {
+      throw new TypeError('Module migrations require a safe id, positive integer version, and migrate callback');
+    }
+    if (ids.has(migration.id)) throw new TypeError(`Duplicate module migration id: ${migration.id}`);
+    ids.add(migration.id);
+  }
   const collection = connection.collection('_migrations');
   const current = await collection.findOne({ _id: MIGRATION_ID });
-  if (current?.status === 'complete' && current.version >= version) return { migrated: false, version: current.version };
+  const isCurrent = document => document?.status === 'complete' &&
+    document.version >= version &&
+    moduleMigrations.every(migration => (document.moduleVersions?.[migration.id] || 0) >= migration.version);
+  if (isCurrent(current)) return { migrated: false, version: current.version };
 
   return runWithLease(collection, MIGRATION_ID, async (owner, previous) => {
-    if (previous?.status === 'complete' && previous.version >= version) {
+    if (isCurrent(previous)) {
       await collection.updateOne(
         { _id: MIGRATION_ID, owner },
         { $set: { status: 'complete' }, $unset: { owner: '', leaseUntil: '' } }
@@ -495,11 +508,22 @@ async function runMigration(options) {
       return { migrated: false, version: previous.version };
     }
 
-    await importLegacyFiles(options);
+    if ((previous?.version || 0) < CORE_IMPORT_VERSION) await importLegacyFiles(options);
+    const moduleVersions = { ...(previous?.moduleVersions || {}) };
+    for (const migration of moduleMigrations) {
+      if ((moduleVersions[migration.id] || 0) >= migration.version) continue;
+      await migration.migrate({ connection, storage: options.storage, dataDir: options.dataDir });
+      moduleVersions[migration.id] = migration.version;
+      const recorded = await collection.updateOne(
+        { _id: MIGRATION_ID, owner, status: 'running' },
+        { $set: { moduleVersions } }
+      );
+      if (recorded.modifiedCount !== 1) throw new Error('Lost the legacy migration claim while recording a module migration');
+    }
     const completed = await collection.updateOne(
       { _id: MIGRATION_ID, owner, status: 'running' },
       {
-        $set: { status: 'complete', version, completedAt: new Date() },
+        $set: { status: 'complete', version, moduleVersions, completedAt: new Date() },
         $unset: { owner: '', leaseUntil: '', error: '' }
       }
     );
@@ -524,6 +548,7 @@ async function withMigrationLock(connection, id, work, options = {}) {
 
 module.exports = {
   MIGRATION_ID,
+  CORE_IMPORT_VERSION,
   MIGRATION_VERSION,
   CORE_CONFIG_KEYS,
   TEAM_TRACKER_CONFIG_KEYS,
