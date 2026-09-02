@@ -250,6 +250,35 @@ describe('registry-store (MongoDB)', () => {
     }
   );
 
+  it.skipIf(!process.env.MONGODB_URI)(
+    'concurrent field and team updates preserve the complete person document',
+    async () => {
+      const result = makeMongoStore();
+      if (!result) return;
+      const { store } = result;
+      await store.upsertPerson('achen', {
+        uid: 'achen',
+        name: 'Alice Chen',
+        title: 'Engineer',
+        teamIds: ['team_a'],
+        _appFields: { field_existing: 'keep' }
+      });
+
+      await Promise.all([
+        store.updatePersonFields('achen', { field_new: 'added' }),
+        store.addTeamToPerson('achen', 'team_b')
+      ]);
+
+      expect(await store.getPerson('achen')).toEqual({
+        uid: 'achen',
+        name: 'Alice Chen',
+        title: 'Engineer',
+        teamIds: ['team_a', 'team_b'],
+        _appFields: { field_existing: 'keep', field_new: 'added' }
+      });
+    }
+  );
+
   it.skipIf(!process.env.MONGODB_URI)('rejects unsafe uids', async () => {
     const result = makeMongoStore();
     if (!result) return;

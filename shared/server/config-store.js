@@ -1,5 +1,6 @@
 /**
- * Singleton config storage (site-config, modules-state, messages).
+ * Singleton config storage (site config, module state, messages,
+ * team-tracker config/status, and org-roster singleton blobs).
  * Supports both MongoDB (via Mongoose model) and file-based storage.
  *
  * Exposes the same `readFromStorage(key)` / `writeToStorage(key, value)`
@@ -8,6 +9,8 @@
  * `module-loader.js`'s `loadModuleState`/`saveModuleState`, which accept any
  * object with that shape.
  */
+
+const { getStorageMutex } = require('./storage-mutex');
 
 /**
  * Create a config store with optional MongoDB backing.
@@ -39,9 +42,46 @@ function createConfigStore(storage, options = {}) {
     await storage.writeToStorage(key, value);
   }
 
+  async function updateFromStorage(key, updater) {
+    if (typeof updater !== 'function') throw new TypeError('updater must be a function');
+
+    if (!Model) {
+      return getStorageMutex(key).runExclusive(async () => {
+        const current = await storage.readFromStorage(key);
+        const next = updater(current);
+        await storage.writeToStorage(key, next);
+        return next;
+      });
+    }
+
+    for (;;) {
+      const current = await Model.findOne({ key }).lean();
+      const next = updater(current ? current.value : null);
+      if (!current) {
+        try {
+          await Model.create({ key, value: next, revision: 0 });
+          return next;
+        } catch (error) {
+          if (error?.code === 11000) continue;
+          throw error;
+        }
+      }
+
+      const revisionFilter = current.revision == null
+        ? { _id: current._id, $or: [{ revision: 0 }, { revision: { $exists: false } }] }
+        : { _id: current._id, revision: current.revision };
+      const result = await Model.updateOne(
+        revisionFilter,
+        { $set: { value: next }, $inc: { revision: 1 } }
+      );
+      if (result.modifiedCount === 1) return next;
+    }
+  }
+
   return {
     readFromStorage,
     writeToStorage,
+    updateFromStorage,
     usesDatabase: !!Model
   };
 }

@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest'
+import mongoose from 'mongoose'
 
 /**
  * Tests the buildEnrichedTeams board priority cascade logic by registering
@@ -9,6 +10,8 @@ const { createFieldStore } = require('../../../../shared/server/field-store')
 const { createAuditLog } = require('../../../../shared/server/audit-log')
 const { createTeamStore } = require('../../../../shared/server/team-store')
 const { createRegistryStore } = require('../../../../shared/server/registry-store')
+const { createConfigStore } = require('../../../../shared/server/config-store')
+const { configSchema } = require('../../../../shared/server/models/config')
 const rosterSyncConfig = require('../../../../shared/server/roster-sync/config')
 
 function makeStorage(initial = {}) {
@@ -73,6 +76,7 @@ function setupRoutes(storage, opts = {}) {
   const registeredSearchHandler = { fn: null }
   const auditLog = createAuditLog(storage)
   const registryStore = createRegistryStore(storage)
+  const configStore = opts.configStore || createConfigStore(storage)
   const fieldStore = createFieldStore(storage, { auditLog, registryStore })
   const teamStore = createTeamStore(storage, { auditLog, registryStore })
   const context = {
@@ -85,6 +89,7 @@ function setupRoutes(storage, opts = {}) {
     fieldStore,
     teamStore,
     registryStore,
+    configStore,
     auditLog,
     secrets: {}
   }
@@ -332,6 +337,49 @@ describe('buildEnrichedTeams board cascade', () => {
     expect(team.boards[0].boardId).toBe(42)
   })
 
+  it('adds the effective Jira index ID to structure boards', async () => {
+    const storageData = {
+      ...buildRegistryAndConfig('org1', 'Org One', ['Platform']),
+      'org-roster/teams-metadata.json': { teams: [], boardNames: {} },
+      'org-roster/components.json': { components: {} },
+      'teams.json': {
+        teams: [
+          { boardId: 42, sprintFilter: 'Backend', teamId: 'platform-backend' },
+          { boardId: 42, sprintFilter: 'Frontend', teamId: 'platform-frontend' }
+        ]
+      },
+      'team-data/teams.json': {
+        teams: {
+          team_abc: {
+            id: 'team_abc',
+            name: 'Platform',
+            orgKey: 'org1',
+            metadata: {},
+            boards: [{
+              url: 'https://jira.example.com/boards/42',
+              name: 'Backend Board',
+              boardId: 42,
+              sprintFilter: 'Backend'
+            }]
+          }
+        }
+      },
+      'audit-log.json': { entries: [] }
+    }
+
+    const handlers = setupRoutes(makeStorage(storageData))
+    const res = mockRes()
+    await handlers['GET /org-teams']({ query: {} }, res)
+
+    expect(res._body.teams.find(t => t.name === 'Platform').boards[0]).toMatchObject({
+      url: 'https://jira.example.com/boards/42',
+      name: 'Backend Board',
+      boardId: 42,
+      sprintFilter: 'Backend',
+      teamId: 'platform-backend'
+    })
+  })
+
   it('handles missing boards array on structure team gracefully', async () => {
     const storageData = {
       ...buildRegistryAndConfig('org1', 'Org One', ['Platform']),
@@ -434,5 +482,74 @@ describe('search index handler', () => {
     expect(mlTeam).toBeDefined()
     expect(mlTeam.keywords).toContain('Lead Smith')
     expect(mlTeam.keywords).toContain('PM Jones')
+  })
+})
+
+describe('org-roster configStore routes', () => {
+  let connection
+  let ConfigModel
+
+  beforeAll(async () => {
+    connection = await mongoose.createConnection(process.env.MONGODB_URI, { dbName: `test_org_teams_${process.pid}` }).asPromise()
+    ConfigModel = connection.model('core__config', configSchema, 'core__config')
+  })
+
+  afterAll(async () => {
+    await connection.db.dropDatabase()
+    await connection.close()
+  })
+
+  beforeEach(async () => {
+    await ConfigModel.deleteMany({})
+  })
+
+  it('preserves the file-backed org-config write/read round trip', async () => {
+    const storage = makeStorage(buildRegistryAndConfig('org1', 'Org One', []))
+    const handlers = setupRoutes(storage)
+
+    await handlers['POST /org-config']({ body: { jiraProject: 'RHAIRFE2' } }, mockRes())
+    const res = mockRes()
+    await handlers['GET /org-config']({}, res)
+
+    expect(storage._data['org-roster/config.json']).toEqual(expect.objectContaining({ jiraProject: 'RHAIRFE2' }))
+    expect(res._body.jiraProject).toBe('RHAIRFE2')
+  })
+
+  it('writes org config to MongoDB and reads it back through the route', async () => {
+    const storage = makeStorage(buildRegistryAndConfig('org1', 'Org One', []))
+    const configStore = createConfigStore(storage, { model: ConfigModel })
+    const handlers = setupRoutes(storage, { configStore })
+
+    await handlers['POST /org-config']({ body: { jiraProject: 'RHAIRFE2' } }, mockRes())
+    const res = mockRes()
+    await handlers['GET /org-config']({}, res)
+
+    expect(storage._data['org-roster/config.json']).toBeUndefined()
+    expect(res._body.jiraProject).toBe('RHAIRFE2')
+  })
+
+  it('reads team metadata, components, and RFE data from MongoDB on GET /org-teams', async () => {
+    const storage = makeStorage({
+      ...buildRegistryAndConfig('org1', 'Org One', ['Platform']),
+      'team-data/teams.json': { teams: {} },
+      'audit-log.json': { entries: [] }
+    })
+    const configStore = createConfigStore(storage, { model: ConfigModel })
+    await configStore.writeToStorage('team-data/config.json', storage._data['team-data/config.json'])
+    await configStore.writeToStorage('org-roster/teams-metadata.json', {
+      fetchedAt: '2026-01-01',
+      teams: [{ org: 'Org One', name: 'Platform', boardUrls: [] }],
+      boardNames: {}
+    })
+    await configStore.writeToStorage('org-roster/components.json', { components: { 'Platform Core': ['Platform'] } })
+    await configStore.writeToStorage('org-roster/rfe-backlog.json', { byTeam: { 'Org One::Platform': { count: 2, issues: [] } } })
+    const handlers = setupRoutes(storage, { configStore })
+    const res = mockRes()
+
+    await handlers['GET /org-teams']({ query: {} }, res)
+
+    expect(res._status).toBe(200)
+    expect(res._body.fetchedAt).toBe('2026-01-01')
+    expect(res._body.teams[0]).toEqual(expect.objectContaining({ components: ['Platform Core'], rfeCount: 2 }))
   })
 })

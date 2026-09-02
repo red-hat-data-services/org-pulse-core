@@ -34,11 +34,15 @@ function createContributionStore(storage, options = {}) {
       ]);
       const users = {};
       for (const doc of docs) {
-        users[doc.username] = {
+        const user = {
           username: doc.username,
           totalContributions: doc.totalContributions || 0,
+          months: doc.months || {},
           fetchedAt: doc.contributionsFetchedAt || null
         };
+        if (doc.instances !== undefined) user.instances = doc.instances;
+        if (doc.source !== undefined) user.source = doc.source;
+        users[doc.username] = user;
       }
       return { users, fetchedAt: meta ? meta.batchFetchedAt : null };
     }
@@ -80,23 +84,28 @@ function createContributionStore(storage, options = {}) {
    * @param {object} results - Map of username -> { totalContributions, months, fetchedAt } | null
    */
   async function writeResults(provider, results) {
+    if (!Object.values(results).some(Boolean)) return;
+
     const now = new Date().toISOString();
 
     if (Model) {
       for (const [username, data] of Object.entries(results)) {
         if (!data) continue;
+        const $set = {
+          provider,
+          username,
+          totalContributions: data.totalContributions || 0,
+          contributionsFetchedAt: data.fetchedAt || now
+        };
+        if (Object.prototype.hasOwnProperty.call(data, 'months')) {
+          $set.months = data.months;
+          $set.historyFetchedAt = data.fetchedAt || now;
+        }
+        if (Object.prototype.hasOwnProperty.call(data, 'instances')) $set.instances = data.instances;
+        if (Object.prototype.hasOwnProperty.call(data, 'source')) $set.source = data.source;
         await Model.updateOne(
           { provider, username },
-          {
-            $set: {
-              provider,
-              username,
-              totalContributions: data.totalContributions || 0,
-              contributionsFetchedAt: data.fetchedAt || now,
-              months: data.months || {},
-              historyFetchedAt: data.fetchedAt || now
-            }
-          },
+          { $set },
           { upsert: true }
         );
       }
@@ -113,8 +122,10 @@ function createContributionStore(storage, options = {}) {
 
     for (const [username, data] of Object.entries(results)) {
       if (data) {
-        contribCache.users[username] = data;
-        historyCache.users[username] = { months: data.months || {}, fetchedAt: data.fetchedAt };
+        contribCache.users[username] = { ...(contribCache.users[username] || {}), ...data };
+        if (Object.prototype.hasOwnProperty.call(data, 'months')) {
+          historyCache.users[username] = { months: data.months, fetchedAt: data.fetchedAt };
+        }
       }
     }
 

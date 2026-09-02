@@ -319,18 +319,7 @@ function createTeamStore(storage, options = {}) {
       // order (delete team, then clean registry) because it updates both
       // under one multi-lock and that ordering doesn't have this hazard.
       if (registryStore.usesDatabase) {
-        // Targeted per-person writes: only people who actually referenced
-        // this team are touched, so a concurrent unrelated person update
-        // can't be clobbered by a stale whole-registry read here.
-        const registry = await registryStore.readRegistry();
-        if (registry && registry.people) {
-          for (const [uid, person] of Object.entries(registry.people)) {
-            if (Array.isArray(person.teamIds) && person.teamIds.includes(teamId)) {
-              person.teamIds.splice(person.teamIds.indexOf(teamId), 1);
-              await registryStore.upsertPerson(uid, person);
-            }
-          }
-        }
+        await registryStore.removeTeamFromAllPeople(teamId);
       } else {
         const registryMutex = getStorageMutex(REGISTRY_KEY);
         await registryMutex.runExclusive(async () => {
@@ -432,15 +421,13 @@ function createTeamStore(storage, options = {}) {
     if (!data.teams[teamId]) return { error: 'Team not found' };
 
     if (registryStore.usesDatabase) {
-      const person = await registryStore.getPerson(uid);
+      const result = await registryStore.addTeamToPerson(uid, teamId);
+      const person = result.person;
       if (!person) return { error: 'Person not found' };
-      if (!Array.isArray(person.teamIds)) person.teamIds = [];
-      if (person.teamIds.includes(teamId)) {
+      if (!result.changed) {
         return { skipped: true, reason: 'Already assigned' };
       }
-      const oldTeamIds = [...person.teamIds];
-      person.teamIds.push(teamId);
-      await registryStore.upsertPerson(uid, person);
+      const oldTeamIds = Array.isArray(person.teamIds) ? person.teamIds : [];
 
       await appendAuditEntry({
         action: 'person.team.assign',
@@ -450,7 +437,7 @@ function createTeamStore(storage, options = {}) {
         entityLabel: person.name,
         field: 'teamIds',
         oldValue: oldTeamIds,
-        newValue: [...person.teamIds],
+        newValue: [...oldTeamIds, teamId],
         detail: `Assigned to team "${data.teams[teamId].name}"`
       });
 
@@ -509,18 +496,14 @@ function createTeamStore(storage, options = {}) {
 
       for (const uid of uids) {
         if (!isSafeKey(uid)) { skipped.push(uid); continue; }
-        const person = await registryStore.getPerson(uid);
-        if (!person) { skipped.push(uid); continue; }
-
-        if (!Array.isArray(person.teamIds)) person.teamIds = [];
-        if (person.teamIds.includes(teamId)) {
+        const result = await registryStore.addTeamToPerson(uid, teamId);
+        const person = result.person;
+        if (!person || !result.changed) {
           skipped.push(uid);
           continue;
         }
 
-        const oldTeamIds = [...person.teamIds];
-        person.teamIds.push(teamId);
-        await registryStore.upsertPerson(uid, person);
+        const oldTeamIds = Array.isArray(person.teamIds) ? person.teamIds : [];
         assigned.push(uid);
 
         await appendAuditEntry({
@@ -531,7 +514,7 @@ function createTeamStore(storage, options = {}) {
           entityLabel: person.name,
           field: 'teamIds',
           oldValue: oldTeamIds,
-          newValue: [...person.teamIds],
+          newValue: [...oldTeamIds, teamId],
           detail: `Assigned to team "${data.teams[teamId].name}" (bulk)`
         });
       }
@@ -592,16 +575,12 @@ function createTeamStore(storage, options = {}) {
     if (!data.teams[teamId]) return { error: 'Team not found' };
 
     if (registryStore.usesDatabase) {
-      const person = await registryStore.getPerson(uid);
+      const result = await registryStore.removeTeamFromPerson(uid, teamId);
+      const person = result.person;
       if (!person) return { error: 'Person not found' };
-      if (!Array.isArray(person.teamIds)) return { skipped: true, reason: 'Not assigned' };
-
-      const idx = person.teamIds.indexOf(teamId);
-      if (idx === -1) return { skipped: true, reason: 'Not assigned' };
-
-      const oldTeamIds = [...person.teamIds];
-      person.teamIds.splice(idx, 1);
-      await registryStore.upsertPerson(uid, person);
+      if (!result.changed) return { skipped: true, reason: 'Not assigned' };
+      const oldTeamIds = person.teamIds;
+      const newTeamIds = oldTeamIds.filter(id => id !== teamId);
 
       await appendAuditEntry({
         action: 'person.team.unassign',
@@ -611,7 +590,7 @@ function createTeamStore(storage, options = {}) {
         entityLabel: person.name,
         field: 'teamIds',
         oldValue: oldTeamIds,
-        newValue: [...person.teamIds],
+        newValue: newTeamIds,
         detail: `Unassigned from team "${data.teams[teamId].name}"`
       });
 
@@ -843,6 +822,35 @@ function createTeamStore(storage, options = {}) {
     });
   }
 
+  /** Remove selected team metadata fields with one targeted write. */
+  async function deleteTeamFields(teamId, fieldIds) {
+    if (!isSafeKey(teamId)) return null;
+    if (Model) {
+      const $unset = {};
+      for (const fieldId of fieldIds) {
+        if (!isSafeKey(fieldId) || fieldId.includes('.') || fieldId.startsWith('$')) {
+          throw new Error(`Invalid field key: ${fieldId}`);
+        }
+        $unset[`metadata.${fieldId}`] = '';
+      }
+      if (Object.keys($unset).length === 0) {
+        const doc = await Model.findOne({ teamId }).lean();
+        return doc ? toTeamShape(doc) : null;
+      }
+      const doc = await Model.findOneAndUpdate({ teamId }, { $unset }, { returnDocument: 'after', lean: true });
+      return doc ? toTeamShape(doc) : null;
+    }
+    const mutex = getStorageMutex(TEAMS_KEY);
+    return mutex.runExclusive(async () => {
+      const data = await readTeamsFile();
+      const team = data.teams[teamId];
+      if (!team) return null;
+      for (const fieldId of fieldIds) delete team.metadata?.[fieldId];
+      await writeTeamsFile(data);
+      return team;
+    });
+  }
+
   async function updateTeamBoards(teamId, boards, actorEmail) {
     if (!isSafeKey(teamId)) return null;
 
@@ -939,6 +947,7 @@ function createTeamStore(storage, options = {}) {
     unassignMember,
     getUnassigned,
     updateTeamFields,
+    deleteTeamFields,
     updateTeamBoards,
     usesDatabase: !!Model
   };

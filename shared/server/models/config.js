@@ -8,7 +8,8 @@ const configSchema = new mongoose.Schema({
   // audit-entry `id` field, which stays non-unique because the file path
   // never guaranteed uniqueness there.
   key: { type: String, required: true, unique: true, index: true },
-  value: { type: mongoose.Schema.Types.Mixed, default: null }
+  value: { type: mongoose.Schema.Types.Mixed, default: null },
+  revision: { type: Number, default: 0 }
 }, {
   // No timestamps: config values carry no createdAt/updatedAt in the
   // file-based format, so Mongoose's would have nothing to match.

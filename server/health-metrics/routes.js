@@ -3,12 +3,12 @@ const { createEventStore } = require('./event-store');
 const { aggregateEvents, mergeDailyBreakdown } = require('./aggregator');
 
 function createHealthMetricsRouter(context, { eventsDir } = {}) {
-  const { storage, requireAdmin, requireScope, roleStore, registryStore } = context;
-  const { readFromStorage, writeToStorage, getFileMtime, listStorageFiles } = storage;
+  const { storage, requireAdmin, requireScope, roleStore, registryStore, fieldStore, healthMetricsStore } = context;
+  const { getFileMtime } = storage;
 
   const router = express.Router();
   const DEMO_MODE = process.env.DEMO_MODE === 'true';
-  const eventStore = DEMO_MODE ? null : createEventStore(eventsDir);
+  const eventStore = DEMO_MODE ? null : createEventStore(eventsDir, { model: context.healthMetricsEventModel });
 
   // Pure date formatting — extracted so it works when eventStore is null (demo mode)
   function getMonthKey(date) {
@@ -23,14 +23,10 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
   let registryMtime = 0;
 
   async function loadConfig() {
-    return (await readFromStorage('health-metrics/config.json')) || {
+    return (await healthMetricsStore.readConfig()) || {
       userTypeFieldId: null,
       retentionDays: 90,
     };
-  }
-
-  async function saveConfig(config) {
-    await writeToStorage('health-metrics/config.json', config);
   }
 
   async function rebuildUserTypeCache() {
@@ -40,7 +36,7 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
     if (!configuredFieldId) return;
 
     // Cross-module read: team-tracker exports team-data/registry.json (see module.json > export.files)
-    const registry = registryStore ? await registryStore.readRegistry() : await readFromStorage('team-data/registry.json');
+    const registry = await registryStore.readRegistry();
     if (!registry?.people) return;
 
     for (const [uid, person] of Object.entries(registry.people)) {
@@ -100,14 +96,6 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
 
   // ─── Opt-out ───
 
-  async function loadOptedOut() {
-    return (await readFromStorage('health-metrics/opted-out.json')) || { emails: [] };
-  }
-
-  async function saveOptedOut(data) {
-    await writeToStorage('health-metrics/opted-out.json', data);
-  }
-
   // ─── Aggregate cache (current month, 5-min TTL) ───
 
   let currentMonthAggregate = null;
@@ -116,7 +104,7 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
 
   async function getOrComputeAggregate(monthKey) {
     // Check for pre-computed aggregate
-    const stored = await readFromStorage(`health-metrics/aggregates/${monthKey}.json`);
+    const stored = await healthMetricsStore.readAggregate(monthKey);
     if (stored) return stored;
 
     // No raw events in demo mode — only pre-computed aggregates are available
@@ -130,7 +118,7 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
     }
 
     // Compute from raw events
-    const events = eventStore.readMonth(monthKey);
+    const events = await eventStore.readMonth(monthKey);
     if (events.length === 0) return null;
 
     const agg = aggregateEvents(events, monthKey);
@@ -156,7 +144,7 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
     const cutoffMonth = getMonthKey(cutoff);
     const cutoffTs = cutoff.toISOString();
 
-    const monthFiles = eventStore.listMonthFiles();
+    const monthFiles = await eventStore.listMonthFiles();
     if (monthFiles.length === 0) return;
 
     eventStore.startPruning();
@@ -164,17 +152,17 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
       for (const monthKey of monthFiles) {
         if (monthKey > cutoffMonth) continue;
 
-        const events = eventStore.readMonth(monthKey);
+        const events = await eventStore.readMonth(monthKey);
         if (events.length === 0) continue;
 
         if (monthKey < cutoffMonth) {
           // Fully expired month: aggregate then delete
-          const existing = await readFromStorage(`health-metrics/aggregates/${monthKey}.json`);
+          const existing = await healthMetricsStore.readAggregate(monthKey);
           if (!existing) {
             const agg = aggregateEvents(events, monthKey);
-            await writeToStorage(`health-metrics/aggregates/${monthKey}.json`, agg);
+            await healthMetricsStore.writeAggregate(monthKey, agg);
           }
-          eventStore.deleteMonthFile(monthKey);
+          await eventStore.deleteMonthFile(monthKey);
         } else {
           // Boundary month: filter out expired events
           const kept = events.filter(e => e.ts >= cutoffTs);
@@ -182,18 +170,18 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
             // Aggregate the pruned events before removing them
             const pruned = events.filter(e => e.ts < cutoffTs);
             if (pruned.length > 0) {
-              const existing = await readFromStorage(`health-metrics/aggregates/${monthKey}.json`);
+              const existing = await healthMetricsStore.readAggregate(monthKey);
               if (!existing) {
                 const agg = aggregateEvents(events, monthKey);
-                await writeToStorage(`health-metrics/aggregates/${monthKey}.json`, agg);
+                await healthMetricsStore.writeAggregate(monthKey, agg);
               }
             }
-            eventStore.rewriteMonth(monthKey, kept);
+            await eventStore.rewriteMonth(monthKey, kept);
           }
         }
       }
     } finally {
-      eventStore.finishPruning();
+      await eventStore.finishPruning();
     }
     invalidateCurrentMonthCache();
   }
@@ -223,10 +211,10 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
     const aggregates = [];
 
     // Scan stored aggregates
-    const storedFiles = ((listStorageFiles ? await listStorageFiles('health-metrics/aggregates') : null) || []);
-    const monthFiles = eventStore ? eventStore.listMonthFiles() : [];
+    const storedMonths = await healthMetricsStore.listAggregateMonths();
+    const monthFiles = eventStore ? await eventStore.listMonthFiles() : [];
     const allMonths = new Set([
-      ...storedFiles.map(f => f.replace('.json', '')),
+      ...storedMonths,
       ...monthFiles,
     ]);
 
@@ -280,8 +268,7 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
     }
 
     // Check opt-out (server-side defense in depth)
-    const optedOut = await loadOptedOut();
-    if (optedOut.emails.includes(email)) {
+    if (await healthMetricsStore.isOptedOut(email)) {
       return res.json({ ok: true, tracked: false });
     }
 
@@ -292,7 +279,7 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
 
     const userType = (req.userUid && userTypeCache.get(req.userUid)) || 'unknown';
 
-    eventStore.append({
+    await eventStore.append({
       ts: new Date().toISOString(),
       page,
       email,
@@ -305,26 +292,16 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
   });
 
   router.get('/tracking/status', requireScope('health-metrics:read'), async (req, res) => {
-    const optedOut = await loadOptedOut();
-    res.json({ optedOut: optedOut.emails.includes(req.userEmail) });
+    res.json({ optedOut: await healthMetricsStore.isOptedOut(req.userEmail) });
   });
 
   router.post('/tracking/opt-out', requireScope('health-metrics:write'), async (req, res) => {
-    const optedOut = await loadOptedOut();
-    if (!optedOut.emails.includes(req.userEmail)) {
-      optedOut.emails.push(req.userEmail);
-      await saveOptedOut(optedOut);
-    }
+    await healthMetricsStore.addOptOut(req.userEmail);
     res.json({ ok: true, optedOut: true });
   });
 
   router.delete('/tracking/opt-out', requireScope('health-metrics:write'), async (req, res) => {
-    const optedOut = await loadOptedOut();
-    const idx = optedOut.emails.indexOf(req.userEmail);
-    if (idx !== -1) {
-      optedOut.emails.splice(idx, 1);
-      await saveOptedOut(optedOut);
-    }
+    await healthMetricsStore.removeOptOut(req.userEmail);
     res.json({ ok: true, optedOut: false });
   });
 
@@ -378,7 +355,7 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
     // Also compute daily breakdown from current month's raw events
     if (!DEMO_MODE) {
       const currentMonth = getMonthKey(new Date());
-      const events = eventStore.readMonth(currentMonth);
+      const events = await eventStore.readMonth(currentMonth);
       const daily = mergeDailyBreakdown(events);
       Object.assign(dailyData, daily);
     }
@@ -460,7 +437,7 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
     let daily = {};
     if (!DEMO_MODE) {
       const currentMonth = getMonthKey(new Date());
-      const events = eventStore.readMonth(currentMonth).filter(e => e.page === pageId);
+      const events = (await eventStore.readMonth(currentMonth)).filter(e => e.page === pageId);
       daily = mergeDailyBreakdown(events);
     }
 
@@ -493,39 +470,39 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
   });
 
   router.post('/config', requireAdmin, requireScope('health-metrics:write'), async (req, res) => {
-    const config = await loadConfig();
+    const patch = {};
     if (req.body.userTypeFieldId !== undefined) {
-      config.userTypeFieldId = req.body.userTypeFieldId;
+      patch.userTypeFieldId = req.body.userTypeFieldId;
     }
     if (req.body.retentionDays !== undefined) {
       const days = parseInt(req.body.retentionDays);
       if (isNaN(days) || days < 30 || days > 365) {
         return res.status(400).json({ error: 'retentionDays must be between 30 and 365.' });
       }
-      config.retentionDays = days;
+      patch.retentionDays = days;
     }
-    await saveConfig(config);
+    const config = await healthMetricsStore.updateConfig(patch);
     await rebuildUserTypeCache();
     res.json(config);
   });
 
   router.post('/aggregate', requireAdmin, requireScope('health-metrics:write'), async (req, res) => {
     if (!eventStore) return res.json({ ok: true, generated: 0 });
-    const monthFiles = eventStore.listMonthFiles();
+    const monthFiles = await eventStore.listMonthFiles();
     let generated = 0;
     for (const monthKey of monthFiles) {
-      const events = eventStore.readMonth(monthKey);
+      const events = await eventStore.readMonth(monthKey);
       if (events.length === 0) continue;
       const agg = aggregateEvents(events, monthKey);
-      await writeToStorage(`health-metrics/aggregates/${monthKey}.json`, agg);
+      await healthMetricsStore.writeAggregate(monthKey, agg);
       generated++;
     }
     invalidateCurrentMonthCache();
     res.json({ ok: true, generated });
   });
 
-  router.delete('/events', requireAdmin, requireScope('health-metrics:write'), (req, res) => {
-    if (eventStore) eventStore.deleteAllEvents();
+  router.delete('/events', requireAdmin, requireScope('health-metrics:write'), async (req, res) => {
+    if (eventStore) await eventStore.deleteAllEvents();
     invalidateCurrentMonthCache();
     res.json({ ok: true });
   });
@@ -534,7 +511,7 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
 
   router.get('/field-definitions', requireAdmin, requireScope('health-metrics:read'), async (req, res) => {
     // Cross-module read: team-tracker exports team-data/field-definitions.json (see module.json > export.files)
-    const fieldDefs = await readFromStorage('team-data/field-definitions.json');
+    const fieldDefs = await fieldStore.readFieldDefinitions();
     if (!fieldDefs) return res.json({ person: [], team: [] });
     // Return only person-level fields for user-type selection
     const personFields = (fieldDefs.personFields || []).filter(f => !f.deleted);

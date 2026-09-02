@@ -1,8 +1,11 @@
 module.exports = async function registerRoutes(router, context) {
-  const { storage, requireAdmin, requireTeamAdmin, requireScope, fieldStore: contextFieldStore, teamStore: contextTeamStore, registryStore: contextRegistryStore } = context;
+  const { storage, requireAdmin, requireTeamAdmin, requireScope, fieldStore: contextFieldStore, teamStore: contextTeamStore, registryStore: contextRegistryStore, configStore } = context;
   const { readFromStorage, writeToStorage, deleteStorageDirectory } = storage;
   if (!contextRegistryStore) {
     throw new Error('team-tracker registerRoutes requires context.registryStore (from the module context) — there is no fallback');
+  }
+  if (!configStore) {
+    throw new Error('team-tracker registerRoutes requires context.configStore (from the module context) — there is no fallback');
   }
   const registryStore = contextRegistryStore;
 
@@ -41,19 +44,50 @@ module.exports = async function registerRoutes(router, context) {
   const { createPersonStore } = require('./person-store');
   const { createContributionStore } = require('./contribution-store');
   const { createJiraNameMapStore } = require('./jira-name-map-store');
+  const { createSprintStore } = require('./sprint-store');
+  const { createAnnotationStore } = require('./annotation-store');
+  const { createFieldOptionsStore } = require('./field-options-store');
+  const { createFieldExceptionsStore } = require('./field-exceptions-store');
+  const { createConfigStore } = require('../../../shared/server/config-store');
   const { personMetricsSchema } = require('./models/person');
   const { contributionSchema } = require('./models/contribution');
   const { jiraNameMapEntrySchema } = require('./models/jira-name-map');
   const { snapshotSchema } = require('./models/snapshot');
+  const { sprintSchema } = require('./models/sprint');
+  const { sprintBoardIndexSchema } = require('./models/sprint-board-index');
+  const { sprintAnnotationSchema } = require('./models/sprint-annotation');
+  const { fieldOptionSchema } = require('./models/field-option');
+  const { fieldExceptionSchema } = require('./models/field-exception');
+  const { configSchema } = require('../../../shared/server/models/config');
 
   const personModel = context.db ? context.db.model('person', personMetricsSchema) : null;
   const contributionModel = context.db ? context.db.model('contribution', contributionSchema) : null;
   const jiraNameMapModel = context.db ? context.db.model('jira-name-map', jiraNameMapEntrySchema) : null;
   const snapshotModel = context.db ? context.db.model('snapshot', snapshotSchema) : null;
+  const sprintModel = context.db ? context.db.model('sprint', sprintSchema) : null;
+  const sprintBoardIndexModel = context.db ? context.db.model('sprint-board-index', sprintBoardIndexSchema) : null;
+  const sprintAnnotationModel = context.db ? context.db.model('sprint-annotation', sprintAnnotationSchema) : null;
+  const moduleConfigModel = context.db ? context.db.model('config', configSchema) : null;
+  const fieldOptionModel = context.db ? context.db.model('field-option', fieldOptionSchema) : null;
+  const fieldExceptionModel = context.db ? context.db.model('field-exception', fieldExceptionSchema) : null;
 
   const personStore = createPersonStore(storage, { model: personModel });
   const contributionStore = createContributionStore(storage, { model: contributionModel });
   const jiraNameMapStore = createJiraNameMapStore(storage, { model: jiraNameMapModel });
+  const sprintStore = createSprintStore(storage, { model: sprintModel, boardIndexModel: sprintBoardIndexModel });
+  const annotationStore = createAnnotationStore(storage, { model: sprintAnnotationModel });
+  const moduleConfigStore = createConfigStore(storage, { model: moduleConfigModel });
+  const fieldOptionsStore = createFieldOptionsStore(storage, {
+    model: fieldOptionModel,
+    auditLog: context.auditLog,
+    registryStore,
+    fieldStore: contextFieldStore,
+    teamStore: contextTeamStore
+  });
+  const fieldExceptionsStore = createFieldExceptionsStore(storage, {
+    model: fieldExceptionModel,
+    auditLog: context.auditLog
+  });
 
   // ─── Unified Sync State ───
 
@@ -128,15 +162,15 @@ module.exports = async function registerRoutes(router, context) {
   }
 
   async function saveLastRefreshed() {
-    await writeToStorage('last-refreshed.json', { timestamp: new Date().toISOString() });
+    await configStore.writeToStorage('last-refreshed.json', { timestamp: new Date().toISOString() });
   }
 
   async function readRosterFull() {
-    return await sharedReadRosterFull(storage, registryStore);
+    return await sharedReadRosterFull(configStore, registryStore);
   }
 
   async function getOrgDisplayNames() {
-    const fromConfig = await rosterSyncConfig.getOrgDisplayNames(storage);
+    const fromConfig = await rosterSyncConfig.getOrgDisplayNames(configStore);
     if (Object.keys(fromConfig).length > 0) return fromConfig;
     return {};
   }
@@ -146,7 +180,7 @@ module.exports = async function registerRoutes(router, context) {
     const orgs = [];
 
     const orgDisplayNames = await getOrgDisplayNames();
-    const liveConfig = await rosterSyncConfig.loadConfig(storage);
+    const liveConfig = await rosterSyncConfig.loadConfig(configStore);
     const teamStructure = liveConfig?.teamStructure || null;
     const teamDataSource = liveConfig?.teamDataSource || 'sheets';
 
@@ -631,10 +665,9 @@ module.exports = async function registerRoutes(router, context) {
       return res.status(403).json({ error: 'You are not a manager' });
     }
 
-    const fieldOptionsStore = require('./field-options-store');
     const { enrichPerson, resolveFieldDefinitions, buildReferencedPeopleMap, buildAllPeopleList } = require('./field-payload');
     const teamsData = await contextTeamStore.readTeams();
-    const optionsResolver = async (ref) => await fieldOptionsStore.getValues(storage, ref);
+    const optionsResolver = async (ref) => await fieldOptionsStore.getValues(ref);
     const { personFieldDefs, teamFieldDefs } = await resolveFieldDefinitions(contextFieldStore, optionsResolver);
 
     const includeIndirect = req.query?.includeIndirect === 'true';
@@ -731,7 +764,6 @@ module.exports = async function registerRoutes(router, context) {
       return res.status(403).json({ error: 'Requires team-admin or admin role' });
     }
 
-    const fieldOptionsStoreLocal = require('./field-options-store');
     const { enrichPerson, resolveFieldDefinitions: resolveFieldDefs, buildReferencedPeopleMap, buildAllPeopleList } = require('./field-payload');
 
     const registry = await registryStore.readRegistry();
@@ -747,7 +779,7 @@ module.exports = async function registerRoutes(router, context) {
     }
 
     const teamsData = await contextTeamStore.readTeams();
-    const localOptionsResolver = async (ref) => await fieldOptionsStoreLocal.getValues(storage, ref);
+    const localOptionsResolver = async (ref) => await fieldOptionsStore.getValues(ref);
     const { personFieldDefs, teamFieldDefs } = await resolveFieldDefs(contextFieldStore, localOptionsResolver);
 
     // Build enriched people list (active engineering people only — excludes auxiliary)
@@ -782,8 +814,7 @@ module.exports = async function registerRoutes(router, context) {
       displayName: orgDisplayNames[key] || key
     }));
 
-    const fieldExceptionsStoreLocal = require('./field-exceptions-store');
-    const exceptionsData = await fieldExceptionsStoreLocal.readExceptions(storage);
+    const exceptionsData = await fieldExceptionsStore.readExceptions();
 
     res.json({
       people,
@@ -803,11 +834,10 @@ module.exports = async function registerRoutes(router, context) {
 
   const { MAX_DESCRIPTION_LENGTH: TEAM_MAX_DESCRIPTION_LENGTH } = require('../../../shared/server/team-store');
   const auditLog = context.auditLog;
-  const fieldOptionsStore = require('./field-options-store');
   const { migrateToInApp, previewMigration } = require('../../../shared/server/team-migration');
 
   // Options resolver for field validation — resolves optionsRef to allowed values
-  const optionsResolver = async (ref) => await fieldOptionsStore.getValues(storage, ref);
+  const optionsResolver = async (ref) => await fieldOptionsStore.getValues(ref);
 
   // Helper: check if demo mode and return demo flag on write ops
   function demoWriteGuard(res) {
@@ -1178,6 +1208,104 @@ module.exports = async function registerRoutes(router, context) {
     res.json(result);
   });
 
+  // ─── Team Managers ───
+
+  /**
+   * @openapi
+   * /api/modules/team-tracker/structure/teams/{teamId}/managers:
+   *   get:
+   *     tags: ['TT: Structure']
+   *     summary: List managers of a team
+   *     parameters:
+   *       - in: path
+   *         name: teamId
+   *         required: true
+   *         schema:
+   *           type: string
+   *         description: The team ID
+   *     responses:
+   *       200:
+   *         description: List of manager UIDs with display info
+   */
+  router.get('/structure/teams/:teamId/managers', requireScope('team-tracker:read'), async function(req, res) {
+    const teamsData = await contextTeamStore.readTeams();
+    const team = teamsData.teams && teamsData.teams[req.params.teamId];
+    if (!team) return res.status(404).json({ error: 'Team not found' });
+    const managerUids = team.managers || [];
+    const registry = await registryStore.readRegistry();
+    const managers = managerUids.map(uid => {
+      const person = registry && registry.people && registry.people[uid];
+      return {
+        uid,
+        name: person ? person.name : null,
+        email: person ? person.email : null
+      };
+    });
+    res.json({ managers });
+  });
+
+  /**
+   * @openapi
+   * /api/modules/team-tracker/structure/teams/{teamId}/managers:
+   *   post:
+   *     tags: ['TT: Structure']
+   *     summary: Add a manager to a team
+   *     parameters:
+   *       - in: path
+   *         name: teamId
+   *         required: true
+   *         schema:
+   *           type: string
+   *         description: The team ID
+   *     responses:
+   *       200:
+   *         description: Manager added
+   */
+  router.post('/structure/teams/:teamId/managers', requireTeamPurview, requireScope('team-tracker:write'), async function(req, res) {
+    const guard = demoWriteGuard(res);
+    if (guard) return;
+    const { uid } = req.body;
+    if (!uid || typeof uid !== 'string') return res.status(400).json({ error: 'uid is required' });
+    const registry = await registryStore.readRegistry();
+    if (!registry || !registry.people || !registry.people[uid]) {
+      return res.status(400).json({ error: 'Person not found in registry' });
+    }
+    const result = await contextTeamStore.addTeamManager(req.params.teamId, uid, req.auditActor);
+    if (result.error) return res.status(404).json(result);
+    res.json(result);
+  });
+
+  /**
+   * @openapi
+   * /api/modules/team-tracker/structure/teams/{teamId}/managers/{uid}:
+   *   delete:
+   *     tags: ['TT: Structure']
+   *     summary: Remove a manager from a team
+   *     parameters:
+   *       - in: path
+   *         name: teamId
+   *         required: true
+   *         schema:
+   *           type: string
+   *         description: The team ID
+   *       - in: path
+   *         name: uid
+   *         required: true
+   *         schema:
+   *           type: string
+   *         description: The manager's UID
+   *     responses:
+   *       200:
+   *         description: Manager removed
+   */
+  router.delete('/structure/teams/:teamId/managers/:uid', requireTeamPurview, requireScope('team-tracker:write'), async function(req, res) {
+    const guard = demoWriteGuard(res);
+    if (guard) return;
+    const result = await contextTeamStore.removeTeamManager(req.params.teamId, req.params.uid, req.auditActor);
+    if (result.error) return res.status(404).json(result);
+    res.json(result);
+  });
+
   // ─── Team Member Assignment ───
 
   /**
@@ -1340,7 +1468,7 @@ module.exports = async function registerRoutes(router, context) {
     for (const scope of ['personFields', 'teamFields']) {
       for (const field of (defs[scope] || [])) {
         if (field.optionsRef && !field.allowedValues) {
-          const values = await fieldOptionsStore.getValues(storage, field.optionsRef);
+          const values = await fieldOptionsStore.getValues(field.optionsRef);
           if (values) {
             field.allowedValues = values;
             field._resolvedFromOptions = true;
@@ -1588,7 +1716,7 @@ module.exports = async function registerRoutes(router, context) {
    */
   router.get('/field-options', requireScope('team-tracker:read'), async function(req, res) {
     try {
-      const options = await fieldOptionsStore.listFieldOptions(storage);
+      const options = await fieldOptionsStore.listFieldOptions();
       res.json({ options });
     } catch {
       res.status(500).json({ error: 'Failed to list field options' });
@@ -1616,7 +1744,7 @@ module.exports = async function registerRoutes(router, context) {
     const safeName = sanitizeOptionsName(req.params.name);
     if (!safeName) return res.status(400).json({ error: 'Invalid option set name' });
     try {
-      const data = await fieldOptionsStore.readFieldOptions(storage, safeName);
+      const data = await fieldOptionsStore.readFieldOptions(safeName);
       if (!data) return res.status(404).json({ error: 'Field option set not found' });
       res.json(data);
     } catch {
@@ -1652,7 +1780,7 @@ module.exports = async function registerRoutes(router, context) {
     const valErr = validateFieldOptionValues(values);
     if (valErr) return res.status(400).json({ error: valErr });
     try {
-      const result = await fieldOptionsStore.replaceValues(storage, safeName, values, label, req.auditActor, auditLog);
+      const result = await fieldOptionsStore.replaceValues(safeName, values, label, req.auditActor);
       res.json(result);
     } catch (err) {
       const status = err.message.includes('managed by external source') ? 409 : 500;
@@ -1687,13 +1815,13 @@ module.exports = async function registerRoutes(router, context) {
     const valErr = validateFieldOptionValues(values);
     if (valErr) return res.status(400).json({ error: valErr });
     // Check total count after add
-    const existing = await fieldOptionsStore.getValues(storage, safeName);
+    const existing = await fieldOptionsStore.getValues(safeName);
     const currentCount = existing ? existing.length : 0;
     if (currentCount + values.length > MAX_FIELD_OPTION_VALUES) {
       return res.status(400).json({ error: `Adding ${values.length} values would exceed maximum of ${MAX_FIELD_OPTION_VALUES} (current: ${currentCount})` });
     }
     try {
-      const result = await fieldOptionsStore.addValues(storage, safeName, values, req.auditActor, auditLog);
+      const result = await fieldOptionsStore.addValues(safeName, values, req.auditActor);
       res.json(result);
     } catch (err) {
       const status = err.message.includes('managed by external source') ? 409 : 500;
@@ -1728,7 +1856,7 @@ module.exports = async function registerRoutes(router, context) {
     const valErr = validateFieldOptionValues(values);
     if (valErr) return res.status(400).json({ error: valErr });
     try {
-      const result = await fieldOptionsStore.removeValues(storage, safeName, values, req.auditActor, auditLog);
+      const result = await fieldOptionsStore.removeValues(safeName, values, req.auditActor);
       if (!result) return res.status(404).json({ error: 'Field option set not found' });
       res.json(result);
     } catch (err) {
@@ -1777,7 +1905,7 @@ module.exports = async function registerRoutes(router, context) {
     if (!trimmed) return res.status(400).json({ error: 'newValue cannot be empty' });
     if (trimmed.length > 200) return res.status(400).json({ error: 'newValue must be 200 characters or fewer' });
     try {
-      const result = await fieldOptionsStore.renameValue(storage, safeName, oldValue.trim(), trimmed, req.auditActor, auditLog, registryStore);
+      const result = await fieldOptionsStore.renameValue(safeName, oldValue.trim(), trimmed, req.auditActor);
       if (!result) return res.status(404).json({ error: 'Field option set not found' });
       res.json(result);
     } catch (err) {
@@ -2025,7 +2153,7 @@ module.exports = async function registerRoutes(router, context) {
    */
   router.get('/structure/migrate/preview', requireAdmin, requireScope('team-tracker:write'), async function(req, res) {
     try {
-      const config = await rosterSyncConfig.loadConfig(storage);
+      const config = await rosterSyncConfig.loadConfig(configStore);
       if (!config) return res.status(400).json({ error: 'No config found' });
       const preview = await previewMigration(storage, config, registryStore);
       res.json(preview);
@@ -2049,18 +2177,88 @@ module.exports = async function registerRoutes(router, context) {
     try {
       const guard = demoWriteGuard(res);
       if (guard) return;
-      const config = await rosterSyncConfig.loadConfig(storage);
+      const config = await rosterSyncConfig.loadConfig(configStore);
       if (!config) return res.status(400).json({ error: 'No config found' });
       const fieldOverrides = req.body?.fieldOverrides || null;
-      const result = await migrateToInApp(storage, config, req.auditActor, fieldOverrides, { fieldStore: contextFieldStore, teamStore: contextTeamStore, auditLog, registryStore });
+      const result = await migrateToInApp(storage, config, req.auditActor, fieldOverrides, { fieldStore: contextFieldStore, teamStore: contextTeamStore, auditLog, registryStore, configStore: context.configStore });
       if (result.migrated) {
         config._migratedToInApp = new Date().toISOString();
-        await rosterSyncConfig.saveConfig(storage, config);
+        await rosterSyncConfig.saveConfig(configStore, config);
         await rebuildManagerMap();
       }
       res.json(result);
     } catch (err) {
       console.error('[migration] Migration failed:', err);
+      res.status(500).json({ error: 'Migration failed: ' + err.message });
+    }
+  });
+
+  // ─── Team Manager Migration (LDAP purview → explicit managers) ───
+
+  /**
+   * @openapi
+   * /api/modules/team-tracker/structure/migrate/team-managers:
+   *   post:
+   *     tags: ['TT: Admin']
+   *     summary: Seed team managers from current LDAP-derived purview
+   *     description: >
+   *       One-time migration: for each team, finds managers who currently have
+   *       LDAP-derived purview (their reports are on the team) and sets them as
+   *       explicit team managers. Skips teams that already have managers set.
+   *     responses:
+   *       200:
+   *         description: Migration report
+   */
+  router.post('/structure/migrate/team-managers', requireAdmin, requireScope('team-tracker:write'), async function(req, res) {
+    const guard = demoWriteGuard(res);
+    if (guard) return;
+    try {
+      const registry = await registryStore.readRegistry();
+      if (!registry || !registry.people) {
+        return res.status(400).json({ error: 'No registry found' });
+      }
+      const teamsData = await contextTeamStore.readTeams();
+      if (!teamsData || !teamsData.teams || Object.keys(teamsData.teams).length === 0) {
+        return res.status(400).json({ error: 'No teams found' });
+      }
+
+      const report = { migrated: [], skipped: [], errors: [] };
+
+      for (const [teamId, team] of Object.entries(teamsData.teams)) {
+        if (Array.isArray(team.managers) && team.managers.length > 0) {
+          report.skipped.push({ teamId, name: team.name, reason: 'already has managers' });
+          continue;
+        }
+
+        // Find direct managers of people on this team (one level up only)
+        const teamManagerUids = new Set();
+        for (const person of Object.values(registry.people)) {
+          if (person.status !== 'active') continue;
+          if (!person.managerUid) continue;
+          if (!Array.isArray(person.teamIds) || !person.teamIds.includes(teamId)) continue;
+          if (registry.people[person.managerUid]) {
+            teamManagerUids.add(person.managerUid);
+          }
+        }
+
+        if (teamManagerUids.size === 0) {
+          report.skipped.push({ teamId, name: team.name, reason: 'no LDAP managers found' });
+          continue;
+        }
+
+        const managerList = [...teamManagerUids];
+        for (const uid of managerList) {
+          const result = await contextTeamStore.addTeamManager(teamId, uid, req.auditActor);
+          if (result.error) {
+            report.errors.push({ teamId, uid, error: result.error });
+          }
+        }
+        report.migrated.push({ teamId, name: team.name, managers: managerList });
+      }
+
+      res.json(report);
+    } catch (err) {
+      console.error('[migration] Team manager migration failed:', err);
       res.status(500).json({ error: 'Migration failed: ' + err.message });
     }
   });
@@ -2124,7 +2322,7 @@ module.exports = async function registerRoutes(router, context) {
       }
       const result = await fieldOptionsMigration.executeMigration(storage, {
         sourceFieldId, optionSetName, optionSetLabel, createCounterpart, counterpartLabel, seedFromMembers
-      }, req.auditActor, { fieldStore: contextFieldStore, teamStore: contextTeamStore, auditLog, registryStore });
+      }, req.auditActor, { fieldStore: contextFieldStore, teamStore: contextTeamStore, auditLog, registryStore, fieldOptionsStore });
       if (result.error) return res.status(400).json({ error: result.error });
       res.json(result);
     } catch (err) {
@@ -2159,13 +2357,13 @@ module.exports = async function registerRoutes(router, context) {
     const safeName = sanitizeOptionsName(req.params.name);
     if (!safeName) return res.status(400).json({ error: 'Invalid option set name' });
     try {
-      const data = await fieldOptionsStore.readFieldOptions(storage, safeName);
+      const data = await fieldOptionsStore.readFieldOptions(safeName);
       if (!data) return res.status(404).json({ error: 'Field option set not found' });
 
       const currentValues = new Set(data.values || []);
 
       // Find all values in person/team records for fields referencing this option set
-      const fieldDefs = (await storage.readFromStorage('team-data/field-definitions.json')) || { personFields: [], teamFields: [] };
+      const fieldDefs = await contextFieldStore.readFieldDefinitions();
       const personFieldIds = (fieldDefs.personFields || []).filter(f => !f.deleted && f.optionsRef === safeName).map(f => f.id);
       const teamFieldIds = (fieldDefs.teamFields || []).filter(f => !f.deleted && f.optionsRef === safeName).map(f => f.id);
 
@@ -2191,7 +2389,7 @@ module.exports = async function registerRoutes(router, context) {
       }
 
       if (teamFieldIds.length > 0) {
-        const teamsData = await storage.readFromStorage('team-data/teams.json');
+        const teamsData = await contextTeamStore.readTeams();
         if (teamsData && teamsData.teams) {
           for (const [teamId, team] of Object.entries(teamsData.teams)) {
             if (!team.metadata) continue;
@@ -2295,7 +2493,7 @@ module.exports = async function registerRoutes(router, context) {
     }
 
     try {
-      const data = await fieldOptionsStore.readFieldOptions(storage, safeName);
+      const data = await fieldOptionsStore.readFieldOptions(safeName);
       if (!data) return res.status(404).json({ error: 'Field option set not found' });
 
       const currentValues = new Set(data.values || []);
@@ -2308,7 +2506,7 @@ module.exports = async function registerRoutes(router, context) {
       }
 
       // Find field definitions referencing this option set
-      const fieldDefs = (await storage.readFromStorage('team-data/field-definitions.json')) || { personFields: [], teamFields: [] };
+      const fieldDefs = await contextFieldStore.readFieldDefinitions();
       const personFieldIds = (fieldDefs.personFields || []).filter(f => !f.deleted && f.optionsRef === safeName).map(f => f.id);
       const teamFieldIds = (fieldDefs.teamFields || []).filter(f => !f.deleted && f.optionsRef === safeName).map(f => f.id);
 
@@ -2356,12 +2554,16 @@ module.exports = async function registerRoutes(router, context) {
           }
           if (modified) {
             if (registryStore.usesDatabase) {
-              // Targeted per-person writes instead of one whole-registry
-              // write: only the uids actually touched by this cascade are
-              // persisted, so a concurrent unrelated person update can't be
-              // clobbered by this read-modify-write's stale copy of it.
               for (const uid of modifiedUids) {
-                await registryStore.upsertPerson(uid, registry.people[uid]);
+                const person = registry.people[uid];
+                const setFields = {};
+                const unsetFields = [];
+                for (const fieldId of personFieldIds) {
+                  if (Object.prototype.hasOwnProperty.call(person._appFields, fieldId)) setFields[fieldId] = person._appFields[fieldId];
+                  else unsetFields.push(fieldId);
+                }
+                if (Object.keys(setFields).length) await registryStore.updatePersonFields(uid, setFields);
+                if (unsetFields.length) await registryStore.deletePersonFields(uid, unsetFields);
               }
             } else {
               await registryStore.writeRegistry(registry);
@@ -2372,18 +2574,23 @@ module.exports = async function registerRoutes(router, context) {
 
       // Cascade to team records
       if (teamFieldIds.length > 0) {
-        const teamsData = await storage.readFromStorage('team-data/teams.json');
+        const teamsData = await contextTeamStore.readTeams();
         if (teamsData && teamsData.teams) {
           let modified = false;
-          for (const team of Object.values(teamsData.teams)) {
+          const modifiedTeams = new Map();
+          for (const [teamId, team] of Object.entries(teamsData.teams)) {
             if (!team.metadata) continue;
+            const setFields = {};
+            const unsetFields = [];
             for (const fieldId of teamFieldIds) {
               const val = team.metadata[fieldId];
               if (typeof val === 'string' && mappings[val] !== undefined) {
                 if (mappings[val] === null) {
                   delete team.metadata[fieldId];
+                  unsetFields.push(fieldId);
                 } else {
                   team.metadata[fieldId] = mappings[val];
+                  setFields[fieldId] = mappings[val];
                 }
                 modified = true;
                 updated++;
@@ -2400,29 +2607,38 @@ module.exports = async function registerRoutes(router, context) {
                 }
                 if (arrModified) {
                   team.metadata[fieldId] = [...new Set(newArr)];
+                  setFields[fieldId] = team.metadata[fieldId];
                   modified = true;
                   updated++;
                 }
               }
             }
+            if (Object.keys(setFields).length || unsetFields.length) modifiedTeams.set(teamId, { setFields, unsetFields });
           }
-          if (modified) await storage.writeToStorage('team-data/teams.json', teamsData);
+          if (modified) {
+            if (contextTeamStore.usesDatabase) {
+              for (const [teamId, changes] of modifiedTeams) {
+                if (Object.keys(changes.setFields).length) await contextTeamStore.updateTeamFields(teamId, changes.setFields, req.auditActor);
+                if (changes.unsetFields.length) await contextTeamStore.deleteTeamFields(teamId, changes.unsetFields);
+              }
+            } else {
+              await storage.writeToStorage('team-data/teams.json', teamsData);
+            }
+          }
         }
       }
 
       // Clear orphanedValues from the option set if all mappings resolved
       if (data.orphanedValues && data.orphanedValues.length > 0) {
-        const remainingOrphans = await fieldOptionsStore.findReferencedValues(storage, safeName,
-          data.orphanedValues.filter(v => mappings[v] === undefined),
-          registryStore
+        const remainingOrphans = await fieldOptionsStore.findReferencedValues(safeName,
+          data.orphanedValues.filter(v => mappings[v] === undefined));
+        const updates = { updatedAt: new Date().toISOString() };
+        if (remainingOrphans.length) updates.orphanedValues = remainingOrphans;
+        await fieldOptionsStore.updateFieldOptions(
+          safeName,
+          updates,
+          remainingOrphans.length ? [] : ['orphanedValues']
         );
-        if (remainingOrphans.length === 0) {
-          delete data.orphanedValues;
-        } else {
-          data.orphanedValues = remainingOrphans;
-        }
-        data.updatedAt = new Date().toISOString();
-        await fieldOptionsStore.writeFieldOptions(storage, safeName, data);
       }
 
       await auditLog.appendAuditEntry({
@@ -2539,7 +2755,7 @@ module.exports = async function registerRoutes(router, context) {
         var demoRichValues = entityType === 'teams'
           ? { 'Demo Team Alpha': { id: 'team-1', teamType: 'OPEN' }, 'Demo Team Beta': { id: 'team-2', teamType: 'MEMBER_INVITE' } }
           : { 'Demo Component A': { id: '1', description: 'A demo component' }, 'Demo Component B': { id: '2', description: 'Another demo component' } };
-        const demoCurrent = (await fieldOptionsStore.getValues(storage, safeName)) || [];
+        const demoCurrent = (await fieldOptionsStore.getValues(safeName)) || [];
         const demoCurrentSet = new Set(demoCurrent);
         const demoNewSet = new Set(demoValues);
         return res.json({
@@ -2560,7 +2776,7 @@ module.exports = async function registerRoutes(router, context) {
       }
 
       const { values, richValues } = await fieldOptionsSync.fetchEntityData(jiraRequest, sourceConfig);
-      const currentValues = (await fieldOptionsStore.getValues(storage, safeName)) || [];
+      const currentValues = (await fieldOptionsStore.getValues(safeName)) || [];
 
       // Compute diff
       const currentSet = new Set(currentValues);
@@ -2572,7 +2788,7 @@ module.exports = async function registerRoutes(router, context) {
       // Find who is assigned to removed values
       const removedUsage = {};
       if (removed.length > 0) {
-        const fieldDefs = (await readFromStorage('team-data/field-definitions.json')) || { personFields: [], teamFields: [] };
+        const fieldDefs = await contextFieldStore.readFieldDefinitions();
         const personFieldIds = (fieldDefs.personFields || []).filter(f => !f.deleted && f.optionsRef === safeName).map(f => f.id);
         const teamFieldIds = (fieldDefs.teamFields || []).filter(f => !f.deleted && f.optionsRef === safeName).map(f => f.id);
         const removedSet = new Set(removed);
@@ -2597,7 +2813,7 @@ module.exports = async function registerRoutes(router, context) {
         }
 
         if (teamFieldIds.length > 0) {
-          const teamsData = await readFromStorage('team-data/teams.json');
+          const teamsData = await contextTeamStore.readTeams();
           if (teamsData && teamsData.teams) {
             for (const [teamId, team] of Object.entries(teamsData.teams)) {
               if (!team.metadata) continue;
@@ -2713,13 +2929,13 @@ module.exports = async function registerRoutes(router, context) {
 
     const { entityType, projectKey, orgId, siteId } = req.body;
     try {
-      const result = await fieldOptionsSync.linkToJira(storage, jiraRequest, safeName, {
+      const result = await fieldOptionsSync.linkToJira(fieldOptionsStore, jiraRequest, safeName, {
         entityType,
         projectKey,
         orgId,
         siteId,
         label: req.body.label
-      }, auditLog, registryStore);
+      });
       res.json(result);
     } catch (err) {
       const status = err.message.includes('Unsupported') || err.message.includes('required') ? 400 : 502;
@@ -2749,7 +2965,7 @@ module.exports = async function registerRoutes(router, context) {
     const safeName = sanitizeOptionsName(req.params.name);
     if (!safeName) return res.status(400).json({ error: 'Invalid option set name' });
     try {
-      const result = await fieldOptionsSync.unlinkFromJira(storage, safeName);
+      const result = await fieldOptionsSync.unlinkFromJira(fieldOptionsStore, safeName);
       res.json(result);
     } catch (err) {
       res.status(400).json({ error: err.message });
@@ -2796,7 +3012,7 @@ module.exports = async function registerRoutes(router, context) {
     }
 
     try {
-      const result = await fieldOptionsSync.syncOptionSet(storage, jiraRequest, safeName, auditLog, registryStore);
+      const result = await fieldOptionsSync.syncOptionSet(fieldOptionsStore, jiraRequest, safeName);
       _fieldOptionsSyncState[safeName] = { lastSuccessAt: new Date().toISOString() };
       res.json(result);
     } catch (err) {
@@ -2942,7 +3158,7 @@ module.exports = async function registerRoutes(router, context) {
       members = dedupeMembers(allMembers);
     }
 
-    const jiraProjectKeys = await jiraSyncConfig.getProjectKeys(storage);
+    const jiraProjectKeys = await jiraSyncConfig.getProjectKeys(moduleConfigStore);
 
     async function refreshJiraMembers(memberList) {
       if (!sources.jira || DEMO_MODE) return;
@@ -2999,7 +3215,7 @@ module.exports = async function registerRoutes(router, context) {
     async function refreshGitlabUsers(usernames) {
       if (!sources.gitlab || usernames.length === 0) return;
       try {
-        const syncConfig = (await rosterSyncConfig.loadConfig({ readFromStorage, writeToStorage })) || {};
+        const syncConfig = (await rosterSyncConfig.loadConfig(configStore)) || {};
         const gitlabInstances = syncConfig.gitlabInstances || [];
         const results = await fetchGitlabData(usernames, { gitlabInstances, resolveSecret: context.resolveSecret });
         await writeSinglePassResults(results, GITLAB_CACHE_PATH, GITLAB_HISTORY_CACHE_PATH);
@@ -3055,7 +3271,7 @@ module.exports = async function registerRoutes(router, context) {
 
         if (sources.gitlab && member.gitlabUsername) {
           promises.push((async () => {
-            const syncConfig = (await rosterSyncConfig.loadConfig({ readFromStorage, writeToStorage })) || {};
+            const syncConfig = (await rosterSyncConfig.loadConfig(configStore)) || {};
             const gitlabInstances = syncConfig.gitlabInstances || [];
             const glResults = await fetchGitlabData([member.gitlabUsername], { gitlabInstances, resolveSecret: context.resolveSecret });
             if (glResults[member.gitlabUsername]) {
@@ -3150,7 +3366,7 @@ module.exports = async function registerRoutes(router, context) {
    */
   router.get('/boards', requireScope('metrics:read'), async function(req, res) {
     try {
-      const teamsData = await readFromStorage('teams.json');
+      const teamsData = await moduleConfigStore.readFromStorage('teams.json');
       if (!teamsData || !teamsData.teams) {
         return res.json({ boards: [], lastUpdated: null });
       }
@@ -3165,7 +3381,7 @@ module.exports = async function registerRoutes(router, context) {
           sprintFilter: t.sprintFilter || undefined
         }));
 
-      const boardsData = await readFromStorage('boards.json');
+      const boardsData = await moduleConfigStore.readFromStorage('boards.json');
       res.json({ boards, lastUpdated: boardsData?.lastUpdated || null });
     } catch (error) {
       console.error('Read boards error:', error);
@@ -3186,6 +3402,11 @@ module.exports = async function registerRoutes(router, context) {
    *         schema:
    *           type: string
    *         description: The board ID
+   *       - in: query
+   *         name: teamId
+   *         schema:
+   *           type: string
+   *         description: Effective team/index ID when the board has multiple indexes
    *     responses:
    *       200:
    *         description: List of sprints for the board
@@ -3193,8 +3414,7 @@ module.exports = async function registerRoutes(router, context) {
   router.get('/boards/:boardId/sprints', requireScope('metrics:read'), async function(req, res) {
     try {
       const { boardId } = req.params;
-      const data = await readFromStorage(`sprints/team-${boardId}.json`)
-        || await readFromStorage(`sprints/board-${boardId}.json`);
+      const data = await sprintStore.getBoardSprints(boardId, req.query.teamId);
       if (!data) {
         return res.json({ sprints: [] });
       }
@@ -3218,6 +3438,11 @@ module.exports = async function registerRoutes(router, context) {
    *         schema:
    *           type: string
    *         description: The board ID
+   *       - in: query
+   *         name: teamId
+   *         schema:
+   *           type: string
+   *         description: Effective team/index ID when the board has multiple indexes
    *     responses:
    *       200:
    *         description: Sprint trend data for the board
@@ -3225,8 +3450,7 @@ module.exports = async function registerRoutes(router, context) {
   router.get('/boards/:boardId/trend', requireScope('metrics:read'), async function(req, res) {
     try {
       const { boardId } = req.params;
-      const sprintIndex = await readFromStorage(`sprints/team-${boardId}.json`)
-        || await readFromStorage(`sprints/board-${boardId}.json`);
+      const sprintIndex = await sprintStore.getBoardSprints(boardId, req.query.teamId);
       if (!sprintIndex?.sprints?.length) {
         return res.json({ sprints: [] });
       }
@@ -3234,7 +3458,7 @@ module.exports = async function registerRoutes(router, context) {
       const trendData = [];
       for (const sprint of sprintIndex.sprints) {
         if (sprint.state !== 'closed') continue;
-        const sprintData = await readFromStorage(`sprints/${sprint.id}.json`);
+        const sprintData = await sprintStore.getSprint(sprint.id);
         if (!sprintData?.metrics) continue;
 
         const byAssignee = {};
@@ -3287,7 +3511,7 @@ module.exports = async function registerRoutes(router, context) {
   router.get('/sprints/:sprintId', requireScope('metrics:read'), async function(req, res) {
     try {
       const { sprintId } = req.params;
-      const data = await readFromStorage(`sprints/${sprintId}.json`);
+      const data = await sprintStore.getSprint(sprintId);
       if (!data) {
         return res.status(404).json({
           error: 'Sprint data not found. Please refresh to fetch data from Jira.'
@@ -3312,25 +3536,25 @@ module.exports = async function registerRoutes(router, context) {
    */
   router.get('/dashboard-summary', requireScope('metrics:read'), async function(req, res) {
     try {
-      const data = await readFromStorage('dashboard-summary.json');
+      const data = await moduleConfigStore.readFromStorage('dashboard-summary.json');
       if (data) {
         return res.json(data);
       }
 
-      const teamsData = await readFromStorage('teams.json');
+      const teamsData = await moduleConfigStore.readFromStorage('teams.json');
       const enabledTeams = teamsData?.teams?.filter(t => t.enabled !== false) || [];
       if (enabledTeams.length === 0) {
         return res.json({ lastUpdated: null, boards: {} });
       }
 
-      const boardsData = await readFromStorage('boards.json');
+      const boardsData = await moduleConfigStore.readFromStorage('boards.json');
       const ROLLING_SPRINT_COUNT = 6;
       const summary = { lastUpdated: boardsData?.lastUpdated || null, boards: {} };
 
       for (const team of enabledTeams) {
         const teamId = team.teamId || String(team.boardId);
-        const boardSprints = await readFromStorage(`sprints/team-${teamId}.json`)
-          || await readFromStorage(`sprints/board-${team.boardId}.json`);
+        const boardSprints = await sprintStore.getBoardSprints(teamId)
+          || await sprintStore.getBoardSprints(team.boardId);
         if (!boardSprints?.sprints?.length) continue;
 
         const closedSprints = [...boardSprints.sprints]
@@ -3348,7 +3572,7 @@ module.exports = async function registerRoutes(router, context) {
         let sprintsUsed = 0;
 
         for (const sprint of recentSprints) {
-          const sd = await readFromStorage(`sprints/${sprint.id}.json`);
+          const sd = await sprintStore.getSprint(sprint.id);
           if (!sd) continue;
           totalCommitted += sd.committed?.totalPoints || 0;
           totalDelivered += sd.delivered?.totalPoints || 0;
@@ -3408,13 +3632,12 @@ module.exports = async function registerRoutes(router, context) {
 
       const allSprintData = [];
       for (const boardId of boardIds) {
-        const sprintIndex = await readFromStorage(`sprints/team-${boardId}.json`)
-          || await readFromStorage(`sprints/board-${boardId}.json`);
+        const sprintIndex = await sprintStore.getBoardSprints(boardId);
         if (!sprintIndex?.sprints?.length) continue;
 
         for (const sprint of sprintIndex.sprints) {
           if (sprint.state !== 'closed') continue;
-          const sprintData = await readFromStorage(`sprints/${sprint.id}.json`);
+          const sprintData = await sprintStore.getSprint(sprint.id);
           if (!sprintData?.metrics) continue;
           allSprintData.push({
             endDate: sprint.endDate || sprint.completeDate,
@@ -3463,8 +3686,8 @@ module.exports = async function registerRoutes(router, context) {
    *         description: Last refresh timestamp and config info
    */
   router.get('/last-refreshed', requireScope('metrics:read'), async function(req, res) {
-    const data = await readFromStorage('last-refreshed.json');
-    const jiraConfig = await jiraSyncConfig.loadConfig(storage);
+    const data = await configStore.readFromStorage('last-refreshed.json');
+    const jiraConfig = await jiraSyncConfig.loadConfig(moduleConfigStore);
     res.json({
       timestamp: data?.timestamp || null,
       jiraConfigChangedAt: jiraConfig?.lastConfigChangedAt || null
@@ -3949,8 +4172,8 @@ module.exports = async function registerRoutes(router, context) {
   router.get('/sprints/:sprintId/annotations', requireScope('metrics:read'), async function(req, res) {
     try {
       const { sprintId } = req.params;
-      const data = await readFromStorage(`annotations/${sprintId}.json`);
-      res.json(data || { annotations: {} });
+      const data = await annotationStore.readAnnotations(sprintId);
+      res.json(data);
     } catch (error) {
       console.error('Read annotations error:', error);
       res.status(500).json({ error: error.message });
@@ -3996,11 +4219,6 @@ module.exports = async function registerRoutes(router, context) {
         return res.status(400).json({ error: 'assignee and text are required' });
       }
 
-      const data = (await readFromStorage(`annotations/${sprintId}.json`)) || { annotations: {} };
-      if (!data.annotations[assignee]) {
-        data.annotations[assignee] = [];
-      }
-
       const annotation = {
         id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
         text,
@@ -4008,8 +4226,7 @@ module.exports = async function registerRoutes(router, context) {
         createdAt: new Date().toISOString()
       };
 
-      data.annotations[assignee].push(annotation);
-      await writeToStorage(`annotations/${sprintId}.json`, data);
+      await annotationStore.addAnnotation(sprintId, assignee, annotation);
       res.json(annotation);
     } catch (error) {
       console.error('Save annotation error:', error);
@@ -4053,23 +4270,10 @@ module.exports = async function registerRoutes(router, context) {
   router.delete('/sprints/:sprintId/annotations/:assignee/:annotationId', requireAdmin, requireScope('metrics:write'), async function(req, res) {
     try {
       const { sprintId, assignee, annotationId } = req.params;
-      const data = await readFromStorage(`annotations/${sprintId}.json`);
-      if (!data?.annotations?.[assignee]) {
+      const deleted = await annotationStore.deleteAnnotation(sprintId, assignee, annotationId);
+      if (!deleted) {
         return res.status(404).json({ error: 'Annotation not found' });
       }
-
-      const before = data.annotations[assignee].length;
-      data.annotations[assignee] = data.annotations[assignee].filter(a => a.id !== annotationId);
-
-      if (data.annotations[assignee].length === before) {
-        return res.status(404).json({ error: 'Annotation not found' });
-      }
-
-      if (data.annotations[assignee].length === 0) {
-        delete data.annotations[assignee];
-      }
-
-      await writeToStorage(`annotations/${sprintId}.json`, data);
       res.json({ success: true });
     } catch (error) {
       console.error('Delete annotation error:', error);
@@ -4091,7 +4295,7 @@ module.exports = async function registerRoutes(router, context) {
    */
   router.get('/roster-sync/configured', requireScope('roster:read'), async function(req, res) {
     try {
-      const config = await rosterSyncConfig.loadConfig(storage);
+      const config = await rosterSyncConfig.loadConfig(configStore);
       res.json({ configured: !!config });
     } catch (error) {
       console.error('Check roster-sync configured error:', error);
@@ -4155,7 +4359,7 @@ module.exports = async function registerRoutes(router, context) {
    */
   router.get('/admin/roster-sync/field-definitions', requireAdmin, requireScope('roster:write'), async function(req, res) {
     try {
-      const config = await rosterSyncConfig.loadConfig(storage);
+      const config = await rosterSyncConfig.loadConfig(configStore);
       res.json({ customFields: (config && config.customFields) || [] });
     } catch (error) {
       console.error('Read field definitions error:', error);
@@ -4177,7 +4381,7 @@ module.exports = async function registerRoutes(router, context) {
    */
   router.get('/admin/roster-sync/config', requireAdmin, requireScope('roster:write'), async function(req, res) {
     try {
-      const config = await rosterSyncConfig.loadConfig(storage);
+      const config = await rosterSyncConfig.loadConfig(configStore);
       if (!config) {
         return res.json({ configured: false, excludedTitles: DEFAULT_EXCLUDED_TITLES });
       }
@@ -4352,7 +4556,7 @@ module.exports = async function registerRoutes(router, context) {
 
       // Merge-based save: load full config, update only roster-sync fields,
       // preserve IPA-specific fields (gracePeriodDays, autoSync, etc.)
-      const config = (await rosterSyncConfig.loadConfig(storage)) || {};
+      const config = (await rosterSyncConfig.loadConfig(configStore)) || {};
 
       if (orgRoots !== undefined) config.orgRoots = orgRoots;
       if (googleSheetId !== undefined) config.googleSheetId = googleSheetId || null;
@@ -4400,7 +4604,7 @@ module.exports = async function registerRoutes(router, context) {
         config.fieldMapping = fm;
       }
 
-      await rosterSyncConfig.saveConfig(storage, config);
+      await rosterSyncConfig.saveConfig(configStore, config);
 
       res.json({ configured: true, ...config });
     } catch (error) {
@@ -4481,9 +4685,9 @@ module.exports = async function registerRoutes(router, context) {
         return res.status(400).json({ error: 'A "name" field is required for matching people from LDAP' });
       }
 
-      const existing = (await rosterSyncConfig.loadConfig(storage)) || {};
+      const existing = (await rosterSyncConfig.loadConfig(configStore)) || {};
       existing.customFields = validatedFields.length > 0 ? validatedFields : null;
-      await rosterSyncConfig.saveConfig(storage, existing);
+      await rosterSyncConfig.saveConfig(configStore, existing);
 
       res.json({ customFields: existing.customFields || [] });
     } catch (error) {
@@ -4504,7 +4708,7 @@ module.exports = async function registerRoutes(router, context) {
    */
   router.get('/admin/roster-sync/ldap-discover', requireAdmin, requireScope('roster:write'), async function(req, res) {
     try {
-      const config = (await rosterSyncConfig.loadConfig(storage)) || {};
+      const config = (await rosterSyncConfig.loadConfig(configStore)) || {};
       const ldapFields = config.ldapFields || {};
       res.json({
         discovered: ldapFields.discovered || [],
@@ -4540,11 +4744,11 @@ module.exports = async function registerRoutes(router, context) {
       await ipaClient.bindClient(conn.client, conn.config.bindDn, conn.config.bindPassword);
       const discovered = await ipaClient.discoverAttributes(conn.client);
 
-      const config = (await rosterSyncConfig.loadConfig(storage)) || {};
+      const config = (await rosterSyncConfig.loadConfig(configStore)) || {};
       if (!config.ldapFields) config.ldapFields = {};
       config.ldapFields.discovered = discovered;
       config.ldapFields.discoveredAt = new Date().toISOString();
-      await rosterSyncConfig.saveConfig(storage, config);
+      await rosterSyncConfig.saveConfig(configStore, config);
 
       res.json({
         discovered: discovered,
@@ -4581,11 +4785,11 @@ module.exports = async function registerRoutes(router, context) {
         return res.json({ status: 'already_running' });
       }
 
-      if (!await rosterSyncConfig.isConfigured(storage)) {
+      if (!await rosterSyncConfig.isConfigured(configStore)) {
         return res.status(400).json({ error: 'Roster sync is not configured' });
       }
 
-      consolidatedSync.runConsolidatedSync(storage, { ...context.secrets, resolveSecret: context.resolveSecret }, registryStore).then(function(result) {
+      consolidatedSync.runConsolidatedSync(storage, { ...context.secrets, resolveSecret: context.resolveSecret }, registryStore, configStore, contextFieldStore, contextTeamStore).then(function(result) {
         console.log('[consolidated-sync] On-demand sync result:', result.status);
       }).catch(function(err) {
         console.error('[consolidated-sync] On-demand sync error:', err);
@@ -4613,8 +4817,8 @@ module.exports = async function registerRoutes(router, context) {
   // Status handler — uses unifiedSyncState which is set after org-teams routes register
   router.get('/admin/roster-sync/status', requireAdmin, requireScope('roster:write'), async function(req, res) {
     try {
-      const config = await rosterSyncConfig.loadConfig(storage);
-      const metadataSyncStatus = await readFromStorage('org-roster/sync-status.json');
+      const config = await rosterSyncConfig.loadConfig(configStore);
+      const metadataSyncStatus = await context.configStore.readFromStorage('org-roster/sync-status.json');
       const uState = unifiedSyncState;
 
       const syncing = uState.inProgress || consolidatedSync.isSyncInProgress();
@@ -4623,7 +4827,7 @@ module.exports = async function registerRoutes(router, context) {
       const metadataLastSync = metadataSyncStatus?.lastSyncAt ? new Date(metadataSyncStatus.lastSyncAt).getTime() : 0;
 
       res.json({
-        configured: await rosterSyncConfig.isConfigured(storage),
+        configured: await rosterSyncConfig.isConfigured(configStore),
         syncing,
         phase: uState.inProgress ? uState.currentPhase : null,
         phaseLabel: uState.inProgress ? uState.phaseLabel : null,
@@ -4670,7 +4874,7 @@ module.exports = async function registerRoutes(router, context) {
    */
   router.get('/admin/jira-sync/config', requireAdmin, requireScope('metrics:write'), async function(req, res) {
     try {
-      const config = await jiraSyncConfig.loadConfig(storage);
+      const config = await jiraSyncConfig.loadConfig(moduleConfigStore);
       res.json({ projectKeys: [], ...config });
     } catch (error) {
       console.error('Read jira-sync config error:', error);
@@ -4721,7 +4925,7 @@ module.exports = async function registerRoutes(router, context) {
         }
       }
 
-      const existing = await jiraSyncConfig.loadConfig(storage);
+      const existing = await jiraSyncConfig.loadConfig(moduleConfigStore);
       const existingKeys = (existing?.projectKeys || []).sort().join(',');
       const newKeys = [...cleaned].sort().join(',');
       const keysChanged = existingKeys !== newKeys;
@@ -4731,7 +4935,7 @@ module.exports = async function registerRoutes(router, context) {
         lastConfigChangedAt: keysChanged ? new Date().toISOString() : (existing?.lastConfigChangedAt || null)
       };
 
-      await jiraSyncConfig.saveConfig(storage, config);
+      await jiraSyncConfig.saveConfig(moduleConfigStore, config);
       res.json(config);
     } catch (error) {
       console.error('Save jira-sync config error:', error);
@@ -4991,7 +5195,7 @@ module.exports = async function registerRoutes(router, context) {
       }
     }
     const members = dedupeMembers(allMembers);
-    const jiraProjectKeys = await jiraSyncConfig.getProjectKeys(storage);
+    const jiraProjectKeys = await jiraSyncConfig.getProjectKeys(moduleConfigStore);
 
     refreshState.running = true;
     refreshState.scope = 'all';
@@ -5087,7 +5291,7 @@ module.exports = async function registerRoutes(router, context) {
     const usernames = [...new Set(members.filter(m => m.gitlabUsername).map(m => m.gitlabUsername))];
     if (usernames.length === 0) return;
     try {
-      const syncConfig = (await rosterSyncConfig.loadConfig({ readFromStorage, writeToStorage })) || {};
+      const syncConfig = (await rosterSyncConfig.loadConfig(configStore)) || {};
       const gitlabInstances = syncConfig.gitlabInstances || [];
       const results = await fetchGitlabData(usernames, { gitlabInstances, resolveSecret: context.resolveSecret });
       await writeSinglePassResults(results, GITLAB_CACHE_PATH, GITLAB_HISTORY_CACHE_PATH);
@@ -5141,7 +5345,7 @@ module.exports = async function registerRoutes(router, context) {
       description: 'Syncs the team roster from IPA LDAP and Google Sheets, enriching with GitHub/GitLab usernames.',
       handler: async function() {
         if (DEMO_MODE) return;
-        await consolidatedSync.runConsolidatedSync(storage, { ...context.secrets, resolveSecret: context.resolveSecret }, registryStore);
+        await consolidatedSync.runConsolidatedSync(storage, { ...context.secrets, resolveSecret: context.resolveSecret }, registryStore, configStore, contextFieldStore, contextTeamStore);
       },
       status: async function() {
         return { inProgress: consolidatedSync.isSyncInProgress() };
@@ -5199,7 +5403,7 @@ module.exports = async function registerRoutes(router, context) {
       description: 'Syncs externally-linked field option sets (e.g., Jira components).',
       handler: async function() {
         if (DEMO_MODE) return { status: 'skipped', reason: 'demo mode' };
-        return await fieldOptionsSync.syncAllLinked(storage, jiraRequest, auditLog, registryStore);
+        return await fieldOptionsSync.syncAllLinked(fieldOptionsStore, jiraRequest);
       }
     });
   }
@@ -5208,8 +5412,8 @@ module.exports = async function registerRoutes(router, context) {
 
   if (context.registerDiagnostics) {
     context.registerDiagnostics(async function() {
-      const jiraProjectKeys = await jiraSyncConfig.getProjectKeys(storage);
-      const syncConfig = (await rosterSyncConfig.loadConfig(storage)) || {};
+      const jiraProjectKeys = await jiraSyncConfig.getProjectKeys(moduleConfigStore);
+      const syncConfig = (await rosterSyncConfig.loadConfig(configStore)) || {};
       const roster = await readRosterFull();
 
       // Jira info
@@ -5234,7 +5438,7 @@ module.exports = async function registerRoutes(router, context) {
 
       // Roster sync info
       const rosterSyncInfo = {
-        configured: await rosterSyncConfig.isConfigured(storage),
+        configured: await rosterSyncConfig.isConfigured(configStore),
         config: {
           orgRootCount: syncConfig.orgRoots?.length || 0,
           orgRootUids: (syncConfig.orgRoots || []).map(function(r) { return r.uid }),
@@ -5343,26 +5547,33 @@ module.exports = async function registerRoutes(router, context) {
       // Data health: snapshots
       const snapshotsInfo = { teamCount: 0, totalSnapshotFiles: 0, periodsCovered: [], teamsWithGaps: [] };
       try {
-        const fs = require('fs');
-        const path = require('path');
-        const snapshotsDir = path.join(storage.DATA_DIR, 'snapshots');
-        if (fs.existsSync(snapshotsDir)) {
-          const dirs = fs.readdirSync(snapshotsDir).filter(function(d) {
-            return fs.statSync(path.join(snapshotsDir, d)).isDirectory();
-          });
-          snapshotsInfo.teamCount = dirs.length;
-          const allPeriods = new Set();
-          for (const dir of dirs) {
-            const files = fs.readdirSync(path.join(snapshotsDir, dir)).filter(function(f) { return f.endsWith('.json') });
-            snapshotsInfo.totalSnapshotFiles += files.length;
-            for (const f of files) allPeriods.add(f.replace('.json', ''));
+        if (snapshotModel) {
+          const records = await snapshotModel.find({}, { team: 1, date: 1, _id: 0 }).lean();
+          snapshotsInfo.teamCount = new Set(records.map(record => record.team)).size;
+          snapshotsInfo.totalSnapshotFiles = records.length;
+          snapshotsInfo.periodsCovered = [...new Set(records.map(record => record.date).filter(Boolean))].sort();
+        } else {
+          const fs = require('fs');
+          const path = require('path');
+          const snapshotsDir = path.join(storage.DATA_DIR, 'snapshots');
+          if (fs.existsSync(snapshotsDir)) {
+            const dirs = fs.readdirSync(snapshotsDir).filter(function(d) {
+              return fs.statSync(path.join(snapshotsDir, d)).isDirectory();
+            });
+            snapshotsInfo.teamCount = dirs.length;
+            const allPeriods = new Set();
+            for (const dir of dirs) {
+              const files = fs.readdirSync(path.join(snapshotsDir, dir)).filter(function(f) { return f.endsWith('.json') });
+              snapshotsInfo.totalSnapshotFiles += files.length;
+              for (const f of files) allPeriods.add(f.replace('.json', ''));
+            }
+            snapshotsInfo.periodsCovered = [...allPeriods].sort();
           }
-          snapshotsInfo.periodsCovered = [...allPeriods].sort();
         }
       } catch { /* ignore */ }
 
       // Last refreshed
-      const lastRefreshed = await readFromStorage('last-refreshed.json');
+      const lastRefreshed = await configStore.readFromStorage('last-refreshed.json');
 
       return {
         jira,
@@ -5397,7 +5608,6 @@ module.exports = async function registerRoutes(router, context) {
       const directReportSet = permissions.getDirectReports(user.uid, registry);
       if (directReportSet.size === 0) return [];
 
-      const fieldExceptionsStore = require('./field-exceptions-store');
       const fieldDefs = await contextFieldStore.readFieldDefinitions();
       if (!fieldDefs) return [];
 
@@ -5405,7 +5615,7 @@ module.exports = async function registerRoutes(router, context) {
       const teamFields = fieldDefs.teamFields.filter(f => !f.deleted && f.visible);
 
       // Load exception map for O(1) lookups
-      const exceptionMap = await fieldExceptionsStore.getExceptionMap(storage);
+      const exceptionMap = await fieldExceptionsStore.getExceptionMap();
 
       // If no visible person fields and no team fields, still check boards
       // (boards are always a completeness concern for teams)
@@ -5474,7 +5684,7 @@ module.exports = async function registerRoutes(router, context) {
   if (context.registerExport) {
     const teamTrackerExport = require('./export');
     context.registerExport((addFile, exportStorage, mapping) =>
-      teamTrackerExport(addFile, exportStorage, mapping, { personStore, contributionStore, jiraNameMapStore, registryStore })
+      teamTrackerExport(addFile, exportStorage, mapping, { personStore, contributionStore, jiraNameMapStore, registryStore, configStore, snapshotModel })
     );
   }
 
@@ -5485,9 +5695,10 @@ module.exports = async function registerRoutes(router, context) {
   const { isOrgSyncInProgress, getTriggerOrgSync } = require('./routes/org-teams');
   const registerFieldExceptionRoutes = require('./routes/field-exceptions');
 
-  registerIpaRegistryRoutes(router, context);
-  registerOrgTeamsRoutes(router, context);
-  registerFieldExceptionRoutes(router, context);
+  const routeStoreContext = { ...context, moduleConfigStore };
+  registerIpaRegistryRoutes(router, routeStoreContext);
+  registerOrgTeamsRoutes(router, routeStoreContext);
+  registerFieldExceptionRoutes(router, { ...context, fieldExceptionsStore });
 
   // ─── Unified Sync ───
 
@@ -5526,7 +5737,7 @@ module.exports = async function registerRoutes(router, context) {
     (async function() {
       try {
         // Phase 1: Consolidated sync (LDAP + Sheets + lifecycle)
-        const syncResult = await consolidatedSync.runConsolidatedSync(storage, { ...context.secrets, resolveSecret: context.resolveSecret }, registryStore);
+        const syncResult = await consolidatedSync.runConsolidatedSync(storage, { ...context.secrets, resolveSecret: context.resolveSecret }, registryStore, configStore, contextFieldStore, contextTeamStore);
         if (syncResult.status === 'skipped' || syncResult.status === 'error') {
           console.warn('[unified-sync] Consolidated sync did not succeed:', syncResult.status, syncResult.message || '');
           return;

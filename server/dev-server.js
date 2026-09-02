@@ -65,6 +65,11 @@ async function startServer(options = {}) {
     storageModule.initStorage({ dataDir });
   }
 
+  if (dbConnection && !DEMO_MODE) {
+    const { runMigration } = require('../shared/server/migration');
+    await runMigration({ connection: dbConnection, storage: storageModule, dataDir });
+  }
+
   const { readFromStorage, writeToStorage, getFileMtime } = storageModule;
 
   // ─── Config Store ───
@@ -330,6 +335,7 @@ async function startServer(options = {}) {
   // ─── Auth ───
 
   const roleStoreOpts = {
+    configStore,
     getAuthDomain: async () => {
       if (process.env.AUTH_EMAIL_DOMAIN) {
         return process.env.AUTH_EMAIL_DOMAIN.trim().toLowerCase();
@@ -374,7 +380,8 @@ async function startServer(options = {}) {
     tokenValidator: apiTokens,
     roleStore,
     getFileMtime,
-    registryStore
+    registryStore,
+    configStore
   });
 
   // ─── Field Store ───
@@ -397,6 +404,18 @@ async function startServer(options = {}) {
   }
   const teamStore = createTeamStore(storageModule, teamStoreOpts);
 
+  // ─── Health Metrics Store ───
+
+  const { createHealthMetricsStore } = require('./health-metrics/store');
+  const healthMetricsStoreOpts = {};
+  let healthMetricsEventModel = null;
+  if (dbConnection) {
+    const { healthMetricsStateSchema, healthMetricsEventSchema } = require('./health-metrics/model');
+    healthMetricsStoreOpts.model = dbConnection.model('core__health_metrics', healthMetricsStateSchema, 'core__health_metrics');
+    healthMetricsEventModel = dbConnection.model('core__health_metric_events', healthMetricsEventSchema, 'core__health_metric_events');
+  }
+  const healthMetricsStore = createHealthMetricsStore(storageModule, healthMetricsStoreOpts);
+
   // ─── Swagger UI (before auth) ───
 
   const { createOpenApiSpec } = require('./openapi-config');
@@ -415,7 +434,7 @@ async function startServer(options = {}) {
   const messageRegistry = require('../shared/server/message-registry');
   const { createRefreshRegistry } = require('../shared/server/refresh-registry');
   const { createExportRegistry } = require('../shared/server/export-registry');
-  const refreshRegistry = await createRefreshRegistry(storageModule);
+  const refreshRegistry = await createRefreshRegistry(configStore);
   const exportRegistry = createExportRegistry();
   const { createSearchIndexRegistry } = require('../shared/server/search-index-registry');
   const searchIndexRegistry = createSearchIndexRegistry();
@@ -534,7 +553,7 @@ async function startServer(options = {}) {
 
   // ─── Module State ───
 
-  const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, fieldStore, teamStore, registryStore, auditLog, roleRegistry, scopeRegistry, secretRegistry, dbConnection };
+  const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, fieldStore, teamStore, registryStore, healthMetricsStore, healthMetricsEventModel, auditLog, configStore, roleRegistry, scopeRegistry, secretRegistry, dbConnection };
   const registries = { diagnostics: diagnosticsRegistry, messages: messageRegistry, refresh: refreshRegistry, exports: exportRegistry, searchIndex: searchIndexRegistry };
 
   const persistedState = await loadModuleState(configStore);
@@ -634,7 +653,7 @@ async function startServer(options = {}) {
 
   // ─── Static Module Content Serving ───
 
-  app.use('/modules', createModuleStaticMiddleware(storageModule));
+  app.use('/modules', createModuleStaticMiddleware(storageModule, configStore));
 
   // CORS preflight
   app.options('/api/{*path}', function(req, res) { res.status(200).end(); });
@@ -648,12 +667,20 @@ async function startServer(options = {}) {
     }
   }
 
-  await seedRoles();
-  await roleStore.migrateEmailDomains();
-  await modulesConfig.seedIfMissing(storageModule);
+  if (dbConnection) {
+    const { withMigrationLock } = require('../shared/server/migration');
+    await withMigrationLock(dbConnection, 'role-store-startup', async () => {
+      await seedRoles();
+      await roleStore.migrateEmailDomains();
+    });
+  } else {
+    await seedRoles();
+    await roleStore.migrateEmailDomains();
+  }
+  await modulesConfig.seedIfMissing(configStore);
 
   if (!DEMO_MODE) {
-    gitSync.scheduleDaily(storageModule);
+    gitSync.scheduleDaily(storageModule, configStore);
   }
 
   return new Promise(function(resolve) {

@@ -37,18 +37,27 @@ const ENRICHMENT_FIELDS = [
  * @param {object} [credentials]
  * @param {object} registryStore - Dual-path registry store (see
  *   registry-store.js, from the module context). Required — no fallback.
+ * @param {object} configStore - Dual-path singleton config store
+ * @param {object} fieldStore - Dual-path field-definition store
+ * @param {object} teamStore - Dual-path team store
  * @returns {object} Sync log with status, summary, coverage
  */
-async function runConsolidatedSync(storage, credentials, registryStore) {
+async function runConsolidatedSync(storage, credentials, registryStore, configStore, fieldStore, teamStore) {
   if (!registryStore) {
     throw new Error('runConsolidatedSync requires a registryStore argument (from the module context) — there is no fallback');
+  }
+  if (!configStore) {
+    throw new Error('runConsolidatedSync requires a configStore argument (from the module context) — there is no fallback');
+  }
+  if (!fieldStore || !teamStore) {
+    throw new Error('runConsolidatedSync requires fieldStore and teamStore arguments (from the module context) — there is no fallback');
   }
   if (syncInProgress) {
     return { status: 'skipped', message: 'Sync already in progress' };
   }
   const effectiveRegistryStore = registryStore;
 
-  const config = await loadConfig(storage);
+  const config = await loadConfig(configStore);
   if (!config || !config.orgRoots || config.orgRoots.length === 0) {
     return { status: 'error', message: 'No org roots configured' };
   }
@@ -269,8 +278,8 @@ async function runConsolidatedSync(storage, credentials, registryStore) {
     var unresolvedPersonRefs = [];
 
     try {
-      var fieldDefsData = await storage.readFromStorage('team-data/field-definitions.json');
-      var teamsData = await storage.readFromStorage('team-data/teams.json');
+      var fieldDefsData = await fieldStore.readFieldDefinitions();
+      var teamsData = await teamStore.readTeams();
 
       if (fieldDefsData && teamsData && teamsData.teams) {
         // Find person-reference-linked team fields
@@ -311,6 +320,12 @@ async function runConsolidatedSync(storage, credentials, registryStore) {
           var auxConn = null;
           var lookupCache = {};
           var teamsModified = false;
+          var modifiedTeamFields = new Map();
+
+          function markTeamFieldModified(teamId, fieldId) {
+            if (!modifiedTeamFields.has(teamId)) modifiedTeamFields.set(teamId, new Set());
+            modifiedTeamFields.get(teamId).add(fieldId);
+          }
 
           try {
             auxConn = ipa ? ipa.createConnection() : ipaClient.createClient();
@@ -386,6 +401,7 @@ async function runConsolidatedSync(storage, credentials, registryStore) {
                     tTeam.metadata[ref.fieldId] = resolvedUid;
                   }
                   teamsModified = true;
+                  markTeamFieldModified(ref.teamId, ref.fieldId);
                   auxiliaryResolved++;
                 } else if (nameMatches.length === 0) {
                   // Search LDAP by cn
@@ -426,6 +442,7 @@ async function runConsolidatedSync(storage, credentials, registryStore) {
                       tTeam2.metadata[ref.fieldId] = cnPerson.uid;
                     }
                     teamsModified = true;
+                    markTeamFieldModified(ref.teamId, ref.fieldId);
                     auxiliaryResolved++;
                     await walkManagerChain(cnPerson.uid);
                   } else {
@@ -440,7 +457,15 @@ async function runConsolidatedSync(storage, credentials, registryStore) {
 
             // Write back updated teams.json if any names were replaced with UIDs
             if (teamsModified) {
-              await storage.writeToStorage('team-data/teams.json', teamsData);
+              if (teamStore.usesDatabase) {
+                for (const [teamId, fieldIds] of modifiedTeamFields) {
+                  const fields = {};
+                  for (const fieldId of fieldIds) fields[fieldId] = teamsData.teams[teamId].metadata[fieldId];
+                  await teamStore.updateTeamFields(teamId, fields, 'roster-sync');
+                }
+              } else {
+                await teamStore.writeTeams(teamsData);
+              }
               console.log('[consolidated-sync] Phase 5b: Updated teams.json with resolved person references');
             }
           } catch (auxErr) {
@@ -505,22 +530,22 @@ async function runConsolidatedSync(storage, credentials, registryStore) {
     };
 
     await effectiveRegistryStore.writeRegistry(registry);
-    await storage.writeToStorage(SYNC_LOG_KEY, syncLog);
+    await configStore.writeToStorage(SYNC_LOG_KEY, syncLog);
 
-    await updateSyncStatus(storage, 'success', null);
+    await updateSyncStatus(configStore, 'success', null);
     console.log('[consolidated-sync] Complete: ' + mergedUids.length + ' people across ' + Object.keys(ldapOrgs).length + ' orgs');
 
     return syncLog;
   } catch (err) {
     console.error('[consolidated-sync] Sync failed:', err.message);
-    await updateSyncStatus(storage, 'error', err.message);
+    await updateSyncStatus(configStore, 'error', err.message);
     var errorLog = {
       completedAt: new Date().toISOString(),
       status: 'error',
       duration: Date.now() - startTime,
       message: err.message
     };
-    await storage.writeToStorage(SYNC_LOG_KEY, errorLog);
+    await configStore.writeToStorage(SYNC_LOG_KEY, errorLog);
     return errorLog;
   } finally {
     syncInProgress = false;

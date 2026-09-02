@@ -6,7 +6,7 @@
  */
 
 function registerRoleRoutes(app, context) {
-  const { requireAdmin, requireScope, blockDuringImpersonation, roleStore, roleRegistry } = context;
+  const { requireAdmin, requireScope, blockDuringImpersonation, roleStore, roleRegistry, registryStore } = context;
 
   /**
    * @openapi
@@ -156,6 +156,83 @@ function registerRoleRoutes(app, context) {
 
   app.get('/api/roles/me', async function(req, res) {
     res.json({ roles: await roleStore.getRoles(req.userEmail) });
+  });
+
+  /**
+   * @openapi
+   * /api/roles/members/{role}:
+   *   get:
+   *     tags: [Auth]
+   *     summary: Get names of users with a specific role
+   *     description: Returns display names of users who hold the given role. Available to any authenticated user.
+   *     parameters:
+   *       - in: path
+   *         name: role
+   *         required: true
+   *         schema:
+   *           type: string
+   *     responses:
+   *       200:
+   *         description: List of user names with the role
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 members:
+   *                   type: array
+   *                   items:
+   *                     type: object
+   *                     properties:
+   *                       name:
+   *                         type: string
+   *       400:
+   *         description: Invalid role
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   */
+  app.get('/api/roles/members/:role', async function(req, res) {
+    try {
+      const { role } = req.params;
+      if (!role || (roleRegistry && !roleRegistry.isValid(role))) {
+        return res.status(400).json({ error: 'Invalid role' });
+      }
+
+      const emails = await roleStore.getUsersByRole(role);
+      if (emails.length === 0) {
+        return res.json({ members: [] });
+      }
+
+      let registry;
+      try {
+        registry = await registryStore.readRegistry();
+      } catch {
+        registry = null;
+      }
+
+      const emailIndex = new Map();
+      const uidIndex = new Map();
+      if (registry?.people) {
+        for (const [uid, person] of Object.entries(registry.people)) {
+          if (person.email) emailIndex.set(person.email.toLowerCase(), person.name);
+          if (uid) uidIndex.set(uid.toLowerCase(), person.name);
+        }
+      }
+
+      const members = emails.map(email => {
+        const lower = email.toLowerCase();
+        const name = emailIndex.get(lower)
+          || uidIndex.get(lower.split('@')[0]);
+        return { name: name || email };
+      });
+
+      res.json({ members });
+    } catch (error) {
+      console.error('Get role members error:', error);
+      res.status(500).json({ error: error.message });
+    }
   });
 
   app.get('/api/roles', requireAdmin, requireScope('admin:manage'), async function(req, res) {

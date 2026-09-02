@@ -416,7 +416,7 @@ async function previewMigration(storage, config, registryStore) {
  * @param {object} stores.auditLog - Audit log instance from the module context
  * @returns {{ migrated: boolean, teams: number, fields: number, assignments: number, boardsMigrated: number }}
  */
-async function migrateToInApp(storage, config, actorEmail, fieldOverrides, { fieldStore, teamStore, auditLog, registryStore } = {}) {
+async function migrateToInApp(storage, config, actorEmail, fieldOverrides, { fieldStore, teamStore, auditLog, registryStore, configStore } = {}) {
   if (!fieldStore || !teamStore || !auditLog) {
     throw new Error('migrateToInApp requires an injected fieldStore, teamStore and auditLog (from context) — do not construct file-backed stores here');
   }
@@ -435,9 +435,9 @@ async function migrateToInApp(storage, config, actorEmail, fieldOverrides, { fie
   // `dbConnection` check, so they are always on the same backend — branch
   // on just one.
   if (!teamStore.usesDatabase) {
-    return migrateToInAppFile(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore, auditLog });
+    return migrateToInAppFile(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore, auditLog, configStore });
   }
-  return migrateToInAppDatabase(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore, auditLog, registryStore });
+  return migrateToInAppDatabase(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore, auditLog, registryStore, configStore });
 }
 
 /**
@@ -446,7 +446,7 @@ async function migrateToInApp(storage, config, actorEmail, fieldOverrides, { fie
  * byte-for-byte identical (same generated ids, same batched audit entries,
  * same wholesale blob writes).
  */
-async function migrateToInAppFile(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore, auditLog }) {
+async function migrateToInAppFile(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore, auditLog, configStore }) {
   // ─── Read all data once ───
   const { generateTeamId, TEAMS_KEY } = require('./team-store');
   const { FIELD_DEFS_KEY } = require('./field-store');
@@ -608,7 +608,7 @@ async function migrateToInAppFile(storage, config, actorEmail, fieldOverrides, r
   const metaData = await storage.readFromStorage('org-roster/teams-metadata.json');
 
   if (metaData && metaData.teams) {
-    const orgDisplayNames = await getOrgDisplayNames(storage);
+    const orgDisplayNames = await getOrgDisplayNames(configStore || storage);
     const boardNames = metaData.boardNames || {};
 
     // Build a case-insensitive lookup for metadata teams
@@ -857,7 +857,7 @@ async function migrateToInAppFile(storage, config, actorEmail, fieldOverrides, r
  *     has no such field and no such risk — it always creates a fresh field
  *     definition object in memory rather than looking one up.
  */
-async function migrateToInAppDatabase(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore, auditLog, registryStore }) {
+async function migrateToInAppDatabase(storage, config, actorEmail, fieldOverrides, registry, { fieldStore, teamStore, auditLog, registryStore, configStore }) {
   if (!registryStore) {
     throw new Error('migrateToInAppDatabase requires an injected registryStore (from context) — do not construct a file-backed store here');
   }
@@ -973,10 +973,12 @@ async function migrateToInAppDatabase(storage, config, actorEmail, fieldOverride
   // ─── Step 1.5: Migrate boards from teams-metadata.json ───
 
   let boardsMigrated = 0;
-  const metaData = await storage.readFromStorage('org-roster/teams-metadata.json');
+  const metaData = configStore
+    ? await configStore.readFromStorage('org-roster/teams-metadata.json')
+    : await storage.readFromStorage('org-roster/teams-metadata.json');
 
   if (metaData && metaData.teams) {
-    const orgDisplayNames = await getOrgDisplayNames(storage);
+    const orgDisplayNames = await getOrgDisplayNames(configStore);
     const boardNames = metaData.boardNames || {};
     const metaTeams = metaData.teams;
 
