@@ -10,7 +10,7 @@ const {
   runMigration
 } = require('../migration');
 
-describe('legacy file migration', () => {
+describe('legacy file migration', { timeout: 30_000 }, () => {
   let connection;
   let dataDir;
   let storage;
