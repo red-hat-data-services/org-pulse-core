@@ -37,6 +37,7 @@ async function startServer(options = {}) {
     fixturesDirs = [path.join(__dirname, '..', 'fixtures')],
     modulePaths = [path.join(__dirname, '..', 'modules')],
     platformPaths = [path.join(__dirname, '..', 'platform')],
+    moduleMigrations = [],
     port = process.env.API_PORT || 3001,
   } = options;
 
@@ -67,7 +68,7 @@ async function startServer(options = {}) {
 
   if (dbConnection && !DEMO_MODE) {
     const { runMigration } = require('../shared/server/migration');
-    await runMigration({ connection: dbConnection, storage: storageModule, dataDir });
+    await runMigration({ connection: dbConnection, storage: storageModule, dataDir, moduleMigrations });
   }
 
   const { readFromStorage, writeToStorage, getFileMtime } = storageModule;

@@ -12,11 +12,13 @@ describe('startServer database migration', () => {
   let server;
   let previousDbName;
   let previousAdminEmails;
+  let previousMongoUri;
 
   beforeEach(async () => {
     dataDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'org-pulse-startup-'));
     previousDbName = process.env.DB_NAME;
     previousAdminEmails = process.env.ADMIN_EMAILS;
+    previousMongoUri = process.env.MONGODB_URI;
     process.env.DB_NAME = `startup_migration_${process.pid}_${Date.now()}`;
     process.env.ADMIN_EMAILS = 'seeded@example.com';
     await fs.promises.writeFile(path.join(dataDir, 'roles.json'), JSON.stringify({
@@ -38,6 +40,8 @@ describe('startServer database migration', () => {
     else process.env.DB_NAME = previousDbName;
     if (previousAdminEmails === undefined) delete process.env.ADMIN_EMAILS;
     else process.env.ADMIN_EMAILS = previousAdminEmails;
+    if (previousMongoUri === undefined) delete process.env.MONGODB_URI;
+    else process.env.MONGODB_URI = previousMongoUri;
     server = null;
   });
 
@@ -48,5 +52,13 @@ describe('startServer database migration', () => {
     expect(custom).toMatchObject({ roles: ['release-manager'], assignedBy: 'legacy-owner' });
     expect(await mongoose.connection.collection('core__roles').findOne({ email: 'seeded@example.com' })).toBeNull();
     expect(await mongoose.connection.collection('_migrations').findOne({ _id: 'legacy-files-to-mongodb' })).toMatchObject({ status: 'complete' });
+  });
+
+  it('uses file storage when MONGODB_URI is unset', async () => {
+    delete process.env.MONGODB_URI;
+    server = await startServer({ dataDir, modulePaths: [], platformPaths: [], port: 0 });
+
+    expect(mongoose.connection.readyState).toBe(0);
+    await expect(fs.promises.access(path.join(dataDir, 'modules-config.json'))).resolves.toBeUndefined();
   });
 });
