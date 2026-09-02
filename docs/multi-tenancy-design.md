@@ -6,6 +6,13 @@
 
 In this document, **org** means tenant: one entry in `orgRoots[]`. `orgId` is the canonical tenant identifier; `uid` remains the LDAP traversal root. In particular, `teamDataSource`/`orgRoots` configuration belongs to the background roster-sync plane and must not be conflated with the authenticated request boundary.
 
+| Term | Role | Lifetime / compatibility |
+|---|---|---|
+| `orgId` | Canonical tenant identifier on the wire and in persisted state | Immutable; required when tenancy is enabled |
+| `orgKey` | Historical client-side/configuration name for an organization key | Compatibility alias only; migrate to `orgId` |
+| `orgRoot` | Configured LDAP hierarchy root and registry grouping concept | Operational roster-sync concept; mapped to one `orgId` |
+| `uid` | LDAP/Cyborg person identifier, including the root leader's uid | Person identity; never a durable tenant identifier |
+
 ---
 
 ## 1. Problem Statement
@@ -89,7 +96,7 @@ Rejected alternatives are a new upstream SSO claim (the platform does not contro
 - Add `multiTenancyEnabled: boolean`, `allowedOrgIds: string[]`, and `activeOrgId: string|null` to `/api/whoami`.
 - Add an OpenAPI-annotated `POST /api/whoami/active-org` that validates and persists `{orgId}`. Store preferences through `readFromStorage`/`writeToStorage` in one keyed document (for example `org-preferences.json`), serialize writes with the same mutex pattern used by other shared stores, and discard a preference as soon as it is no longer in `allowedOrgIds`.
 - Expose `allowedOrgIds` and `activeOrgId` through `useAuth.js`, alongside `roles` (`:32`).
-- Add an explicit `org-access.json` assignment record for multi-org people, service accounts, and other identities outside the LDAP tree. A default org is valid only when explicitly assigned to that identity. Roster sync writes canonical `orgId` onto registry records while preserving legacy `orgRoot` during migration.
+- Add an explicit `org-access.json` assignment record for multi-org people, service accounts, and other identities outside the LDAP tree. A default org is valid only when explicitly assigned to that identity. Roster sync writes canonical `orgId` onto registry records while preserving legacy `orgRoot` during migration. A failed or partial sync must retain the last successful registry/grant snapshot; do not revoke access merely because a transient run omitted a person or root. Recompute and persist removals only after an authoritative successful sync, or an explicit `org-access.json` revocation.
 - Apply `requireOrgContext` at org-sensitive core routes and module-router boundaries. Route handlers still filter returned records by `req.activeOrgId` as defense in depth.
 - Audit active-org changes and rejected cross-org requests without logging sensitive payloads; expose counts for invalid/stale-scope failures.
 
@@ -188,7 +195,7 @@ EPD's `cyborg_probe.py` extracts team/repository/Jira metadata from a GCS-hosted
 | `Group.slack` | Custom field | Team Slack channel |
 | `github_id` | `github.username` | Cleaner than regex-parsed IPA `rhatSocialUrl` |
 
-**Shared enrichment contract:** adapters return `{matchBy, entries}`, where `matchBy` is `uid` or `normalized-name` and `entries` is a `Map` using that key. `merge.js` owns key normalization and dispatches the selected strategy:
+**Shared enrichment contract:** adapters return a typed result envelope. Success is `{status: 'ok', source, matchBy, entries, fetchedAt}`; failure is `{status: 'error', source, code, message, retryable, fetchedAt}`. `entries` is present only for success, with `matchBy` set to `uid` or `normalized-name` and a `Map` using that key. Adapter implementations may throw internally, but the registry normalizes errors into this shape before `consolidated-sync.js` handles them. Error messages are safe for logs/status responses and never contain credentials or PII. `merge.js` owns key normalization and dispatches the selected strategy:
 
 - Cyborg uses normalized LDAP uid (trim, Unicode-normalize, lowercase; empty is missing).
 - Existing Sheets deployments retain today's normalized-name behavior. A configured UID column may opt into uid matching, but it is not required for migration.
@@ -272,7 +279,7 @@ RHAI's live `team-data/config.json` is PVC runtime state and cannot be cited fro
 2. Add regression coverage proving disabled mode is byte-for-byte behaviorally equivalent for module state and roster serving.
 3. Before enabling, require an administrator to assign every root a unique immutable `orgId`; validate format and uniqueness. Do not synthesize a durable id from `uid` or display name.
 4. During a documented compatibility window, accept a legacy `uid` as an input alias and immediately resolve it to `orgId`; emit and persist only `orgId`. Reject alias collisions. Remove aliases only after logs show no use across the staged rollout.
-5. Capture current RHAI PVC configuration, add explicit ids and identity grants in a reviewed migration, and verify it in a non-production copy.
+5. Before any opt-in work, capture and document RHAI's live PVC `orgRoots` and `teamDataSource` configuration. Then add explicit ids and identity grants in a reviewed migration and verify it in a non-production copy.
 6. RHAI is a fork/derivative, not a thin npm consumer. Synchronize copied core changes with its pinned image/Kustomize refs and verify custom-module compatibility.
 7. Roll through `ai-eng-dev`, `ai-eng-preprod`, then `ai-eng-prod`, checking module/API authorization, roster parity, persisted preferences, token grants, and sync freshness at each stage.
 8. Enable multi-tenancy only after the upgraded deployment is stable in disabled mode.
@@ -283,6 +290,7 @@ RHAI's live `team-data/config.json` is PVC runtime state and cannot be cited fro
 - Integration-test both frontend module hiding and direct backend module API denial. Any implementation change under `modules/` includes the corresponding Playwright module-test update required by repository policy.
 - Verify startup issues no org-sensitive request before `/api/whoami` bootstrap completes, including valid, missing, and invalid deep links.
 - Run mixed-source synchronization (`sheets`, `in-app`, `cyborg`) in one configuration and prove per-root failure isolation, atomic promotion, and last-known-good behavior.
+- Simulate partial roster omission and adapter errors: grants and last-known-good data survive failed runs, while authoritative removals and explicit revocations take effect; verify the typed adapter error envelope reaches sync status.
 - Validate `orgId` uniqueness, legacy alias migration/collisions, configuration persistence/reload, and disabled-mode parity against existing fixtures.
 - Update OpenAPI annotations for every new or modified route, `docs/DATA-FORMATS.md` and fixtures for registry/configuration changes, and `shared/API.md` for exported middleware or helpers.
 
@@ -342,6 +350,7 @@ Use the Track 6 checklist: ship disabled, verify legacy parity, assign immutable
 7. Which GCS bucket/object is authoritative for non-scrubbed Cyborg data? **Clarified:** `resolved-org` is full and `resolved-org-pii-free` is PII-free; person data exists only in the full bucket. See Appendix A.
 8. Is approved full `resolved-org` access an acceptable prerequisite for Cyborg roster assignment, or should Tier 1 expose only the PII-free team catalog until approval lands? (Track 4)
 9. Confirm the compatibility-window duration and alias-removal criteria for required immutable `orgId`; `orgRoots[].uid` remains only a temporary input alias. (Tracks 1, 2, 5)
+10. Capture and document RHAI's current PVC `orgRoots` and `teamDataSource` configuration before enabling tenancy; the repository cannot verify those live values. (Track 6)
 
 ---
 
