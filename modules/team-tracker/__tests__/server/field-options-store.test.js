@@ -1,7 +1,30 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest'
+import mongoose from 'mongoose'
 
-const fieldOptionsStore = require('../../server/field-options-store')
+const { createFieldOptionsStore } = require('../../server/field-options-store')
 const { createAuditLog } = require('../../../../shared/server/audit-log')
+const { createRegistryStore } = require('../../../../shared/server/registry-store')
+const { createFieldStore } = require('../../../../shared/server/field-store')
+const { createTeamStore } = require('../../../../shared/server/team-store')
+const { fieldOptionSchema } = require('../../server/models/field-option')
+const { unlinkFromJira } = require('../../server/field-options-sync')
+
+const stores = new WeakMap()
+function getStore(storage) {
+  if (!stores.has(storage)) {
+    const auditLog = createAuditLog(storage)
+    const registryStore = createRegistryStore(storage)
+    const fieldStore = createFieldStore(storage, { auditLog, registryStore })
+    const teamStore = createTeamStore(storage, { auditLog, registryStore })
+    stores.set(storage, createFieldOptionsStore(storage, { auditLog, registryStore, fieldStore, teamStore }))
+  }
+  return stores.get(storage)
+}
+const fieldOptionsStore = new Proxy({}, {
+  get(_target, method) {
+    return (storage, ...args) => getStore(storage)[method](...args)
+  }
+})
 
 function makeStorage(initial = {}) {
   const data = { ...initial }
@@ -374,7 +397,7 @@ describe('field-options-store', () => {
           KServe: { id: '10005', description: 'Model serving' },
           Notebooks: { id: '10008', description: 'Jupyter notebooks' }
         }
-      }, createAuditLog(storage))
+      }, createAuditLog(storage), createRegistryStore(storage))
 
       expect(result.added).toEqual(['Dashboard', 'KServe', 'Notebooks'])
       expect(result.removed).toEqual([])
@@ -401,7 +424,7 @@ describe('field-options-store', () => {
         source: 'jira',
         sourceProject: 'RHAI',
         values: ['B', 'D']
-      }, createAuditLog(storage))
+      }, createAuditLog(storage), createRegistryStore(storage))
 
       expect(result.added).toEqual(['D'])
       expect(result.removed).toEqual(['A', 'C'])
@@ -432,7 +455,7 @@ describe('field-options-store', () => {
         source: 'jira',
         sourceProject: 'RHAI',
         values: ['Alpha', 'Gamma', 'Delta']
-      }, createAuditLog(storage))
+      }, createAuditLog(storage), createRegistryStore(storage))
 
       expect(result.removed).toEqual(['Beta'])
       expect(result.orphanedValues).toEqual(['Beta'])
@@ -454,7 +477,7 @@ describe('field-options-store', () => {
         source: 'jira',
         sourceProject: 'RHAI',
         values: ['Alpha', 'Beta']
-      }, createAuditLog(storage))
+      }, createAuditLog(storage), createRegistryStore(storage))
 
       const saved = storage._data['team-data/field-options/component.json']
       expect(saved.orphanedValues).toBeUndefined()
@@ -479,7 +502,7 @@ describe('field-options-store', () => {
         'team-data/teams.json': { teams: {} }
       })
 
-      const result = await fieldOptionsStore.findReferencedValues(storage, 'component', ['X', 'Z', 'NOTFOUND'])
+      const result = await fieldOptionsStore.findReferencedValues(storage, 'component', ['X', 'Z', 'NOTFOUND'], createRegistryStore(storage))
       expect(result).toEqual(['X', 'Z'])
     })
 
@@ -499,7 +522,7 @@ describe('field-options-store', () => {
         }
       })
 
-      const result = await fieldOptionsStore.findReferencedValues(storage, 'component', ['Alpha', 'Beta'])
+      const result = await fieldOptionsStore.findReferencedValues(storage, 'component', ['Alpha', 'Beta'], createRegistryStore(storage))
       expect(result).toEqual(['Alpha'])
     })
 
@@ -507,23 +530,140 @@ describe('field-options-store', () => {
       const storage = makeStorage({
         'team-data/field-definitions.json': { personFields: [], teamFields: [] }
       })
-      expect(await fieldOptionsStore.findReferencedValues(storage, 'component', ['X'])).toEqual([])
+      expect(await fieldOptionsStore.findReferencedValues(storage, 'component', ['X'], createRegistryStore(storage))).toEqual([])
     })
   })
 
-  describe('auditLog requirement', () => {
-    it('throws immediately when auditLog is missing', async () => {
-      const storage = makeStorage({ 'audit-log.json': { entries: [] } })
-      await expect(fieldOptionsStore.addValues(storage, 'component', ['A'], 'user@test.com'))
-        .rejects.toThrow(/requires an injected auditLog/)
-      await expect(fieldOptionsStore.replaceValues(storage, 'component', ['A'], 'Components', 'user@test.com'))
-        .rejects.toThrow(/requires an injected auditLog/)
-      await expect(fieldOptionsStore.removeValues(storage, 'component', ['A'], 'user@test.com'))
-        .rejects.toThrow(/requires an injected auditLog/)
-      await expect(fieldOptionsStore.renameValue(storage, 'component', 'A', 'B', 'user@test.com'))
-        .rejects.toThrow(/requires an injected auditLog/)
-      await expect(fieldOptionsStore.syncFromExternal(storage, 'component', { source: 'jira', values: ['A'] }))
-        .rejects.toThrow(/requires an injected auditLog/)
+  describe('dependency requirements', () => {
+    it('rejects construction without the module stores', () => {
+      expect(() => createFieldOptionsStore(makeStorage(), {})).toThrow(/requires auditLog, registryStore, fieldStore and teamStore/)
     })
+  })
+})
+
+describe('field-options-store (MongoDB)', () => {
+  let connection
+  let Model
+  let store
+  const storage = makeStorage({ 'audit-log.json': { entries: [] } })
+
+  beforeAll(async () => {
+    connection = await mongoose.createConnection(process.env.MONGODB_URI, { dbName: 'field_options_' + process.pid })
+    Model = connection.model('field-option', fieldOptionSchema)
+    const auditLog = createAuditLog(storage)
+    const registryStore = createRegistryStore(storage)
+    const fieldStore = createFieldStore(storage, { auditLog, registryStore })
+    const teamStore = createTeamStore(storage, { auditLog, registryStore })
+    store = createFieldOptionsStore(storage, { model: Model, auditLog, registryStore, fieldStore, teamStore })
+  })
+
+  afterAll(async () => {
+    await connection.db.dropDatabase()
+    await connection.close()
+  })
+
+  beforeEach(async () => {
+    await Model.deleteMany({})
+  })
+
+  it('round-trips isolated option sets and preserves sorted values', async () => {
+    await store.replaceValues('components', ['B', 'A'], 'Components', 'admin@test.com')
+    await store.replaceValues('regions', ['EMEA'], 'Regions', 'admin@test.com')
+    await store.addValues('components', ['C'], 'admin@test.com')
+
+    expect(await store.getValues('components')).toEqual(['A', 'B', 'C'])
+    expect(await store.getValues('regions')).toEqual(['EMEA'])
+    expect(storage._data['team-data/field-options/components.json']).toBeUndefined()
+  })
+
+  it('removes and renames values without affecting another set', async () => {
+    await store.replaceValues('components', ['A', 'B', 'C'], 'Components', 'admin@test.com')
+    await store.replaceValues('regions', ['A'], 'Regions', 'admin@test.com')
+    await store.removeValues('components', ['B'], 'admin@test.com')
+    await store.renameValue('components', 'C', 'D', 'admin@test.com')
+
+    expect(await store.getValues('components')).toEqual(['A', 'D'])
+    expect(await store.getValues('regions')).toEqual(['A'])
+  })
+
+  it('does not restore linkage when an existing sync races with unlink', async () => {
+    let continueReferences
+    let referencesStarted
+    const referencesBlocked = new Promise(resolve => { continueReferences = resolve })
+    const referencesReached = new Promise(resolve => { referencesStarted = resolve })
+    const guardedStore = createFieldOptionsStore(storage, {
+      model: Model,
+      auditLog: createAuditLog(storage),
+      registryStore: { readRegistry: vi.fn() },
+      fieldStore: {
+        readFieldDefinitions: vi.fn(async () => {
+          referencesStarted()
+          await referencesBlocked
+          return { personFields: [], teamFields: [] }
+        })
+      },
+      teamStore: { readTeams: vi.fn() }
+    })
+    await Model.create({
+      optionId: 'components',
+      name: 'components',
+      label: 'Components',
+      values: ['Old'],
+      source: 'jira',
+      sourceProject: 'RHAI',
+      sourceConfig: { entityType: 'components', projectKey: 'RHAI' }
+    })
+
+    const sync = guardedStore.syncFromExternal('components', {
+      source: 'jira',
+      expectedSource: 'jira',
+      sourceProject: 'RHAI',
+      values: ['New']
+    })
+    await referencesReached
+    await unlinkFromJira(guardedStore, 'components')
+    continueReferences()
+    await sync
+
+    expect(await guardedStore.readFieldOptions('components')).toMatchObject({
+      values: ['Old'],
+      updatedBy: 'admin'
+    })
+    expect(await guardedStore.readFieldOptions('components')).not.toHaveProperty('source')
+    expect(await guardedStore.readFieldOptions('components')).not.toHaveProperty('sourceConfig')
+  })
+
+  it('cascades renames through targeted registry and team operations', async () => {
+    const auditLog = createAuditLog(storage)
+    const registryStore = {
+      usesDatabase: true,
+      readRegistry: vi.fn(async () => ({
+        people: { alice: { _appFields: { field_component: 'A' } } }
+      })),
+      updatePersonFields: vi.fn(async () => ({}))
+    }
+    const teamStore = {
+      usesDatabase: true,
+      readTeams: vi.fn(async () => ({
+        teams: { platform: { metadata: { field_team_component: ['A', 'B'] } } }
+      })),
+      updateTeamFields: vi.fn(async () => ({}))
+    }
+    const fieldStore = {
+      readFieldDefinitions: vi.fn(async () => ({
+        personFields: [{ id: 'field_component', optionsRef: 'components', deleted: false }],
+        teamFields: [{ id: 'field_team_component', optionsRef: 'components', deleted: false }]
+      }))
+    }
+    const cascadeStore = createFieldOptionsStore(storage, {
+      model: Model, auditLog, registryStore, fieldStore, teamStore
+    })
+    await cascadeStore.replaceValues('components', ['A', 'B'], 'Components', 'admin@test.com')
+
+    expect(await cascadeStore.renameValue('components', 'A', 'C', 'admin@test.com')).toEqual({ updated: 2 })
+    expect(registryStore.updatePersonFields).toHaveBeenCalledWith('alice', { field_component: 'C' })
+    expect(teamStore.updateTeamFields).toHaveBeenCalledWith('platform', { field_team_component: ['C', 'B'] }, 'admin@test.com')
+    expect(storage.writeToStorage).not.toHaveBeenCalledWith('team-data/registry.json', expect.anything())
+    expect(storage.writeToStorage).not.toHaveBeenCalledWith('team-data/teams.json', expect.anything())
   })
 })

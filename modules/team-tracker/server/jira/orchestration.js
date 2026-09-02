@@ -32,13 +32,13 @@ function determineStaleness(sprints) {
 /**
  * Discover boards from Jira, determine staleness, and merge with existing team config.
  */
-async function discoverBoards({ fetchBoards, fetchSprints, readStorage, writeStorage }) {
+async function discoverBoards({ fetchBoards, fetchSprints, boardsConfigStore }) {
   console.log('Discovering boards for project RHOAIENG');
 
   const boards = await fetchBoards();
   console.log(`Found ${boards.length} scrum boards`);
 
-  writeStorage('boards.json', {
+  await boardsConfigStore.writeToStorage('boards.json', {
     lastUpdated: new Date().toISOString(),
     boards: boards
   });
@@ -65,7 +65,7 @@ async function discoverBoards({ fetchBoards, fetchSprints, readStorage, writeSto
   console.log(`Staleness check: ${staleCount} of ${boards.length} boards are stale`);
 
   // Merge with existing teams config (preserving sub-team entries)
-  const existingTeams = readStorage('teams.json');
+  const existingTeams = await boardsConfigStore.readFromStorage('teams.json');
   const existingByBoard = new Map(); // boardId -> array of team entries
   if (existingTeams?.teams) {
     for (const t of existingTeams.teams) {
@@ -105,7 +105,7 @@ async function discoverBoards({ fetchBoards, fetchSprints, readStorage, writeSto
     }
   }
 
-  writeStorage('teams.json', { teams: mergedTeams });
+  await boardsConfigStore.writeToStorage('teams.json', { teams: mergedTeams });
 
   return { success: true, boardCount: boards.length, staleCount };
 }
@@ -113,7 +113,7 @@ async function discoverBoards({ fetchBoards, fetchSprints, readStorage, writeSto
 /**
  * Process a single board: fetch sprints, fetch sprint reports, transform, cache.
  */
-async function processBoard({ board, hardRefresh, sprintFilter, teamId, fetchSprints, fetchSprintReport, readStorage, writeStorage, jiraHost, onProgress }) {
+async function processBoard({ board, hardRefresh, sprintFilter, teamId, fetchSprints, fetchSprintReport, sprintStore, jiraHost, onProgress }) {
   const effectiveTeamId = teamId || String(board.id);
   const emit = onProgress || (() => {});
   const displayName = sprintFilter ? `${board.name} [${sprintFilter}]` : board.name;
@@ -151,7 +151,7 @@ async function processBoard({ board, hardRefresh, sprintFilter, teamId, fetchSpr
     const sprint = sprintsToProcess[si];
     // Closed-sprint caching: skip if cached and not hard refresh
     if (!hardRefresh && sprint.state === 'closed') {
-      const cached = readStorage(`sprints/${sprint.id}.json`);
+      const cached = await sprintStore.getSprint(sprint.id);
       if (cached) {
         console.log(`  [${displayName}] Using cached: ${sprint.name}`);
         emit({ type: 'sprint', board: displayName, sprint: sprint.name, sprintIndex: si, totalSprints: sprintsToProcess.length, cached: true });
@@ -167,7 +167,7 @@ async function processBoard({ board, hardRefresh, sprintFilter, teamId, fetchSpr
       const rawReport = await fetchSprintReport(board.id, sprint.id);
       const processed = processSprintReport(rawReport, board.id, jiraHost);
 
-      writeStorage(`sprints/${sprint.id}.json`, processed);
+      await sprintStore.writeSprint(effectiveTeamId, board.name, processed);
       sprintResults.push(processed);
 
       const m = processed.metrics;
@@ -180,20 +180,14 @@ async function processBoard({ board, hardRefresh, sprintFilter, teamId, fetchSpr
   emit({ type: 'board-complete', board: displayName, sprintCount: sprintResults.length });
 
   // Write sprint index keyed by team ID
-  writeStorage(`sprints/team-${effectiveTeamId}.json`, {
-    boardId: board.id,
-    teamId: effectiveTeamId,
-    boardName: board.name,
-    lastUpdated: new Date().toISOString(),
-    sprints: sprintsToProcess.map(s => ({
-      id: s.id,
-      name: s.name,
-      state: s.state,
-      startDate: s.startDate,
-      endDate: s.endDate,
-      completeDate: s.completeDate
-    }))
-  });
+  await sprintStore.writeBoardIndex(effectiveTeamId, board.id, board.name, sprintsToProcess.map(s => ({
+    id: s.id,
+    name: s.name,
+    state: s.state,
+    startDate: s.startDate,
+    endDate: s.endDate,
+    completeDate: s.completeDate
+  })));
 
   // Pick active or most recent closed for dashboard
   const dashboardSprint = activeSprints[0] || closedSprints[0] || null;
@@ -247,12 +241,12 @@ function computeRollingMetrics(sprintResults, count = ROLLING_SPRINT_COUNT) {
 /**
  * Full refresh: process all enabled boards and generate dashboard summary.
  */
-async function performRefresh({ hardRefresh, fetchBoards: _fetchBoards, fetchSprints, fetchSprintReport, readStorage, writeStorage, jiraHost, onProgress }) {
+async function performRefresh({ hardRefresh, fetchBoards: _fetchBoards, fetchSprints, fetchSprintReport, boardsConfigStore, sprintStore, jiraHost, onProgress }) {
   console.log(`Starting refresh (hardRefresh: ${hardRefresh})`);
   const refreshStart = Date.now();
 
   // Get enabled boards
-  const teamsData = readStorage('teams.json');
+  const teamsData = await boardsConfigStore.readFromStorage('teams.json');
   const enabledTeams = teamsData?.teams?.filter(t => t.enabled !== false) || [];
 
   if (enabledTeams.length === 0) {
@@ -265,7 +259,7 @@ async function performRefresh({ hardRefresh, fetchBoards: _fetchBoards, fetchSpr
   if (onProgress) onProgress({ type: 'refresh-start', totalBoards });
 
   // Also update boards list
-  const boardsData = readStorage('boards.json');
+  const boardsData = await boardsConfigStore.readFromStorage('boards.json');
   const _allBoards = boardsData?.boards || [];
 
   // Process boards with concurrency limit of 2
@@ -296,8 +290,7 @@ async function performRefresh({ hardRefresh, fetchBoards: _fetchBoards, fetchSpr
         teamId: effectiveTeamId,
         fetchSprints,
         fetchSprintReport,
-        readStorage,
-        writeStorage,
+        sprintStore,
         jiraHost,
         onProgress: boardOnProgress
       });
@@ -336,7 +329,7 @@ async function performRefresh({ hardRefresh, fetchBoards: _fetchBoards, fetchSpr
     };
   }
 
-  writeStorage('dashboard-summary.json', dashboardSummary);
+  await boardsConfigStore.writeToStorage('dashboard-summary.json', dashboardSummary);
 
   const totalSprints = boardResults.reduce((sum, r) => sum + r.sprintResults.length, 0);
   const elapsed = ((Date.now() - refreshStart) / 1000).toFixed(1);

@@ -8,8 +8,6 @@
  * with member-derived seeding.
  */
 
-const fieldOptionsStore = require('../field-options-store');
-
 const REGISTRY_KEY = 'team-data/registry.json';
 
 /**
@@ -21,9 +19,9 @@ const REGISTRY_KEY = 'team-data/registry.json';
  * @param {object} stores.teamStore - Team store instance from the module context
  * @returns {{ field, scope, uniqueValues, recordCount } | { error }}
  */
-async function previewMigration(storage, sourceFieldId, { fieldStore, teamStore } = {}) {
-  if (!fieldStore || !teamStore) {
-    throw new Error('previewMigration requires an injected fieldStore and teamStore (from context) — do not construct file-backed stores here');
+async function previewMigration(storage, sourceFieldId, { fieldStore, teamStore, registryStore } = {}) {
+  if (!fieldStore || !teamStore || !registryStore) {
+    throw new Error('previewMigration requires an injected fieldStore, teamStore and registryStore');
   }
   const fieldDefs = await fieldStore.readFieldDefinitions();
 
@@ -44,7 +42,7 @@ async function previewMigration(storage, sourceFieldId, { fieldStore, teamStore 
   let recordCount = 0;
 
   if (scope === 'person') {
-    const registry = await storage.readFromStorage(REGISTRY_KEY);
+    const registry = await registryStore.readRegistry();
     if (registry?.people) {
       for (const person of Object.values(registry.people)) {
         const val = person._appFields?.[sourceFieldId];
@@ -95,20 +93,20 @@ async function previewMigration(storage, sourceFieldId, { fieldStore, teamStore 
  * @param {object} stores.teamStore - Team store instance from the module context
  * @param {object} stores.auditLog - Audit log instance from the module context
  */
-async function executeMigration(storage, params, actorEmail, { fieldStore, teamStore, auditLog } = {}) {
-  if (!fieldStore || !teamStore || !auditLog) {
-    throw new Error('executeMigration requires an injected fieldStore, teamStore and auditLog (from context) — do not construct file-backed stores here');
+async function executeMigration(storage, params, actorEmail, { fieldStore, teamStore, auditLog, registryStore, fieldOptionsStore } = {}) {
+  if (!fieldStore || !teamStore || !auditLog || !registryStore || !fieldOptionsStore) {
+    throw new Error('executeMigration requires injected fieldStore, teamStore, auditLog, registryStore and fieldOptionsStore instances');
   }
   const { sourceFieldId, optionSetName, optionSetLabel, createCounterpart, counterpartLabel, seedFromMembers } = params;
 
   // Validate option set doesn't already exist
-  const existing = await fieldOptionsStore.readFieldOptions(storage, optionSetName);
+  const existing = await fieldOptionsStore.readFieldOptions(optionSetName);
   if (existing) {
     return { error: `Field option set "${optionSetName}" already exists` };
   }
 
   // Preview to get values and validate
-  const preview = await previewMigration(storage, sourceFieldId, { fieldStore, teamStore });
+  const preview = await previewMigration(storage, sourceFieldId, { fieldStore, teamStore, registryStore });
   if (preview.error) return preview;
 
   const summary = {
@@ -121,7 +119,7 @@ async function executeMigration(storage, params, actorEmail, { fieldStore, teamS
   };
 
   // Step 1: Create the field option set from extracted values
-  await fieldOptionsStore.replaceValues(storage, optionSetName, preview.uniqueValues, optionSetLabel, actorEmail, auditLog);
+  await fieldOptionsStore.replaceValues(optionSetName, preview.uniqueValues, optionSetLabel, actorEmail);
 
   // Step 2: Update the source field to link to the option set
   await fieldStore.updateFieldDefinition(preview.scope, sourceFieldId, {
@@ -133,19 +131,40 @@ async function executeMigration(storage, params, actorEmail, { fieldStore, teamS
 
   // Step 2b: Convert any string values to arrays in source records
   if (preview.scope === 'person') {
-    const registry = await storage.readFromStorage(REGISTRY_KEY);
+    const usesDatabase = !!(registryStore && registryStore.usesDatabase);
+    const registry = await registryStore.readRegistry();
     if (registry?.people) {
       let converted = 0;
-      for (const person of Object.values(registry.people)) {
-        const val = person._appFields?.[sourceFieldId];
-        if (val != null && typeof val === 'string') {
-          person._appFields[sourceFieldId] = [val.trim()];
-          converted++;
+      if (usesDatabase) {
+        // MongoDB path: targeted per-person update, mirroring the team
+        // branch below (teamStore.updateTeamFields) rather than the
+        // file path's whole-registry write.
+        for (const [uid, person] of Object.entries(registry.people)) {
+          const val = person._appFields?.[sourceFieldId];
+          if (val != null && typeof val === 'string') {
+            person._appFields[sourceFieldId] = [val.trim()];
+            await registryStore.upsertPerson(uid, person);
+            converted++;
+          }
         }
-      }
-      if (converted > 0) {
-        await storage.writeToStorage(REGISTRY_KEY, registry);
-        summary.valuesConverted = converted;
+        if (converted > 0) {
+          summary.valuesConverted = converted;
+        }
+      } else {
+        // File path: unchanged from pre-migration behavior. Do not
+        // "improve" this — it is the production code path and must stay
+        // byte-for-byte identical.
+        for (const person of Object.values(registry.people)) {
+          const val = person._appFields?.[sourceFieldId];
+          if (val != null && typeof val === 'string') {
+            person._appFields[sourceFieldId] = [val.trim()];
+            converted++;
+          }
+        }
+        if (converted > 0) {
+          await storage.writeToStorage(REGISTRY_KEY, registry);
+          summary.valuesConverted = converted;
+        }
       }
     }
   } else if (!teamStore.usesDatabase) {
@@ -210,7 +229,7 @@ async function executeMigration(storage, params, actorEmail, { fieldStore, teamS
 
     // Step 4: Seed counterpart team field from person members
     if (seedFromMembers && preview.scope === 'person' && counterpartScope === 'team') {
-      const registry = await storage.readFromStorage(REGISTRY_KEY);
+      const registry = await registryStore.readRegistry();
       const teamsData = await teamStore.readTeams();
 
       if (registry?.people && teamsData?.teams) {

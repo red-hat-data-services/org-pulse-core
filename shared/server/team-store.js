@@ -1,9 +1,10 @@
 /**
  * Team CRUD operations with audit logging.
  * Reads/writes data/team-data/teams.json and updates teamIds on registry persons.
- * Supports both MongoDB (via Mongoose model) and file-based storage for teams.
- * The registry (team membership) always stays file-based in this task — its
- * own MongoDB migration is a later task (registry.json has its own model).
+ * Supports both MongoDB (via Mongoose model) and file-based storage for teams,
+ * independently of the registry's own backend (see registry-store.js) —
+ * `options.registryStore` selects the registry's path, `options.model`
+ * selects the team's path.
  */
 
 const crypto = require('crypto');
@@ -81,6 +82,9 @@ const MAX_DESCRIPTION_LENGTH = 2000;
  * @param {object} [options={}] - Options
  * @param {object} [options.model] - Optional Mongoose Team model for MongoDB path
  * @param {object} options.auditLog - Audit log instance (from the module context). Required — no fallback.
+ * @param {object} options.registryStore - Dual-path registry store (from the
+ *   module context), used for the person-side of team assignment. Required —
+ *   no fallback.
  * @returns {object} Team store API
  */
 function createTeamStore(storage, options = {}) {
@@ -88,7 +92,11 @@ function createTeamStore(storage, options = {}) {
   if (!options.auditLog) {
     throw new Error('createTeamStore requires options.auditLog (from the module context) — there is no fallback');
   }
+  if (!options.registryStore) {
+    throw new Error('createTeamStore requires options.registryStore (from the module context) — there is no fallback');
+  }
   const { appendAuditEntry } = options.auditLog;
+  const registryStore = options.registryStore;
 
   // Map a Mongo document to the file-shaped team object.
   function toTeamShape(doc) {
@@ -311,25 +319,29 @@ function createTeamStore(storage, options = {}) {
       // vanish from the unassigned list. The file path keeps the original
       // order (delete team, then clean registry) because it updates both
       // under one multi-lock and that ordering doesn't have this hazard.
-      const registryMutex = getStorageMutex(REGISTRY_KEY);
-      await registryMutex.runExclusive(async () => {
-        const registry = await storage.readFromStorage(REGISTRY_KEY);
-        if (registry && registry.people) {
-          let changed = false;
-          for (const person of Object.values(registry.people)) {
-            if (Array.isArray(person.teamIds)) {
-              const idx = person.teamIds.indexOf(teamId);
-              if (idx !== -1) {
-                person.teamIds.splice(idx, 1);
-                changed = true;
+      if (registryStore.usesDatabase) {
+        await registryStore.removeTeamFromAllPeople(teamId);
+      } else {
+        const registryMutex = getStorageMutex(REGISTRY_KEY);
+        await registryMutex.runExclusive(async () => {
+          const registry = await storage.readFromStorage(REGISTRY_KEY);
+          if (registry && registry.people) {
+            let changed = false;
+            for (const person of Object.values(registry.people)) {
+              if (Array.isArray(person.teamIds)) {
+                const idx = person.teamIds.indexOf(teamId);
+                if (idx !== -1) {
+                  person.teamIds.splice(idx, 1);
+                  changed = true;
+                }
               }
             }
+            if (changed) {
+              await storage.writeToStorage(REGISTRY_KEY, registry);
+            }
           }
-          if (changed) {
-            await storage.writeToStorage(REGISTRY_KEY, registry);
-          }
-        }
-      });
+        });
+      }
 
       // Another caller can delete the same team between the findOne above and
       // this line. Only the caller that actually removed the document reports
@@ -409,6 +421,30 @@ function createTeamStore(storage, options = {}) {
     const data = await readTeams();
     if (!data.teams[teamId]) return { error: 'Team not found' };
 
+    if (registryStore.usesDatabase) {
+      const result = await registryStore.addTeamToPerson(uid, teamId);
+      const person = result.person;
+      if (!person) return { error: 'Person not found' };
+      if (!result.changed) {
+        return { skipped: true, reason: 'Already assigned' };
+      }
+      const oldTeamIds = Array.isArray(person.teamIds) ? person.teamIds : [];
+
+      await appendAuditEntry({
+        action: 'person.team.assign',
+        actor: actorEmail,
+        entityType: 'person',
+        entityId: uid,
+        entityLabel: person.name,
+        field: 'teamIds',
+        oldValue: oldTeamIds,
+        newValue: [...oldTeamIds, teamId],
+        detail: `Assigned to team "${data.teams[teamId].name}"`
+      });
+
+      return { assigned: true };
+    }
+
     const mutex = getStorageMutex(REGISTRY_KEY);
     return mutex.runExclusive(async () => {
       const registry = await storage.readFromStorage(REGISTRY_KEY);
@@ -451,6 +487,41 @@ function createTeamStore(storage, options = {}) {
     if (!isSafeKey(teamId)) return { error: 'Invalid team ID' };
     const data = await readTeams();
     if (!data.teams[teamId]) return { error: 'Team not found' };
+
+    if (registryStore.usesDatabase) {
+      // Targeted per-person reads+writes rather than one whole-registry
+      // read-modify-write, so an unrelated concurrent person update can't
+      // be clobbered by this bulk operation's stale copy of it.
+      const assigned = [];
+      const skipped = [];
+
+      for (const uid of uids) {
+        if (!isSafeKey(uid)) { skipped.push(uid); continue; }
+        const result = await registryStore.addTeamToPerson(uid, teamId);
+        const person = result.person;
+        if (!person || !result.changed) {
+          skipped.push(uid);
+          continue;
+        }
+
+        const oldTeamIds = Array.isArray(person.teamIds) ? person.teamIds : [];
+        assigned.push(uid);
+
+        await appendAuditEntry({
+          action: 'person.team.assign',
+          actor: actorEmail,
+          entityType: 'person',
+          entityId: uid,
+          entityLabel: person.name,
+          field: 'teamIds',
+          oldValue: oldTeamIds,
+          newValue: [...oldTeamIds, teamId],
+          detail: `Assigned to team "${data.teams[teamId].name}" (bulk)`
+        });
+      }
+
+      return { assigned, skipped };
+    }
 
     const mutex = getStorageMutex(REGISTRY_KEY);
     return mutex.runExclusive(async () => {
@@ -503,6 +574,29 @@ function createTeamStore(storage, options = {}) {
     if (!isSafeKey(uid)) return { error: 'Invalid person UID' };
     const data = await readTeams();
     if (!data.teams[teamId]) return { error: 'Team not found' };
+
+    if (registryStore.usesDatabase) {
+      const result = await registryStore.removeTeamFromPerson(uid, teamId);
+      const person = result.person;
+      if (!person) return { error: 'Person not found' };
+      if (!result.changed) return { skipped: true, reason: 'Not assigned' };
+      const oldTeamIds = person.teamIds;
+      const newTeamIds = oldTeamIds.filter(id => id !== teamId);
+
+      await appendAuditEntry({
+        action: 'person.team.unassign',
+        actor: actorEmail,
+        entityType: 'person',
+        entityId: uid,
+        entityLabel: person.name,
+        field: 'teamIds',
+        oldValue: oldTeamIds,
+        newValue: newTeamIds,
+        detail: `Unassigned from team "${data.teams[teamId].name}"`
+      });
+
+      return { unassigned: true };
+    }
 
     const mutex = getStorageMutex(REGISTRY_KEY);
     return mutex.runExclusive(async () => {
@@ -724,6 +818,35 @@ function createTeamStore(storage, options = {}) {
         });
       }
 
+      await writeTeamsFile(data);
+      return team;
+    });
+  }
+
+  /** Remove selected team metadata fields with one targeted write. */
+  async function deleteTeamFields(teamId, fieldIds) {
+    if (!isSafeKey(teamId)) return null;
+    if (Model) {
+      const $unset = {};
+      for (const fieldId of fieldIds) {
+        if (!isSafeKey(fieldId) || fieldId.includes('.') || fieldId.startsWith('$')) {
+          throw new Error(`Invalid field key: ${fieldId}`);
+        }
+        $unset[`metadata.${fieldId}`] = '';
+      }
+      if (Object.keys($unset).length === 0) {
+        const doc = await Model.findOne({ teamId }).lean();
+        return doc ? toTeamShape(doc) : null;
+      }
+      const doc = await Model.findOneAndUpdate({ teamId }, { $unset }, { returnDocument: 'after', lean: true });
+      return doc ? toTeamShape(doc) : null;
+    }
+    const mutex = getStorageMutex(TEAMS_KEY);
+    return mutex.runExclusive(async () => {
+      const data = await readTeamsFile();
+      const team = data.teams[teamId];
+      if (!team) return null;
+      for (const fieldId of fieldIds) delete team.metadata?.[fieldId];
       await writeTeamsFile(data);
       return team;
     });
@@ -962,6 +1085,7 @@ function createTeamStore(storage, options = {}) {
     unassignMember,
     getUnassigned,
     updateTeamFields,
+    deleteTeamFields,
     updateTeamBoards,
     addTeamManager,
     removeTeamManager,

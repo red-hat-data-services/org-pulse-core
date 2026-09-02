@@ -16,7 +16,8 @@ function blockDuringImpersonation(req, res, next) {
 }
 
 function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
-  const { tokenValidator, roleStore, getFileMtime } = options;
+  const { tokenValidator, roleStore, getFileMtime, registryStore, configStore } = options;
+  const allowlistStore = configStore || { readFromStorage, writeToStorage };
 
   // Registry cache for resolveUserUid (30s TTL + mtime invalidation)
   let _registryCache = null;
@@ -29,7 +30,11 @@ function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
     if (_registryCache && now < _registryCacheExpiry) {
       return _registryCache;
     }
-    if (getFileMtime) {
+    // The MongoDB path has no file mtime to check cheaply, so it falls back
+    // to plain TTL expiry. The file path keeps the existing mtime shortcut,
+    // which avoids re-reading (and re-parsing) an unchanged multi-MB file
+    // every 30s.
+    if (!(registryStore && registryStore.usesDatabase) && getFileMtime) {
       const mtime = await getFileMtime('team-data/registry.json');
       if (_registryCache && mtime === _registryCacheMtime) {
         _registryCacheExpiry = now + REGISTRY_CACHE_TTL_MS;
@@ -37,7 +42,9 @@ function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
       }
       _registryCacheMtime = mtime;
     }
-    _registryCache = await readFromStorage('team-data/registry.json');
+    _registryCache = registryStore
+      ? await registryStore.readRegistry()
+      : await readFromStorage('team-data/registry.json');
     _registryCacheExpiry = now + REGISTRY_CACHE_TTL_MS;
     return _registryCache;
   }
@@ -46,7 +53,7 @@ function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
     if (roleStore) {
       return await roleStore.hasRole(email, 'admin');
     }
-    const adminList = await readFromStorage('allowlist.json')
+    const adminList = await allowlistStore.readFromStorage('allowlist.json')
     return adminList && adminList.emails && adminList.emails.includes(email)
   }
 
@@ -81,7 +88,7 @@ function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
     }
 
     // Legacy path (no role store)
-    const existing = await readFromStorage('allowlist.json')
+    const existing = await allowlistStore.readFromStorage('allowlist.json')
     const currentEmails = (existing && existing.emails) ? existing.emails : []
 
     const adminEmails = process.env.ADMIN_EMAILS
@@ -102,7 +109,7 @@ function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
     const merged = [...new Set([...currentEmails, ...envEmails])]
 
     if (merged.length !== currentEmails.length) {
-      await writeToStorage('allowlist.json', { emails: merged })
+      await allowlistStore.writeToStorage('allowlist.json', { emails: merged })
       console.log(`Admin list: merged to ${merged.length} admin(s) (${merged.length - currentEmails.length} added from ADMIN_EMAILS)`)
     } else {
       console.log(`Admin list: ${merged.length} admin(s) loaded`)
@@ -217,10 +224,10 @@ function createAuthMiddleware(readFromStorage, writeToStorage, options = {}) {
         console.log(`Roles: auto-added first user ${req.userEmail} as admin`);
       }
     } else {
-      const adminList = await readFromStorage('allowlist.json')
+      const adminList = await allowlistStore.readFromStorage('allowlist.json')
       if (!adminList || !adminList.emails || adminList.emails.length === 0) {
         const seeded = { emails: [req.userEmail] }
-        await writeToStorage('allowlist.json', seeded)
+        await allowlistStore.writeToStorage('allowlist.json', seeded)
         console.log(`Admin list: auto-added first user ${req.userEmail}`)
       }
     }

@@ -29,7 +29,7 @@ function sanitizeError(message, token) {
  * Sync a single git-static module.
  * Clones or fetches+resets the repo.
  */
-async function syncModule(storage, mod) {
+async function syncModule(storage, mod, configStore = storage) {
   if (mod.type !== 'git-static') {
     return { status: 'skipped', message: 'Not a git-static module' };
   }
@@ -104,13 +104,13 @@ async function syncModule(storage, mod) {
     }
 
     const duration = Date.now() - startTime;
-    await modulesConfig.updateSyncStatus(storage, mod.slug, 'success', null);
+    await modulesConfig.updateSyncStatus(configStore, mod.slug, 'success', null);
     console.log(`[module-sync] ${mod.slug}: synced in ${duration}ms`);
     return { status: 'success', message: `Synced successfully`, duration };
   } catch (err) {
     const duration = Date.now() - startTime;
     const safeMessage = sanitizeError(err.message, mod.gitToken);
-    await modulesConfig.updateSyncStatus(storage, mod.slug, 'error', safeMessage);
+    await modulesConfig.updateSyncStatus(configStore, mod.slug, 'error', safeMessage);
     console.error(`[module-sync] ${mod.slug}: failed -`, safeMessage);
     return { status: 'error', message: safeMessage, duration };
   } finally {
@@ -140,15 +140,15 @@ function execGit(args, options, token) {
 /**
  * Sync all git-static modules sequentially.
  */
-async function syncAllModules(storage) {
-  const config = await modulesConfig.loadModulesConfig(storage);
+async function syncAllModules(storage, configStore = storage) {
+  const config = await modulesConfig.loadModulesConfig(configStore);
   if (!config || !config.modules) return { results: [] };
 
   const gitModules = config.modules.filter(m => m.type === 'git-static');
   const results = [];
 
   for (const mod of gitModules) {
-    const result = await syncModule(storage, mod);
+    const result = await syncModule(storage, mod, configStore);
     results.push({ slug: mod.slug, ...result });
   }
 
@@ -159,13 +159,13 @@ async function syncAllModules(storage) {
  * Schedule daily git sync for all modules.
  */
 let dailyTimer = null;
-function scheduleDaily(storage) {
+function scheduleDaily(storage, configStore = storage) {
   if (dailyTimer) return;
   const INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
   dailyTimer = setInterval(async () => {
     console.log('[module-sync] Daily sync starting...');
     try {
-      await syncAllModules(storage);
+      await syncAllModules(storage, configStore);
     } catch (err) {
       console.error('[module-sync] Daily sync error:', err.message);
     }

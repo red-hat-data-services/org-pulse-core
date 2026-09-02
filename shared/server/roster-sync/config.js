@@ -1,5 +1,5 @@
 /**
- * Roster sync configuration stored on PVC.
+ * Roster sync configuration stored through the dual-path config store.
  * Manages org roots, Google Sheet settings, and sync metadata.
  */
 
@@ -15,7 +15,8 @@ async function loadConfig(storage) {
 
   const config = await storage.readFromStorage(CONFIG_KEY);
   if (config) {
-    // Ensure teamDataSource has a default
+    // Keep the historical runtime-only default. It is persisted only when a
+    // later explicit save or migration already writes the config.
     if (!config.teamDataSource) {
       config.teamDataSource = 'sheets';
     }
@@ -52,8 +53,7 @@ async function migrateFromLegacyConfig(storage) {
 
 /**
  * In-memory migration: transforms legacy fieldMapping to teamStructure.
- * Does NOT write back to disk — the PVC file stays in old format
- * until the next explicit save or sync.
+ * Does NOT write back to the active store until the next explicit save or sync.
  */
 function migrateConfig(config) {
   // Already has teamStructure — no migration needed
@@ -98,7 +98,7 @@ function migrateConfig(config) {
 
 /**
  * Migrate legacy gitlabGroups to gitlabInstances.
- * Writes back to disk immediately so the file reflects runtime state.
+ * Writes back immediately so the active store reflects runtime state.
  */
 async function migrateGitlabInstances(config, storage) {
   if (!config) return config;
@@ -116,7 +116,7 @@ async function migrateGitlabInstances(config, storage) {
     groups: [...groups]
   }];
 
-  // Write back to disk immediately
+  // Write back to the active store immediately
   if (storage && storage.writeToStorage) {
     await storage.writeToStorage(CONFIG_KEY, config);
   }

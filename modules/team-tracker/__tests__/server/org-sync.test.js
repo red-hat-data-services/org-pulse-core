@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest'
+import mongoose from 'mongoose'
 
 
 // Clear the org display names cache before each test
@@ -6,6 +7,9 @@ const rosterSyncConfig = require('../../../../shared/server/roster-sync/config')
 const googleSheets = require('../../../../shared/server/google-sheets')
 const { createFieldStore } = require('../../../../shared/server/field-store')
 const { createAuditLog } = require('../../../../shared/server/audit-log')
+const { createRegistryStore } = require('../../../../shared/server/registry-store')
+const { createConfigStore } = require('../../../../shared/server/config-store')
+const { configSchema } = require('../../../../shared/server/models/config')
 
 const {
   deriveTeamsFromPeople,
@@ -69,7 +73,7 @@ describe('deriveTeamsFromPeople', () => {
     )
     const storage = makeStorage(data)
 
-    const teams = await deriveTeamsFromPeople(storage)
+    const teams = await deriveTeamsFromPeople(storage, createRegistryStore(storage))
     expect(teams).toHaveLength(2)
     expect(teams).toEqual(expect.arrayContaining([
       { org: 'Org Alpha', name: 'Team A', boardUrls: [] },
@@ -87,7 +91,7 @@ describe('deriveTeamsFromPeople', () => {
     )
     const storage = makeStorage(data)
 
-    const teams = await deriveTeamsFromPeople(storage)
+    const teams = await deriveTeamsFromPeople(storage, createRegistryStore(storage))
     expect(teams).toHaveLength(2)
     expect(teams.map(t => t.name)).toEqual(['Team A', 'Team B'])
   })
@@ -104,7 +108,7 @@ describe('deriveTeamsFromPeople', () => {
     }
     const storage = makeStorage(data)
 
-    const teams = await deriveTeamsFromPeople(storage)
+    const teams = await deriveTeamsFromPeople(storage, createRegistryStore(storage))
     expect(teams).toHaveLength(0)
   })
 
@@ -119,7 +123,7 @@ describe('deriveTeamsFromPeople', () => {
     )
     const storage = makeStorage(data)
 
-    const teams = await deriveTeamsFromPeople(storage)
+    const teams = await deriveTeamsFromPeople(storage, createRegistryStore(storage))
     expect(teams).toHaveLength(0)
   })
 
@@ -134,7 +138,7 @@ describe('deriveTeamsFromPeople', () => {
     )
     const storage = makeStorage(data)
 
-    const teams = await deriveTeamsFromPeople(storage)
+    const teams = await deriveTeamsFromPeople(storage, createRegistryStore(storage))
     expect(teams).toHaveLength(1)
     expect(teams[0].name).toBe('Team A')
   })
@@ -149,7 +153,7 @@ describe('deriveTeamsFromPeople', () => {
     )
     const storage = makeStorage(data)
 
-    const teams = await deriveTeamsFromPeople(storage)
+    const teams = await deriveTeamsFromPeople(storage, createRegistryStore(storage))
     expect(teams).toHaveLength(1)
     expect(teams[0].name).toBe('Legacy Team')
   })
@@ -175,15 +179,17 @@ describe('runSync', () => {
       ]
     )
     const storage = makeStorage(data)
-    const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
+    const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage), registryStore: createRegistryStore(storage) })
 
-    const result = await runSync(storage, null, {}, {}, fieldStore)
+    const result = await runSync(storage, null, {}, {}, fieldStore, createRegistryStore(storage), createConfigStore(storage))
     expect(result.status).toBe('success')
     expect(result.teamCount).toBe(2)
 
     const meta = data['org-roster/teams-metadata.json']
     expect(meta).toBeTruthy()
     expect(meta.teams).toHaveLength(2)
+    expect(data['org-roster/components.json']).toEqual(expect.objectContaining({ components: {} }))
+    expect(data['org-roster/sync-status.json']).toEqual(expect.objectContaining({ status: 'success' }))
   })
 
   it('falls back to derived teams when team-boards tab fetch fails', async () => {
@@ -195,10 +201,10 @@ describe('runSync', () => {
       ]
     )
     const storage = makeStorage(data)
-    const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
+    const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage), registryStore: createRegistryStore(storage) })
     fetchRawSheetSpy.mockRejectedValue(new Error('Sheet not found'))
 
-    const result = await runSync(storage, 'sheet123', { teamBoardsTab: 'Missing Tab' }, {}, fieldStore)
+    const result = await runSync(storage, 'sheet123', { teamBoardsTab: 'Missing Tab' }, {}, fieldStore, createRegistryStore(storage), createConfigStore(storage))
     expect(result.status).toBe('success')
     expect(result.teamCount).toBe(1)
 
@@ -215,11 +221,53 @@ describe('runSync', () => {
       ]
     )
     const storage = makeStorage(data)
-    const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
+    const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage), registryStore: createRegistryStore(storage) })
 
-    await runSync(storage, null, {}, {}, fieldStore)
+    await runSync(storage, null, {}, {}, fieldStore, createRegistryStore(storage), createConfigStore(storage))
 
     expect(fetchRawSheetSpy).not.toHaveBeenCalled()
+  })
+
+  describe('with a MongoDB-backed configStore', () => {
+    let connection
+    let ConfigModel
+
+    beforeAll(async () => {
+      connection = await mongoose.createConnection(process.env.MONGODB_URI, { dbName: `test_org_sync_${process.pid}` }).asPromise()
+      ConfigModel = connection.model('core__config', configSchema, 'core__config')
+    })
+
+    afterAll(async () => {
+      await connection.db.dropDatabase()
+      await connection.close()
+    })
+
+    beforeEach(async () => {
+      await ConfigModel.deleteMany({})
+    })
+
+    it('writes and reads all sync-owned org-roster keys without touching their files', async () => {
+      const data = makeRosterData(
+        [{ uid: 'org1', displayName: 'Org Alpha' }],
+        [{ orgKey: 'org1', name: 'Alice', uid: 'alice', email: 'a@t.com', title: 'Eng', _teamGrouping: 'Team A' }]
+      )
+      const storage = makeStorage(data)
+      const registryStore = createRegistryStore(storage)
+      const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage), registryStore })
+      const configStore = createConfigStore(storage, { model: ConfigModel })
+      await configStore.writeToStorage('team-data/config.json', data['team-data/config.json'])
+
+      await runSync(storage, null, {}, {}, fieldStore, registryStore, configStore)
+
+      expect(data['org-roster/teams-metadata.json']).toBeUndefined()
+      expect(data['org-roster/components.json']).toBeUndefined()
+      expect(data['org-roster/sync-status.json']).toBeUndefined()
+      expect(await configStore.readFromStorage('org-roster/teams-metadata.json')).toEqual(expect.objectContaining({
+        teams: [expect.objectContaining({ name: 'Team A' })]
+      }))
+      expect(await configStore.readFromStorage('org-roster/components.json')).toEqual(expect.objectContaining({ components: {} }))
+      expect(await configStore.readFromStorage('org-roster/sync-status.json')).toEqual(expect.objectContaining({ status: 'success' }))
+    })
   })
 })
 

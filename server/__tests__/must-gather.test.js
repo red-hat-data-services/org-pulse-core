@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
 const { collect } = require('../must-gather')
+const { createRegistryStore } = require('../../shared/server/registry-store')
 
 function makeStorage(data = {}) {
   return {
@@ -55,6 +56,52 @@ describe('must-gather collect', () => {
     expect(bundle.modules).toEqual({ 'team-tracker': { test: true } })
     expect(bundle.requestStats).toBeDefined()
     expect(bundle.recentErrors).toBeDefined()
+  })
+
+  it('reads allowlist diagnostics from configStore', async () => {
+    const bundle = await collect({
+      storageModule: makeStorage({ 'allowlist.json': { emails: ['stale@test.com'] } }),
+      configStore: makeStorage({
+        'allowlist.json': { emails: ['one@test.com', 'two@test.com'] }
+      }),
+      builtInModules: [],
+      enabledSlugs: new Set(),
+      collectModuleDiagnostics: async () => ({}),
+      diagnosticsRegistry: {},
+      gitSync: null,
+      redact: 'minimal'
+    })
+
+    expect(bundle.allowlist.emailCount).toBe(2)
+  })
+
+  it('reads git-static module diagnostics from configStore', async () => {
+    const gitSync = {
+      async getSyncStatus(store) {
+        const config = await store.readFromStorage('modules-config.json')
+        return { modules: config.modules.map(module => ({ slug: module.slug })) }
+      }
+    }
+    const bundle = await collect({
+      storageModule: makeStorage({
+        'modules-config.json': { modules: [{ slug: 'stale-file-module' }] }
+      }),
+      configStore: makeStorage({
+        'modules-config.json': { modules: [{ slug: 'mongo-module' }] }
+      }),
+      builtInModules: [],
+      enabledSlugs: new Set(),
+      collectModuleDiagnostics: async () => ({}),
+      diagnosticsRegistry: {},
+      gitSync,
+      redact: 'minimal'
+    })
+
+    expect(bundle.gitStaticModules).toEqual({
+      count: 1,
+      slugs: ['mongo-module'],
+      syncStatus: { modules: [{ slug: 'mongo-module' }] }
+    })
   })
 
   it('system.env reports token presence not values', async () => {
@@ -116,6 +163,7 @@ describe('must-gather collect', () => {
         test: { unresolvedNames: ['Bob Leader'] }
       }),
       diagnosticsRegistry: {},
+      registryStore: createRegistryStore(storage),
       redact: 'aggressive'
     })
 
@@ -141,6 +189,7 @@ describe('must-gather collect', () => {
         test: { config: { googleSheetId: '1abc-long-sheet-id-here' } }
       }),
       diagnosticsRegistry: {},
+      registryStore: createRegistryStore(storage),
       redact: 'aggressive'
     })
 
@@ -178,6 +227,7 @@ describe('must-gather collect', () => {
       enabledSlugs: new Set(),
       collectModuleDiagnostics: async () => ({}),
       diagnosticsRegistry: {},
+      registryStore: createRegistryStore(storage),
       redact: 'aggressive'
     })
 

@@ -17,7 +17,10 @@ let _exporting = false;
 /**
  * Handle GET /api/export/test-data
  */
-async function handleExport(req, res, storageModule, exportRegistry) {
+async function handleExport(req, res, storageModule, exportRegistry, registryStore, configStore) {
+  if (!configStore) {
+    throw new Error('handleExport requires configStore — there is no storage fallback');
+  }
   if (_exporting) {
     return res.status(429).json({ error: 'Export already in progress' });
   }
@@ -27,11 +30,9 @@ async function handleExport(req, res, storageModule, exportRegistry) {
   let tmpDir = null;
 
   try {
-    const { readFromStorage } = storageModule;
-
     // Build PII mapping from roster
     const { readRosterFull } = require('../shared/server/roster');
-    const roster = await readRosterFull(storageModule);
+    const roster = await readRosterFull(configStore, registryStore);
     const mapping = buildMapping(roster);
 
     // Create temp directory structure
@@ -54,7 +55,8 @@ async function handleExport(req, res, storageModule, exportRegistry) {
 
     // Platform-level files (orchestrator handles directly)
     // allowlist.json - anonymize emails
-    const allowlist = await readFromStorage('allowlist.json');
+    const platformFiles = await readPlatformFiles(configStore);
+    const allowlist = platformFiles.allowlist;
     if (allowlist) {
       const anonymizedAllowlist = { ...allowlist };
       if (Array.isArray(anonymizedAllowlist.emails)) {
@@ -66,7 +68,7 @@ async function handleExport(req, res, storageModule, exportRegistry) {
     }
 
     // modules-state.json - include as-is
-    const modulesState = await readFromStorage('modules-state.json');
+    const modulesState = platformFiles.modulesState;
     if (modulesState) {
       addFile('modules-state.json', modulesState);
     }
@@ -74,7 +76,7 @@ async function handleExport(req, res, storageModule, exportRegistry) {
     // last-refreshed.json - include as-is (may also be handled by TT hook, check for dup)
     const lastRefreshedPath = path.join(dataDir, 'last-refreshed.json');
     if (!fs.existsSync(lastRefreshedPath)) {
-      const lastRefreshed = await readFromStorage('last-refreshed.json');
+      const lastRefreshed = platformFiles.lastRefreshed;
       if (lastRefreshed) {
         addFile('last-refreshed.json', lastRefreshed);
       }
@@ -121,4 +123,13 @@ async function handleExport(req, res, storageModule, exportRegistry) {
   }
 }
 
-module.exports = { handleExport };
+async function readPlatformFiles(configStore) {
+  const [allowlist, modulesState, lastRefreshed] = await Promise.all([
+    configStore.readFromStorage('allowlist.json'),
+    configStore.readFromStorage('modules-state.json'),
+    configStore.readFromStorage('last-refreshed.json')
+  ]);
+  return { allowlist, modulesState, lastRefreshed };
+}
+
+module.exports = { handleExport, readPlatformFiles };

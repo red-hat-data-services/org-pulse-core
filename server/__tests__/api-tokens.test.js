@@ -1,7 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
+import mongoose from 'mongoose'
 
 const apiTokens = require('../api-tokens')
 const { createScopeRegistry } = require('../../shared/server/scope-registry')
+const { apiTokenSchema } = require('../../shared/server/models/api-token')
 
 function createMockStorage() {
   const store = {}
@@ -428,5 +430,188 @@ describe('api-tokens', () => {
       await Promise.all(promises)
       expect(await apiTokens.listUserTokens('user@test.com')).toHaveLength(5)
     })
+  })
+})
+
+describe('api-tokens (MongoDB path)', () => {
+  let connection
+  let ApiTokenModel
+  const dbName = 'test_api_tokens_' + process.pid
+
+  beforeAll(async () => {
+    const uri = process.env.MONGODB_URI
+    if (!uri) return
+    connection = await mongoose.createConnection(uri, { dbName })
+    ApiTokenModel = connection.model('core__api_tokens', apiTokenSchema, 'core__api_tokens')
+    await ApiTokenModel.init()
+  })
+
+  afterAll(async () => {
+    if (connection) {
+      await connection.db.dropDatabase()
+      await connection.close()
+    }
+  })
+
+  beforeEach(async () => {
+    if (!ApiTokenModel) return
+    await ApiTokenModel.deleteMany({})
+    await apiTokens.init({ readFromStorage: async () => null, writeToStorage: async () => {} }, {
+      scopeRegistry: createTestScopeRegistry(),
+      model: ApiTokenModel
+    })
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('usesDatabase is true when a model is provided', () => {
+    if (!ApiTokenModel) return
+    expect(apiTokens.usesDatabase()).toBe(true)
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('creates a token and returns the raw token, same shape as the file path', async () => {
+    if (!ApiTokenModel) return
+    const result = await apiTokens.createToken('user@test.com', 'My Token', null)
+    expect(result.token).toMatch(/^tt_[a-f0-9]{32}$/)
+    expect(result.id).toBeTruthy()
+    expect(result.name).toBe('My Token')
+    expect(result.expiresAt).toBeNull()
+    expect(result.scopes).toBeNull()
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('does not leak Mongo internals (_id, __v) from createToken', async () => {
+    if (!ApiTokenModel) return
+    const result = await apiTokens.createToken('user@test.com', 'Test', null)
+    expect(result).not.toHaveProperty('_id')
+    expect(result).not.toHaveProperty('__v')
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('validates a valid token, using the tokenHash index', async () => {
+    if (!ApiTokenModel) return
+    const { token } = await apiTokens.createToken('user@test.com', 'Test', null)
+    const record = await apiTokens.validateToken(token)
+    expect(record).toBeTruthy()
+    expect(record.ownerEmail).toBe('user@test.com')
+    expect(record).not.toHaveProperty('_id')
+    expect(record).not.toHaveProperty('__v')
+
+    // The lookup path used on every authenticated request must be indexed,
+    // not a collection scan.
+    const indexes = await ApiTokenModel.collection.getIndexes()
+    expect(Object.keys(indexes).some(name => name.includes('tokenHash'))).toBe(true)
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('returns null for invalid token', async () => {
+    if (!ApiTokenModel) return
+    expect(await apiTokens.validateToken('tt_0000000000000000000000000000000f')).toBeNull()
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('returns null for expired token', async () => {
+    if (!ApiTokenModel) return
+    const { token, id } = await apiTokens.createToken('user@test.com', 'Expiring', '30d')
+    await ApiTokenModel.updateOne({ id }, { $set: { expiresAt: new Date(Date.now() - 1000).toISOString() } })
+    expect(await apiTokens.validateToken(token)).toBeNull()
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('enforces per-user token limit', async () => {
+    if (!ApiTokenModel) return
+    for (let i = 0; i < 25; i++) {
+      await apiTokens.createToken('user@test.com', `Token ${i}`, null)
+    }
+    await expect(apiTokens.createToken('user@test.com', 'One too many', null)).rejects.toThrow('Token limit reached')
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('per-user limit is independent between users', async () => {
+    if (!ApiTokenModel) return
+    for (let i = 0; i < 25; i++) {
+      await apiTokens.createToken('user1@test.com', `Token ${i}`, null)
+    }
+    const result = await apiTokens.createToken('user2@test.com', 'Token 0', null)
+    expect(result.token).toBeTruthy()
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('lists only tokens belonging to the user, sanitized', async () => {
+    if (!ApiTokenModel) return
+    await apiTokens.createToken('user1@test.com', 'User1 Token', null)
+    await apiTokens.createToken('user2@test.com', 'User2 Token', null)
+    const list = await apiTokens.listUserTokens('user1@test.com')
+    expect(list).toHaveLength(1)
+    expect(list[0].name).toBe('User1 Token')
+    expect(list[0].tokenHash).toBeUndefined()
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('lists all tokens without hashes', async () => {
+    if (!ApiTokenModel) return
+    await apiTokens.createToken('user1@test.com', 'Token 1', null)
+    await apiTokens.createToken('user2@test.com', 'Token 2', null)
+    const list = await apiTokens.listAllTokens()
+    expect(list).toHaveLength(2)
+    expect(list.every(t => t.tokenHash === undefined)).toBe(true)
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('revokes own token', async () => {
+    if (!ApiTokenModel) return
+    const { id } = await apiTokens.createToken('user@test.com', 'Test', null)
+    const result = await apiTokens.revokeToken(id, 'user@test.com')
+    expect(result).toBe(true)
+    expect(await apiTokens.listUserTokens('user@test.com')).toHaveLength(0)
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('does not revoke another user\'s token', async () => {
+    if (!ApiTokenModel) return
+    const { id } = await apiTokens.createToken('user1@test.com', 'Test', null)
+    const result = await apiTokens.revokeToken(id, 'user2@test.com')
+    expect(result).toBe(false)
+    expect(await apiTokens.listUserTokens('user1@test.com')).toHaveLength(1)
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('admin revokes any token regardless of owner', async () => {
+    if (!ApiTokenModel) return
+    const { id } = await apiTokens.createToken('user@test.com', 'Test', null)
+    const result = await apiTokens.adminRevokeToken(id)
+    expect(result).toBe(true)
+    expect(await apiTokens.listAllTokens()).toHaveLength(0)
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('updates scopes on own token', async () => {
+    if (!ApiTokenModel) return
+    const { id } = await apiTokens.createToken('user@test.com', 'Test', null, ['roster:read'])
+    const updated = await apiTokens.updateTokenScopes(id, 'user@test.com', ['metrics:read', 'github:read'])
+    expect(updated.scopes).toEqual(['metrics:read', 'github:read'])
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('returns null when updating scopes on a token not owned by user', async () => {
+    if (!ApiTokenModel) return
+    const { id } = await apiTokens.createToken('user1@test.com', 'Test', null)
+    const result = await apiTokens.updateTokenScopes(id, 'user2@test.com', ['roster:read'])
+    expect(result).toBeNull()
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('admin can update any token\'s scopes (ownerEmail null)', async () => {
+    if (!ApiTokenModel) return
+    const { id } = await apiTokens.createToken('user@test.com', 'Test', null)
+    const updated = await apiTokens.updateTokenScopes(id, null, ['roster:read'])
+    expect(updated.scopes).toEqual(['roster:read'])
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('touchLastUsed updates lastUsedAt on token', async () => {
+    if (!ApiTokenModel) return
+    const { id } = await apiTokens.createToken('user@test.com', 'Test', null)
+    apiTokens.touchLastUsed(id)
+    await new Promise(r => setTimeout(r, 50))
+    const doc = await ApiTokenModel.findOne({ id }).lean()
+    expect(doc.lastUsedAt).toBeTruthy()
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('stores hashed token, not the raw token', async () => {
+    if (!ApiTokenModel) return
+    await apiTokens.createToken('user@test.com', 'Test', null)
+    const doc = await ApiTokenModel.findOne({ ownerEmail: 'user@test.com' }).lean()
+    expect(doc.tokenHash).toBeTruthy()
+    expect(doc.tokenHash).not.toContain('tt_')
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('a second write to the same key does not duplicate tokens', async () => {
+    if (!ApiTokenModel) return
+    await apiTokens.createToken('user@test.com', 'Test', null)
+    expect(await ApiTokenModel.countDocuments({ ownerEmail: 'user@test.com' })).toBe(1)
   })
 })

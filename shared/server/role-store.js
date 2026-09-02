@@ -25,12 +25,25 @@ function normalizeEmail(email, authDomain) {
   return normalized.substring(0, atIdx + 1) + authDomain;
 }
 
+function roleSnapshotFilter(role) {
+  const filter = { _id: role._id, email: role.email, roles: role.roles || [] };
+  for (const field of ['assignedBy', 'assignedAt']) {
+    filter[field] = role[field] === undefined ? { $exists: false } : role[field];
+  }
+  return filter;
+}
+
 function createRoleStore(readFromStorage, writeToStorage, options = {}) {
   const getAuthDomain = typeof options.getAuthDomain === 'function'
     ? options.getAuthDomain
     : () => null;
   const roleRegistry = options.roleRegistry || null;
   const RoleModel = options.model || null;
+  const allowlistStore = options.configStore || {
+    readFromStorage,
+    writeToStorage,
+    usesDatabase: false
+  };
   if (!options.auditLog) {
     throw new Error('createRoleStore requires options.auditLog (from the module context) — there is no fallback');
   }
@@ -69,6 +82,20 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
 
   async function writeRolesFile(data) {
     await writeToStorage(ROLES_FILE, data);
+  }
+
+  async function readAllowlist() {
+    const allowlist = await allowlistStore.readFromStorage(ALLOWLIST_FILE);
+    if (allowlist || !allowlistStore.usesDatabase) return allowlist;
+
+    // MongoDB starts empty during cutover, while the legacy allowlist remains
+    // on the PVC. Read it only as migration input; all subsequent access uses
+    // configStore so live reads and writes cannot split across backends.
+    return readFromStorage(ALLOWLIST_FILE);
+  }
+
+  async function writeAllowlist(data) {
+    await allowlistStore.writeToStorage(ALLOWLIST_FILE, data);
   }
 
   // ─── Core operations ───
@@ -368,7 +395,7 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
       const count = await RoleModel.countDocuments();
       if (count > 0) return false;
 
-      const allowlist = await readFromStorage(ALLOWLIST_FILE);
+      const allowlist = await readAllowlist();
       if (!allowlist || !allowlist.emails || allowlist.emails.length === 0) {
         return false;
       }
@@ -391,7 +418,7 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
       }
       if (ops.length > 0) await RoleModel.bulkWrite(ops);
 
-      await writeToStorage(ALLOWLIST_FILE, {
+      await writeAllowlist({
         _migrated: 'roles',
         _migratedAt: new Date().toISOString(),
         emails: allowlist.emails
@@ -408,7 +435,7 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
         return false;
       }
 
-      const allowlist = await readFromStorage(ALLOWLIST_FILE);
+      const allowlist = await readAllowlist();
       if (!allowlist || !allowlist.emails || allowlist.emails.length === 0) {
         return false;
       }
@@ -435,7 +462,7 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
       await writeRolesFile(rolesData);
 
       const now = new Date().toISOString();
-      await writeToStorage(ALLOWLIST_FILE, {
+      await writeAllowlist({
         _migrated: 'roles.json',
         _migratedAt: now,
         emails: allowlist.emails
@@ -455,29 +482,61 @@ function createRoleStore(readFromStorage, writeToStorage, options = {}) {
       const needsMigration = docs.some(d => normalizeEmail(d.email, authDomain) !== d.email);
       if (!needsMigration) return 0;
 
+      const hello = await RoleModel.db.db.admin().command({ hello: 1 });
+      const supportsTransactions = Boolean(hello.setName || hello.msg === 'isdbgrid');
       let migrated = 0;
       for (const doc of docs) {
         const newEmail = normalizeEmail(doc.email, authDomain);
         if (newEmail === doc.email) continue;
 
-        const existing = await RoleModel.findOne({ email: newEmail }).lean();
-        if (existing) {
-          const mergedRoles = [...new Set([...existing.roles, ...doc.roles])];
-          const update = { roles: mergedRoles };
-          // Keep the newer entry's assignment metadata, matching the file path.
-          if (doc.assignedAt > existing.assignedAt) {
-            update.assignedBy = doc.assignedBy;
-            update.assignedAt = doc.assignedAt;
-          }
-          await RoleModel.updateOne({ email: newEmail }, { $set: update });
-        } else {
-          await RoleModel.updateOne({ email: doc.email }, { $set: { email: newEmail } });
-          migrated++;
+        if (!supportsTransactions) {
+          // Standalone MongoDB cannot atomically merge two documents. A direct
+          // rename is safe only while no target exists; collisions stay intact
+          // for a later run on a transaction-capable deployment.
+          if (await RoleModel.exists({ email: newEmail })) continue;
+          const renamed = await RoleModel.updateOne(roleSnapshotFilter(doc), { $set: { email: newEmail } });
+          migrated += renamed.modifiedCount;
           continue;
         }
 
-        await RoleModel.deleteOne({ email: doc.email });
-        migrated++;
+        const session = await RoleModel.db.startSession();
+        try {
+          const didMigrate = await session.withTransaction(async () => {
+            const source = await RoleModel.collection.findOne({ _id: doc._id }, { session });
+            if (!source || normalizeEmail(source.email, authDomain) !== newEmail) return false;
+
+            const target = await RoleModel.collection.findOne({ email: newEmail }, { session });
+            if (target) {
+              const newer = source.assignedAt > target.assignedAt ? source : target;
+              const updated = await RoleModel.collection.updateOne(
+                roleSnapshotFilter(target),
+                {
+                  $set: {
+                    roles: [...new Set([...(target.roles || []), ...(source.roles || [])])],
+                    assignedBy: newer.assignedBy,
+                    assignedAt: newer.assignedAt
+                  }
+                },
+                { session }
+              );
+              if (updated.matchedCount !== 1) throw new Error('Role migration target changed during transaction');
+            } else {
+              await RoleModel.collection.insertOne({
+                email: newEmail,
+                roles: source.roles || [],
+                assignedBy: source.assignedBy,
+                assignedAt: source.assignedAt
+              }, { session });
+            }
+
+            const removed = await RoleModel.collection.deleteOne(roleSnapshotFilter(source), { session });
+            if (removed.deletedCount !== 1) throw new Error('Role migration source changed during transaction');
+            return true;
+          });
+          if (didMigrate) migrated++;
+        } finally {
+          await session.endSession();
+        }
       }
 
       if (migrated > 0) {

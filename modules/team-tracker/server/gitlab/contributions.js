@@ -156,7 +156,9 @@ async function fetchGroupWindowContributions(groupPath, from, to, credentials) {
     }, credentials);
 
     const group = data.group;
-    if (!group || !group.contributions) break;
+    if (!group || !group.contributions) {
+      throw new Error(`GitLab group ${groupPath} was not found or is inaccessible`);
+    }
 
     for (const node of group.contributions.nodes) {
       const username = node.user.username;
@@ -173,10 +175,11 @@ async function fetchGroupWindowContributions(groupPath, from, to, credentials) {
 
 /**
  * Fetch contributions for a single instance (all its groups, sequentially with delays).
- * @returns {{ counts: Object<string, Object<string, number>>, instanceInfo: { baseUrl, label } }}
+ * @returns {{ counts: Object<string, Object<string, number>>, instanceInfo: { baseUrl, label }, complete: boolean }}
  */
 async function fetchInstanceContributions(instance, credentials, usernameSet, windows) {
   const userMonths = {};
+  let complete = true;
 
   // Filter out excluded groups for this instance
   const excludeGroups = instance.excludeGroups || [];
@@ -188,7 +191,7 @@ async function fetchInstanceContributions(instance, credentials, usernameSet, wi
 
   if (filteredGroups.length === 0) {
     console.warn(`[gitlab] ${instance.label}: All groups excluded, skipping`);
-    return { counts: {}, instanceInfo: { baseUrl: instance.baseUrl, label: instance.label } };
+    return { counts: {}, instanceInfo: { baseUrl: instance.baseUrl, label: instance.label }, complete };
   }
 
   for (const group of filteredGroups) {
@@ -204,12 +207,13 @@ async function fetchInstanceContributions(instance, credentials, usernameSet, wi
 
         await delay(200);
       } catch (err) {
+        complete = false;
         console.error(`[gitlab] Error fetching ${group} ${window.from}..${window.to} on ${instance.label}: ${err.message}`);
       }
     }
   }
 
-  return { counts: userMonths, instanceInfo: { baseUrl: instance.baseUrl, label: instance.label } };
+  return { counts: userMonths, instanceInfo: { baseUrl: instance.baseUrl, label: instance.label }, complete };
 }
 
 /**
@@ -242,7 +246,7 @@ async function fetchGitlabData(usernames, options = {}) {
     const token = resolveSecret(instance.tokenEnvVar);
     if (!token) {
       console.warn(`[gitlab] Token env var ${instance.tokenEnvVar} not set, skipping ${instance.label}`);
-      return Promise.resolve({ counts: {}, instanceInfo: { baseUrl: instance.baseUrl, label: instance.label } });
+      return Promise.resolve({ counts: {}, instanceInfo: { baseUrl: instance.baseUrl, label: instance.label }, complete: false });
     }
     return withTimeout(
       fetchInstanceContributions(instance, { baseUrl: instance.baseUrl, token }, usernameSet, windows),
@@ -258,13 +262,16 @@ async function fetchGitlabData(usernames, options = {}) {
   // { username: { baseUrl: { totalContributions, months } } } for per-instance breakdown
   const userMonths = {};
   const userInstances = {};
+  let complete = true;
 
   for (const result of settled) {
     if (result.status === 'rejected') {
+      complete = false;
       console.error(`[gitlab] Instance failed: ${result.reason.message}`);
       continue;
     }
-    const { counts, instanceInfo } = result.value;
+    const { counts, instanceInfo, complete: instanceComplete } = result.value;
+    if (!instanceComplete) complete = false;
     for (const [username, months] of Object.entries(counts)) {
       if (!userMonths[username]) userMonths[username] = {};
       if (!userInstances[username]) userInstances[username] = {};
@@ -280,6 +287,11 @@ async function fetchGitlabData(usernames, options = {}) {
         months: instanceMonths
       };
     }
+  }
+
+  if (!complete) {
+    console.warn('[gitlab] Fetch incomplete; preserving previously stored contribution data');
+    return Object.fromEntries(usernames.map(username => [username, null]));
   }
 
   // Build results for all requested usernames

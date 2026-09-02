@@ -1,13 +1,15 @@
 const { createFieldStore } = require('../../../../shared/server/field-store')
 const { createAuditLog } = require('../../../../shared/server/audit-log')
 const { createTeamStore } = require('../../../../shared/server/team-store')
+const { createRegistryStore } = require('../../../../shared/server/registry-store')
+const { createConfigStore } = require('../../../../shared/server/config-store')
 import { describe, it, expect, vi } from 'vitest'
 
 
 function makeStorage(initial = {}) {
   const data = { ...initial }
   return {
-    async readFromStorage(key) { return data[key] ? JSON.parse(JSON.stringify(data[key])) : null },
+    readFromStorage: vi.fn(async key => data[key] ? JSON.parse(JSON.stringify(data[key])) : null),
     writeToStorage: vi.fn(async (key, val) => { data[key] = JSON.parse(JSON.stringify(val)) }),
     listStorageFiles: vi.fn(async (dir) => {
       return Object.keys(data)
@@ -19,7 +21,7 @@ function makeStorage(initial = {}) {
   }
 }
 
-async function setupRoutes(storageData) {
+async function setupRoutes(storageData, { registryModel } = {}) {
   const handlers = {}
   const middlewareMap = {}
   const mockRouter = {
@@ -37,8 +39,10 @@ async function setupRoutes(storageData) {
 
   const storage = makeStorage(storageData)
   const auditLog = createAuditLog(storage)
-  const fieldStore = createFieldStore(storage, { auditLog })
-  const teamStore = createTeamStore(storage, { auditLog })
+  const registryStore = createRegistryStore(storage, registryModel ? { model: registryModel } : {})
+  const configStore = createConfigStore(storage)
+  const fieldStore = createFieldStore(storage, { auditLog, registryStore })
+  const teamStore = createTeamStore(storage, { auditLog, registryStore })
   const mockRoleStore = {
     getRoles: vi.fn(() => []),
     isAdmin: vi.fn(() => false),
@@ -53,6 +57,8 @@ async function setupRoutes(storageData) {
     roleStore: mockRoleStore,
     fieldStore,
     teamStore,
+    registryStore,
+    configStore,
     auditLog,
     registerScopes: vi.fn()
   }
@@ -269,5 +275,41 @@ describe('GET /manager/dashboard', () => {
     const teamA = res._body.teams.find(t => t.id === 'team_a')
     // alice, bob (direct reports) + charlie (not a report) = 3
     expect(teamA.totalMemberCount).toBe(3)
+  })
+})
+
+describe('team manager registry access', () => {
+  it('uses the MongoDB-backed registry store for list, validation, and migration', async () => {
+    const registry = baseStorageData()['team-data/registry.json']
+    registry.people.alice.teamIds = ['team_c']
+    const storageData = baseStorageData()
+    delete storageData['team-data/registry.json']
+    storageData['team-data/teams.json'].teams.team_a.managers = ['mgr1']
+    storageData['team-data/teams.json'].teams.team_b.managers = []
+    storageData['team-data/teams.json'].teams.team_c = {
+      id: 'team_c', name: 'Gamma', orgKey: 'org1', managers: [], metadata: {}, boards: []
+    }
+    const registryModel = {
+      find: vi.fn(() => ({
+        lean: vi.fn(async () => Object.entries(registry.people).map(([uid, data]) => ({ uid, data })))
+      }))
+    }
+    const { handlers, storage } = await setupRoutes(storageData, { registryModel })
+
+    const listRes = mockRes()
+    await handlers['GET /structure/teams/:teamId/managers']({ params: { teamId: 'team_a' } }, listRes)
+    expect(listRes._body.managers).toEqual([{ uid: 'mgr1', name: 'Manager One', email: 'mgr1@example.com' }])
+
+    const addRes = mockRes()
+    await handlers['POST /structure/teams/:teamId/managers']({
+      params: { teamId: 'team_b' }, body: { uid: 'mgr1' }, auditActor: 'admin@example.com'
+    }, addRes)
+    expect(addRes._status).toBe(200)
+
+    const migrationRes = mockRes()
+    await handlers['POST /structure/migrate/team-managers']({ auditActor: 'admin@example.com' }, migrationRes)
+    expect(migrationRes._body.migrated).toContainEqual({ teamId: 'team_c', name: 'Gamma', managers: ['mgr1'] })
+    expect(registryModel.find).toHaveBeenCalled()
+    expect(storage.readFromStorage).not.toHaveBeenCalledWith('team-data/registry.json')
   })
 })
