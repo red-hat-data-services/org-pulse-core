@@ -94,7 +94,7 @@
     "postcss": "^8.4.49",
     "tailwindcss": "^4.3.3",
     "vite": "^8.1.0",
-    "vitest": "^4.1.9"
+    "vitest": "^5.0.0"
   },
   "lint-staged": {
     "*.{js,mjs,cjs,vue}": "eslint --fix"
