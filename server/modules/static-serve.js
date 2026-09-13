@@ -41,7 +41,7 @@ const PLACEHOLDER_HTML = `<!DOCTYPE html>
  * Create Express middleware for serving module static content.
  * Mount at /modules - handles /modules/:slug/*
  */
-function createModuleStaticMiddleware(storage) {
+function createModuleStaticMiddleware(storage, configStore = storage) {
   const dataDir = storage.DATA_DIR;
 
   return async function moduleStaticMiddleware(req, res, next) {
@@ -54,7 +54,7 @@ function createModuleStaticMiddleware(storage) {
     const slug = parts[0];
 
     // Look up module config
-    const mod = await modulesConfig.getModule(storage, slug);
+    const mod = await modulesConfig.getModule(configStore, slug);
     if (!mod) {
       return res.status(404).json({ error: `Module "${slug}" not found` });
     }

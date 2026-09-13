@@ -1,7 +1,66 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest'
+import mongoose from 'mongoose'
 
-const fieldExceptionsStore = require('../../server/field-exceptions-store')
+const { createFieldExceptionsStore } = require('../../server/field-exceptions-store')
 const { createAuditLog } = require('../../../../shared/server/audit-log')
+const { fieldExceptionSchema } = require('../../server/models/field-exception')
+
+const stores = new WeakMap()
+function getStore(storage) {
+  if (!stores.has(storage)) stores.set(storage, createFieldExceptionsStore(storage, { auditLog: createAuditLog(storage) }))
+  return stores.get(storage)
+}
+const fieldExceptionsStore = new Proxy({}, {
+  get(_target, method) {
+    return (storage, ...args) => getStore(storage)[method](...args)
+  }
+})
+
+describe('field-exceptions-store (MongoDB)', () => {
+  let connection
+  let Model
+  let store
+  const storage = storageWithAuditLog()
+
+  beforeAll(async () => {
+    connection = await mongoose.createConnection(process.env.MONGODB_URI, { dbName: 'field_exceptions_' + process.pid })
+    Model = connection.model('field-exception', fieldExceptionSchema)
+    store = createFieldExceptionsStore(storage, { model: Model, auditLog: createAuditLog(storage) })
+  })
+
+  afterAll(async () => {
+    await connection.db.dropDatabase()
+    await connection.close()
+  })
+
+  beforeEach(async () => {
+    await Model.deleteMany({})
+  })
+
+  it('round-trips, filters, upserts, and removes exceptions', async () => {
+    const first = await store.createException(
+      { entityType: 'person', entityId: 'alice', fieldId: 'field_a', reason: 'initial' },
+      'admin@test.com'
+    )
+    await store.createException(
+      { entityType: 'team', entityId: 'team_a', fieldId: '__boards__', reason: 'none' },
+      'admin@test.com'
+    )
+    const updated = await store.createException(
+      { entityType: 'person', entityId: 'alice', fieldId: 'field_a', reason: 'updated' },
+      'admin@test.com'
+    )
+
+    expect(first.created).toBe(true)
+    expect(updated.created).toBe(false)
+    expect(updated.exception.id).toBe(first.exception.id)
+    expect(await store.listExceptions({ entityType: 'person' })).toHaveLength(1)
+    expect((await store.getExceptionMap()).has('team:team_a:__boards__')).toBe(true)
+    expect((await store.removeException(first.exception.id, 'admin@test.com')).reason).toBe('updated')
+    expect(await store.findException('person', 'alice', 'field_a')).toBeNull()
+    expect(storage._data['team-data/field-exceptions.json']).toBeUndefined()
+  })
+})
 
 function makeStorage(initial = {}) {
   const data = { ...initial }
@@ -222,15 +281,8 @@ describe('field-exceptions-store', () => {
       expect(log.entries[0].action).toBe('field-exception.remove')
     })
 
-    it('throws immediately when auditLog is missing', async () => {
-      const storage = storageWithAuditLog()
-      await expect(fieldExceptionsStore.createException(
-        storage,
-        { entityType: 'person', entityId: 'alice', fieldId: 'field_f1', reason: 'test' },
-        'admin@test.com'
-      )).rejects.toThrow(/requires an injected auditLog/)
-      await expect(fieldExceptionsStore.removeException(storage, 'fex_abc', 'admin@test.com'))
-        .rejects.toThrow(/requires an injected auditLog/)
+    it('rejects construction without an audit log', () => {
+      expect(() => createFieldExceptionsStore(makeStorage())).toThrow(/requires options.auditLog/)
     })
   })
 

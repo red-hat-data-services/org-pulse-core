@@ -175,9 +175,12 @@ async function loadBoardData() {
   selectedSprintId.value = null
 
   try {
+    const teamQuery = currentBoard.value?.teamId
+      ? `?teamId=${encodeURIComponent(currentBoard.value.teamId)}`
+      : ''
     const [sprintsRes, trendRes] = await Promise.all([
-      apiRequest(`/modules/team-tracker/boards/${encodeURIComponent(boardId)}/sprints`),
-      apiRequest(`/modules/team-tracker/boards/${encodeURIComponent(boardId)}/trend`)
+      apiRequest(`/modules/team-tracker/boards/${encodeURIComponent(boardId)}/sprints${teamQuery}`),
+      apiRequest(`/modules/team-tracker/boards/${encodeURIComponent(boardId)}/trend${teamQuery}`)
     ])
     sprints.value = sprintsRes.sprints || []
     trendData.value = trendRes.sprints || []

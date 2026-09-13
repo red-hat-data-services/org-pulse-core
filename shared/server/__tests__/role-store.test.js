@@ -3,6 +3,8 @@ import mongoose from 'mongoose';
 
 const { createRoleStore, normalizeEmail } = require('../role-store');
 const { createAuditLog } = require('../audit-log');
+const { createConfigStore } = require('../config-store');
+const { configSchema } = require('../models/config');
 const { roleAssignmentSchema } = require('../models/role');
 
 // Suppress console.log output in tests
@@ -24,6 +26,10 @@ function makeStore(opts = {}) {
   if (allowlistData) initial['allowlist.json'] = allowlistData;
 
   const storage = createMockStorage(initial);
+  const configStore = createConfigStore({
+    readFromStorage: (key) => storage.read(key),
+    writeToStorage: (key, data) => storage.write(key, data)
+  });
   const auditLog = createAuditLog({
     readFromStorage: (key) => storage.read(key),
     writeToStorage: (key, data) => storage.write(key, data)
@@ -31,7 +37,7 @@ function makeStore(opts = {}) {
   const roleStore = createRoleStore(
     (key) => storage.read(key),
     (key, data) => storage.write(key, data),
-    { getAuthDomain: () => authDomain, auditLog }
+    { getAuthDomain: () => authDomain, auditLog, configStore }
   );
   return { roleStore, storage };
 }
@@ -222,6 +228,10 @@ describe('migrateFromAllowlist', () => {
     expect(data.assignments['admin@cluster.local']).toBeDefined();
     expect(data.assignments['admin@cluster.local'].roles).toContain('admin');
     expect(data.assignments['admin@redhat.com']).toBeUndefined();
+    expect(await storage.read('allowlist.json')).toMatchObject({
+      _migrated: 'roles.json',
+      emails: ['admin@redhat.com']
+    });
   });
 });
 
@@ -281,6 +291,7 @@ describe('createRoleStore auditLog requirement', () => {
 describe('role-store (MongoDB)', () => {
   let connection;
   let RoleModel;
+  let ConfigModel;
   const dbName = 'test_roles_' + process.pid;
 
   beforeAll(async () => {
@@ -288,6 +299,7 @@ describe('role-store (MongoDB)', () => {
     if (!uri) return;
     connection = await mongoose.createConnection(uri, { dbName });
     RoleModel = connection.model('core__roles', roleAssignmentSchema, 'core__roles');
+    ConfigModel = connection.model('core__config', configSchema, 'core__config');
   });
 
   afterAll(async () => {
@@ -298,12 +310,18 @@ describe('role-store (MongoDB)', () => {
   });
 
   beforeEach(async () => {
-    if (RoleModel) await RoleModel.deleteMany({});
+    if (RoleModel) {
+      await Promise.all([RoleModel.deleteMany({}), ConfigModel.deleteMany({})]);
+    }
   });
 
   function makeMongoStore(opts = {}) {
     if (!RoleModel) return null;
-    const storage = createMockStorage({});
+    const storage = createMockStorage(opts.storageData || {});
+    const configStore = createConfigStore({
+      readFromStorage: (key) => storage.read(key),
+      writeToStorage: (key, data) => storage.write(key, data)
+    }, { model: ConfigModel });
     const auditLog = createAuditLog({
       readFromStorage: (key) => storage.read(key),
       writeToStorage: (key, data) => storage.write(key, data)
@@ -311,9 +329,9 @@ describe('role-store (MongoDB)', () => {
     const roleStore = createRoleStore(
       (key) => storage.read(key),
       (key, data) => storage.write(key, data),
-      { getAuthDomain: () => opts.authDomain || null, model: RoleModel, auditLog }
+      { getAuthDomain: () => opts.authDomain || null, model: RoleModel, auditLog, configStore }
     );
-    return { roleStore, storage };
+    return { roleStore, storage, configStore };
   }
 
   it.skipIf(!process.env.MONGODB_URI)('assigns and retrieves roles', async () => {
@@ -336,6 +354,34 @@ describe('role-store (MongoDB)', () => {
     await roleStore.assignRole('user@redhat.com', 'admin', 'test');
     const roles = await roleStore.getRoles('user@cluster.local');
     expect(roles).toContain('admin');
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('imports a legacy file allowlist into MongoDB-backed roles and config', async () => {
+    const legacy = { emails: ['legacy@redhat.com'] };
+    const { roleStore, storage, configStore } = makeMongoStore({
+      authDomain: 'cluster.local',
+      storageData: { 'allowlist.json': legacy }
+    });
+
+    expect(await roleStore.migrateFromAllowlist()).toBe(true);
+    expect(await roleStore.getRoles('legacy@cluster.local')).toContain('admin');
+    expect(await configStore.readFromStorage('allowlist.json')).toMatchObject({
+      _migrated: 'roles',
+      emails: legacy.emails
+    });
+    expect(await storage.read('allowlist.json')).toEqual(legacy);
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('uses the MongoDB allowlist instead of a stale legacy file', async () => {
+    const { roleStore, configStore } = makeMongoStore({
+      storageData: { 'allowlist.json': { emails: ['stale@redhat.com'] } }
+    });
+    await configStore.writeToStorage('allowlist.json', { emails: ['current@redhat.com'] });
+
+    await roleStore.migrateFromAllowlist();
+
+    expect(await roleStore.getRoles('current@redhat.com')).toContain('admin');
+    expect(await roleStore.getRoles('stale@redhat.com')).toEqual([]);
   });
 
   it.skipIf(!process.env.MONGODB_URI)('lists assignments', async () => {
@@ -384,6 +430,90 @@ describe('role-store (MongoDB)', () => {
     // The redhat entry is newer, so its metadata wins (matches the file-based path).
     expect(doc.assignedBy).toBe('ldap');
     expect(doc.assignedAt).toBe('2024-01-02T00:00:00.000Z');
+    expect(await RoleModel.findOne({ email: 'user@redhat.com' }).lean()).toBeNull();
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('leaves colliding rows unchanged when MongoDB does not support transactions', async () => {
+    const { roleStore } = makeMongoStore({ authDomain: 'cluster.local' });
+    await RoleModel.create({ email: 'user@cluster.local', roles: ['team-admin'] });
+    await RoleModel.create({ email: 'user@redhat.com', roles: ['admin'] });
+    const adminSpy = vi.spyOn(RoleModel.db.db, 'admin').mockReturnValue({
+      command: async () => ({ isWritablePrimary: true })
+    });
+
+    try {
+      expect(await roleStore.migrateEmailDomains()).toBe(0);
+    } finally {
+      adminSpy.mockRestore();
+    }
+
+    expect((await RoleModel.findOne({ email: 'user@cluster.local' }).lean()).roles).toEqual(['team-admin']);
+    expect((await RoleModel.findOne({ email: 'user@redhat.com' }).lean()).roles).toEqual(['admin']);
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('concurrent email migration preserves target roles and assignment metadata', async () => {
+    const first = makeMongoStore({ authDomain: 'cluster.local' }).roleStore;
+    const second = makeMongoStore({ authDomain: 'cluster.local' }).roleStore;
+    await RoleModel.create({ email: 'user@cluster.local', roles: ['team-admin'], assignedBy: 'target-owner', assignedAt: '2024-01-03T00:00:00.000Z' });
+    await RoleModel.create({ email: 'user@redhat.com', roles: ['admin'], assignedBy: 'source-owner', assignedAt: '2024-01-02T00:00:00.000Z' });
+
+    const updateOne = RoleModel.collection.updateOne.bind(RoleModel.collection);
+    let injected = false;
+    const spy = vi.spyOn(RoleModel.collection, 'updateOne').mockImplementation(async (filter, update, options) => {
+      const changesTargetRoles = filter.email === 'user@cluster.local'
+        && update.$set?.roles && options?.session;
+      if (!injected && changesTargetRoles) {
+        injected = true;
+        await updateOne(
+          { email: 'user@cluster.local' },
+          { $addToSet: { roles: 'custom-concurrent' } }
+        );
+      }
+      return updateOne(filter, update, options);
+    });
+
+    try {
+      await Promise.all([first.migrateEmailDomains(), second.migrateEmailDomains()]);
+    } finally {
+      spy.mockRestore();
+    }
+
+    const target = await RoleModel.findOne({ email: 'user@cluster.local' }).lean();
+    expect(target.roles).toEqual(expect.arrayContaining(['admin', 'team-admin', 'custom-concurrent']));
+    expect(target.assignedBy).toBe('target-owner');
+    expect(target.assignedAt).toBe('2024-01-03T00:00:00.000Z');
+    expect(await RoleModel.findOne({ email: 'user@redhat.com' }).lean()).toBeNull();
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('does not restore a source role revoked after the transaction reads it', async () => {
+    const { roleStore } = makeMongoStore({ authDomain: 'cluster.local' });
+    await RoleModel.create({ email: 'user@cluster.local', roles: ['team-admin'], assignedBy: 'target', assignedAt: '2024-01-01T00:00:00.000Z' });
+    await RoleModel.create({ email: 'user@redhat.com', roles: ['admin', 'release-manager'], assignedBy: 'source', assignedAt: '2024-01-02T00:00:00.000Z' });
+
+    const findOne = RoleModel.collection.findOne.bind(RoleModel.collection);
+    let revoked = false;
+    const spy = vi.spyOn(RoleModel.collection, 'findOne').mockImplementation(async (filter, options) => {
+      const result = await findOne(filter, options);
+      if (!revoked && result?.email === 'user@redhat.com' && options?.session) {
+        revoked = true;
+        await RoleModel.collection.updateOne(
+          { email: 'user@redhat.com' },
+          { $pull: { roles: 'admin' }, $set: { assignedBy: 'concurrent-revoke' } }
+        );
+      }
+      return result;
+    });
+
+    try {
+      expect(await roleStore.migrateEmailDomains()).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+
+    const target = await RoleModel.findOne({ email: 'user@cluster.local' }).lean();
+    expect(target.roles).toEqual(expect.arrayContaining(['team-admin', 'release-manager']));
+    expect(target.roles).not.toContain('admin');
+    expect(target.assignedBy).toBe('concurrent-revoke');
     expect(await RoleModel.findOne({ email: 'user@redhat.com' }).lean()).toBeNull();
   });
 
