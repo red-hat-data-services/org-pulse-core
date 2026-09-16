@@ -362,6 +362,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
 
       const rosterConfig = await loadRosterSyncConfig(storage);
       const membersInAppMode = (rosterConfig?.teamDataSource || 'sheets') === 'in-app';
+      const membersInCyborgMode = (rosterConfig?.teamDataSource || 'sheets') === 'cyborg';
 
       let members;
       if (membersInAppMode) {
@@ -372,6 +373,10 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
         });
         const teamId = matchingTeam?.[0];
         members = teamId ? allPeople.filter(p => p.teamIds?.includes(teamId)) : [];
+      } else if (membersInCyborgMode) {
+        members = allPeople.filter(function(person) {
+          return (person.orgKey || '') === orgName && (person.teams || []).includes(teamName);
+        });
       } else {
         members = allPeople.filter(function(person) {
           const personOrg = orgKeyToDisplay[person.orgKey] || '';
@@ -405,9 +410,10 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
       const orgKeyToDisplay = await buildOrgKeyToDisplayName();
       const rosterConfig = await loadRosterSyncConfig(storage);
       const listInAppMode = (rosterConfig?.teamDataSource || 'sheets') === 'in-app';
+      const listInCyborgMode = (rosterConfig?.teamDataSource || 'sheets') === 'cyborg';
 
       let orgTeamPeopleMap;
-      if (listInAppMode) {
+      if (listInAppMode || listInCyborgMode) {
         const structureData = await teamStore.readTeams();
         orgTeamPeopleMap = groupPeopleByOrgTeamFromRegistry(allPeople, orgKeyToDisplay, structureData);
       } else {

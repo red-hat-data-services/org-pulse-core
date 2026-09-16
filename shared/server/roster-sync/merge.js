@@ -109,12 +109,12 @@ function enrichPersonByUid(person, cyborgMap) {
  *
  * @param {Array} orgRoots - Array of { uid, name, displayName }
  * @param {Object} ldapOrgs - Map of uid -> { leader, members }
- * @param {Map} sheetsData - Map of normalized name -> enrichment data (or null)
+ * @param {Map} enrichmentData - Map of normalized name or UID -> enrichment data (or null)
  * @param {Object} vpInfo - { name, uid } for the VP (optional)
  * @param {Object} [options] - Options: { matchBy: 'name' | 'uid' }
  * @returns {Object} roster format ({ generatedAt, vp, orgs })
  */
-function buildRoster(orgRoots, ldapOrgs, sheetsData, vpInfo, options) {
+function buildRoster(orgRoots, ldapOrgs, enrichmentData, vpInfo, options) {
   const roster = {
     generatedAt: new Date().toISOString(),
     vp: vpInfo || null,
@@ -128,17 +128,17 @@ function buildRoster(orgRoots, ldapOrgs, sheetsData, vpInfo, options) {
     if (!orgData) continue;
 
     // Enrich with data if available
-    if (sheetsData) {
+    if (enrichmentData) {
       if (matchBy === 'uid') {
-        enrichPersonByUid(orgData.leader, sheetsData);
+        enrichPersonByUid(orgData.leader, enrichmentData);
         for (const member of orgData.members) {
-          enrichPersonByUid(member, sheetsData);
+          enrichPersonByUid(member, enrichmentData);
         }
       } else {
         const orgDisplayName = root.displayName || root.name;
-        enrichPerson(orgData.leader, sheetsData, orgDisplayName);
+        enrichPerson(orgData.leader, enrichmentData, orgDisplayName);
         for (const member of orgData.members) {
-          enrichPerson(member, sheetsData, orgDisplayName);
+          enrichPerson(member, enrichmentData, orgDisplayName);
         }
       }
     }
