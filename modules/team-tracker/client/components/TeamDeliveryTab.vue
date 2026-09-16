@@ -21,8 +21,8 @@
         :warning="teamMetrics?.aggregate?.inProgressCount != null && teamMetrics.aggregate.inProgressCount > uniqueCount"
       />
       <MetricCard
-        label="Avg Cycle Time"
-        :value="teamMetrics?.aggregate?.avgCycleTimeDays"
+        label="Median Cycle Time"
+        :value="teamMedianCycleTimeDays"
         unit="days"
       />
       <MetricCard
@@ -144,6 +144,22 @@ const uniqueMembers = computed(() => {
 })
 
 const uniqueCount = computed(() => uniqueMembers.value.length)
+
+const teamMedianCycleTimeDays = computed(() => {
+  const cycleTimes = (props.teamMetrics?.resolvedIssues || [])
+    .map(issue => issue.cycleTimeDays)
+    .filter(days => Number.isFinite(days) && days >= 0)
+    .sort((a, b) => a - b)
+
+  if (cycleTimes.length === 0) return null
+
+  const midpoint = Math.floor(cycleTimes.length / 2)
+  const median = cycleTimes.length % 2 === 0
+    ? (cycleTimes[midpoint - 1] + cycleTimes[midpoint]) / 2
+    : cycleTimes[midpoint]
+
+  return +median.toFixed(1)
+})
 
 const memberMetricsMap = computed(() => {
   const map = new Map()

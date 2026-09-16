@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import TeamDeliveryTab from '../../client/components/TeamDeliveryTab.vue'
+import MetricCard from '../../client/components/MetricCard.vue'
 
 // --- Mocks ---
 
@@ -62,7 +63,11 @@ const teamMetrics = {
     { jiraDisplayName: 'Alice Smith', metrics: { resolvedCount: 80, resolvedPoints: 160, avgCycleTimeDays: 3.1, inProgressCount: 5 } },
     { jiraDisplayName: 'Bob Jones', metrics: { resolvedCount: 70, resolvedPoints: 160, avgCycleTimeDays: 5.3, inProgressCount: 7 } },
   ],
-  resolvedIssues: [{ key: 'PROJ-1', summary: 'Fix bug' }]
+  resolvedIssues: [
+    { key: 'PROJ-1', summary: 'Fix bug', cycleTimeDays: 2 },
+    { key: 'PROJ-2', summary: 'Add feature', cycleTimeDays: 4 },
+    { key: 'PROJ-3', summary: 'Investigate outlier', cycleTimeDays: 100 }
+  ]
 }
 
 function mountTab(overrides = {}) {
@@ -95,8 +100,7 @@ describe('TeamDeliveryTab', () => {
       expect(wrapper.text()).toContain('320')
       expect(wrapper.text()).toContain('In Progress')
       expect(wrapper.text()).toContain('12')
-      expect(wrapper.text()).toContain('Avg Cycle Time')
-      expect(wrapper.text()).toContain('4.2')
+      expect(wrapper.text()).toContain('Median Cycle Time')
       expect(wrapper.text()).toContain('GitHub Contributions')
       expect(wrapper.text()).toContain('GitLab Contributions')
     })
@@ -106,6 +110,14 @@ describe('TeamDeliveryTab', () => {
       const text = wrapper.text()
       // All metric values should show placeholder
       expect(text).toContain('--')
+    })
+
+    it('uses the median resolved-issue cycle time instead of the average', () => {
+      const wrapper = mountTab()
+      const cycleTimeCard = wrapper.findAllComponents(MetricCard)
+        .find(card => card.props('label') === 'Median Cycle Time')
+
+      expect(cycleTimeCard.props('value')).toBe(4)
     })
   })
 

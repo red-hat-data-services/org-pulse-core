@@ -224,6 +224,35 @@ test.describe('People & Teams Autofix Tab @people-teams', () => {
 });
 
 /**
+ * Team Detail — Delivery Tab
+ *
+ * Verify the team-level cycle-time tile reports the median.
+ */
+test.describe('People & Teams Delivery Tab @people-teams', () => {
+  test.beforeEach(async ({ page }) => {
+    setupErrorTracking(page);
+  });
+
+  test.afterEach(async ({ page }, testInfo) => {
+    logCapturedErrors(page, testInfo);
+  });
+
+  test('should show median cycle time on team delivery', async ({ page }) => {
+    await page.goto('/#/team-tracker/team-detail?teamKey=achen::Platform');
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(DEFAULT_PAGE_WAIT_TIME);
+
+    const deliveryTab = page.locator('nav button').filter({ hasText: 'Delivery' });
+    await expect(deliveryTab).toBeVisible();
+    await deliveryTab.click();
+
+    await expect(page.getByText('Median Cycle Time', { exact: true })).toBeVisible();
+    await expect(page.getByText('Avg Cycle Time', { exact: true })).toHaveCount(0);
+    expect(page.errors).toHaveLength(0);
+  });
+});
+
+/**
  * People Directory
  *
  * Verify the People Directory view shows roster data from fixtures
