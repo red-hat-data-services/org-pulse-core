@@ -76,12 +76,22 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
       teamLookup[id] = { compositeKey: `${displayName}::${t.name}` };
     }
     for (const person of allPeople) {
-      if (!person.teamIds || person.teamIds.length === 0) continue;
-      for (const teamId of person.teamIds) {
-        const entry = teamLookup[teamId];
-        if (!entry) continue;
-        if (!map[entry.compositeKey]) map[entry.compositeKey] = [];
-        map[entry.compositeKey].push(person);
+      // In-app records use structure teamIds. Cyborg records carry the
+      // normalized team names directly (and may not have structure records
+      // yet), so retain those assignments as a fallback.
+      if (person.teamIds && person.teamIds.length > 0) {
+        for (const teamId of person.teamIds) {
+          const entry = teamLookup[teamId];
+          if (!entry) continue;
+          if (!map[entry.compositeKey]) map[entry.compositeKey] = [];
+          map[entry.compositeKey].push(person);
+        }
+      } else {
+        for (const teamName of (person.teams || [])) {
+          const compositeKey = `${orgKeyToDisplay[person.orgKey] || person.orgKey}::${teamName}`;
+          if (!map[compositeKey]) map[compositeKey] = [];
+          map[compositeKey].push(person);
+        }
       }
     }
     return map;
@@ -89,7 +99,11 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
 
   async function buildEnrichedTeams(orgFilter) {
     const rosterConfig = await loadRosterSyncConfig(storage);
-    const isInAppMode = (rosterConfig?.teamDataSource || 'sheets') === 'in-app';
+    const teamDataSource = rosterConfig?.teamDataSource || 'sheets';
+    // Registry-backed sources carry normalized teamIds.  This includes the
+    // in-app editor and Cyborg snapshots; only the legacy Sheets source uses
+    // the denormalized _teamGrouping/miroTeam fields.
+    const isRegistryMode = teamDataSource === 'in-app' || teamDataSource === 'cyborg';
 
     const metaData = await readFromStorage('org-roster/teams-metadata.json');
     const boardNames = metaData?.boardNames || {};
@@ -117,13 +131,13 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
 
     const allPeople = await getAllPeople(storage);
     const orgKeyToDisplay = await buildOrgKeyToDisplayName();
-    const orgTeamPeopleMap = isInAppMode
+    const orgTeamPeopleMap = isRegistryMode
       ? groupPeopleByOrgTeamFromRegistry(allPeople, orgKeyToDisplay, structureData)
       : groupPeopleByOrgTeamFromGrouping(allPeople, orgKeyToDisplay);
 
     // In in-app mode, PM/Eng Lead are team fields in metadata — skip person-level rollup
     let allNames = new Set();
-    if (!isInAppMode) {
+    if (!isRegistryMode) {
       const rosterNames = new Set(allPeople.map(p => p.name).filter(Boolean));
       allNames = collectRoleNames(allPeople, ['engineeringLead', 'productManager'], rosterNames);
     }
@@ -136,8 +150,8 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
       if (orgFilter && org !== orgFilter) continue;
 
       const counts = calculateHeadcountByRole(teamPeople);
-      const engLeads = isInAppMode ? [] : getTeamRollup(teamPeople, 'engineeringLead', allNames);
-      const productManagers = isInAppMode ? [] : getTeamRollup(teamPeople, 'productManager', allNames);
+      const engLeads = isRegistryMode ? [] : getTeamRollup(teamPeople, 'engineeringLead', allNames);
+      const productManagers = isRegistryMode ? [] : getTeamRollup(teamPeople, 'productManager', allNames);
 
       const filterCounts = {};
       for (const p of teamPeople) {
@@ -217,7 +231,9 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
       : allPeople;
     const unassigned = relevantPeople
       .filter(p => {
-        if (isInAppMode) return !p.teamIds || p.teamIds.length === 0;
+        if (isRegistryMode) {
+          return (p.teamIds?.length || p.teams?.length || 0) === 0;
+        }
         const grouping = p._teamGrouping || p.miroTeam || '';
         return !grouping.trim();
       })

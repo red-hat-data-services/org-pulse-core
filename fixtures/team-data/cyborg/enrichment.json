@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "source": "cyborg",
+  "generatedAt": "2026-09-16T12:00:00.000Z",
+  "scope": {
+    "name": "Fleet Engineering",
+    "type": "pillar"
+  },
+  "people": {
+    "achen": {
+      "teams": ["Platform Core", "Architecture WG"],
+      "githubUsername": "alicechen",
+      "repositories": ["https://github.com/example/platform-core"],
+      "jira": [{ "project": "PLAT", "boardId": "1001" }],
+      "slackChannels": ["team-platform-core", "arch-wg"]
+    },
+    "bsmith": {
+      "teams": ["Platform Core"],
+      "githubUsername": "bobsmith",
+      "repositories": ["https://github.com/example/platform-core"],
+      "jira": [{ "project": "PLAT", "boardId": "1001" }],
+      "slackChannels": ["team-platform-core"]
+    },
+    "cwilliams": {
+      "teams": ["Infra & Reliability"],
+      "githubUsername": "cwilliams",
+      "repositories": ["https://github.com/example/infra"],
+      "jira": [{ "project": "INFRA", "boardId": "1002" }],
+      "slackChannels": ["team-infra"]
+    },
+    "dlee": {
+      "teams": ["Developer Experience"],
+      "githubUsername": "dlee",
+      "repositories": ["https://github.com/example/devex"],
+      "jira": [{ "project": "DEVX", "boardId": "1003" }],
+      "slackChannels": ["team-devex"]
+    },
+    "egarcia": {
+      "teams": ["Security & Compliance"],
+      "githubUsername": "egarcia",
+      "repositories": ["https://github.com/example/security"],
+      "jira": [{ "project": "SEC", "boardId": "1004" }],
+      "slackChannels": ["team-sec"]
+    },
+    "fjohnson": {
+      "teams": ["Engineering Operations"],
+      "githubUsername": "fjohnson-ops",
+      "repositories": ["https://github.com/example/eng-ops"],
+      "jira": [{ "project": "OPS", "boardId": "1005" }],
+      "slackChannels": ["team-ops"]
+    },
+    "gkim": {
+      "teams": ["UI Platform"],
+      "githubUsername": "gracekim",
+      "repositories": ["https://github.com/example/ui-core"],
+      "jira": [{ "project": "UIP", "boardId": "1006" }],
+      "slackChannels": ["team-ui"]
+    },
+    "hwilson": {
+      "teams": ["Data Pipelines"],
+      "githubUsername": "hwilson-data",
+      "repositories": ["https://github.com/example/pipelines"],
+      "jira": [{ "project": "PIPE", "boardId": "1007" }],
+      "slackChannels": ["team-data"]
+    },
+    "imartinez": {
+      "teams": ["Core Engine"],
+      "githubUsername": "imartinez",
+      "repositories": ["https://github.com/example/core-engine"],
+      "jira": [{ "project": "ENG", "boardId": "1008" }],
+      "slackChannels": ["team-engine"]
+    },
+    "jbrown": {
+      "teams": ["Developer Experience"],
+      "githubUsername": "jbrown",
+      "repositories": ["https://github.com/example/devex"],
+      "jira": [{ "project": "DEVX", "boardId": "1003" }],
+      "slackChannels": ["team-devex"]
+    }
+  }
+}

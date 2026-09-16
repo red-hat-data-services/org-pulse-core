@@ -187,6 +187,11 @@ module.exports = async function registerRoutes(router, context) {
           engineeringSpeciality: person.engineeringSpeciality || null,
           customFields: {}
         };
+        if (teamDataSource === 'cyborg') {
+          if (person.repositories) memberEntry.repositories = person.repositories;
+          if (person.jira) memberEntry.jira = person.jira;
+          if (person.slackChannels) memberEntry.slackChannels = person.slackChannels;
+        }
 
         // Build customFields based on data source
         if (teamDataSource === 'in-app') {
@@ -219,9 +224,9 @@ module.exports = async function registerRoutes(router, context) {
             teamNames = ['_unassigned'];
           }
         } else {
-          const groupingValue = teamStructure
-            ? (person._teamGrouping || person.miroTeam || null)
-            : (person.miroTeam || null);
+          const groupingValue = teamDataSource === 'cyborg'
+            ? (person._teamGrouping || null)
+            : (teamStructure ? (person._teamGrouping || person.miroTeam || null) : (person.miroTeam || null));
           teamNames = groupingValue
             ? groupingValue.split(',').map(t => t.trim()).filter(Boolean)
             : ['_unassigned'];
@@ -4370,7 +4375,7 @@ module.exports = async function registerRoutes(router, context) {
    */
   router.post('/admin/roster-sync/config', requireAdmin, requireScope('roster:write'), async function(req, res) {
     try {
-      const { orgRoots, googleSheetId, sheetNames, githubOrgs, gitlabGroups, gitlabInstances, teamStructure, excludedTitles, teamDataSource } = req.body;
+      const { orgRoots, googleSheetId, sheetNames, githubOrgs, gitlabGroups, gitlabInstances, teamStructure, excludedTitles, teamDataSource, cyborgConfig } = req.body;
 
       if (orgRoots !== undefined) {
         if (!Array.isArray(orgRoots) || orgRoots.length === 0) {
@@ -4522,10 +4527,69 @@ module.exports = async function registerRoutes(router, context) {
       if (validatedTeamStructure !== undefined) config.teamStructure = validatedTeamStructure;
       if (validatedExcludedTitles !== undefined) config.excludedTitles = validatedExcludedTitles;
       if (teamDataSource !== undefined) {
-        if (!['sheets', 'in-app'].includes(teamDataSource)) {
-          return res.status(400).json({ error: 'teamDataSource must be "sheets" or "in-app"' });
+        if (!rosterSyncConfig.VALID_DATA_SOURCES.includes(teamDataSource)) {
+          return res.status(400).json({ error: 'teamDataSource must be "sheets", "in-app", or "cyborg"' });
         }
         config.teamDataSource = teamDataSource;
+      }
+
+      if (cyborgConfig !== undefined) {
+        if (cyborgConfig !== null && (typeof cyborgConfig !== 'object' || Array.isArray(cyborgConfig))) {
+          return res.status(400).json({ error: 'cyborgConfig must be an object or null' });
+        }
+        if (cyborgConfig) {
+          const validated = Object.assign({}, config.cyborgConfig || {});
+          if (cyborgConfig.snapshotKey !== undefined) {
+            if (typeof cyborgConfig.snapshotKey !== 'string' || !cyborgConfig.snapshotKey.trim()) {
+              return res.status(400).json({ error: 'cyborgConfig.snapshotKey must be a non-empty string' });
+            }
+            const key = cyborgConfig.snapshotKey.trim();
+            if (key.includes('..') || key.startsWith('/') || key.startsWith('\\')) {
+              return res.status(400).json({ error: 'cyborgConfig.snapshotKey cannot contain path traversal sequences or leading slashes' });
+            }
+            validated.snapshotKey = key;
+          }
+          if (cyborgConfig.scopeName !== undefined) {
+            if (typeof cyborgConfig.scopeName !== 'string' || !cyborgConfig.scopeName.trim()) {
+              return res.status(400).json({ error: 'cyborgConfig.scopeName must be a non-empty string' });
+            }
+            validated.scopeName = cyborgConfig.scopeName.trim();
+          }
+          if (cyborgConfig.scopeType !== undefined) {
+            if (typeof cyborgConfig.scopeType !== 'string' || !cyborgConfig.scopeType.trim()) {
+              return res.status(400).json({ error: 'cyborgConfig.scopeType must be a non-empty string' });
+            }
+            validated.scopeType = cyborgConfig.scopeType.trim();
+          }
+          if (cyborgConfig.maxStalenessMinutes !== undefined) {
+            if (!Number.isInteger(cyborgConfig.maxStalenessMinutes) ||
+                !Number.isFinite(cyborgConfig.maxStalenessMinutes) ||
+                cyborgConfig.maxStalenessMinutes < 1 ||
+                cyborgConfig.maxStalenessMinutes > 10080) {
+              return res.status(400).json({ error: 'cyborgConfig.maxStalenessMinutes must be an integer from 1 to 10080' });
+            }
+            validated.maxStalenessMinutes = cyborgConfig.maxStalenessMinutes;
+          }
+          const forbiddenKeys = ['credentials', 'token', 'secret', 'password', 'keyFile', 'gcsKey', 'serviceAccount'];
+          for (const fk of forbiddenKeys) {
+            if (cyborgConfig[fk] !== undefined) {
+              return res.status(400).json({ error: `cyborgConfig cannot contain credential field "${fk}"` });
+            }
+          }
+          config.cyborgConfig = validated;
+        } else {
+          config.cyborgConfig = null;
+        }
+      }
+
+      if (config.teamDataSource === 'cyborg') {
+        const effectiveCyborgConfig = config.cyborgConfig;
+        if (!effectiveCyborgConfig || !effectiveCyborgConfig.scopeName ||
+            !effectiveCyborgConfig.scopeType || !effectiveCyborgConfig.maxStalenessMinutes) {
+          return res.status(400).json({
+            error: 'Cyborg requires scopeName, scopeType, and maxStalenessMinutes configuration before it can be enabled'
+          });
+        }
       }
 
       if (req.body.ldapFields !== undefined) {

@@ -94,6 +94,15 @@ test.describe('People & Teams Module @people-teams', () => {
 
     expect(page.errors).toHaveLength(0);
   });
+
+  test('roster API identifies the configured team data source', async ({ request }) => {
+    const response = await request.get('/api/modules/team-tracker/roster');
+    expect(response.ok()).toBe(true);
+
+    const roster = await response.json();
+    expect(['sheets', 'in-app', 'cyborg']).toContain(roster.teamDataSource);
+    expect(Array.isArray(roster.orgs)).toBe(true);
+  });
 });
 
 /**
