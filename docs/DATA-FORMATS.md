@@ -239,7 +239,8 @@ Stores the consolidated configuration for automated roster building (merged from
 - `gracePeriodDays` controls how long inactive people are retained before purging (default 30).
 - `autoSync` controls the automatic sync scheduler (default disabled).
 - `lastSyncAt`, `lastSyncStatus`, `lastSyncError` are auto-populated during sync runs.
-- `teamDataSource` controls where team structure data lives: `"sheets"` (default, Google Sheets enrichment) or `"in-app"` (managed via the Team Structure Management UI). When `"in-app"`, Sheets Phase 2 enrichment is skipped during sync.
+- `teamDataSource` controls where team structure data lives: `"sheets"` (default, Google Sheets enrichment), `"in-app"` (managed via the Team Structure Management UI), or `"cyborg"` (complete Cyborg roster). When `"in-app"`, external Phase 2 enrichment is skipped during sync. In `"cyborg"` mode, LDAP is not contacted.
+- `cyborgConfig` configures the Cyborg data source: `{ "snapshotKey": "team-data/cyborg/enrichment.json", "scopeName": "Fleet Engineering", "scopeType": "org", "maxStalenessMinutes": 60 }`. `scopeName`, `scopeType`, and `maxStalenessMinutes` are required before Cyborg can be enabled. `snapshotKey` defaults to `team-data/cyborg/enrichment.json` and rejects path traversal. `maxStalenessMinutes` must be an integer from 1 to 10080. Scope values must exactly match the snapshot. Cyborg is configured through the admin API/deployment configuration rather than the interactive source selector. Never store credentials or access tokens here.
 - `ldapFields` configures admin-managed LDAP attribute discovery and sync. `discovered` is the cached list of all available LDAP attributes from the last schema query (populated via `POST /api/admin/roster-sync/ldap-discover`). `enabled` is the admin-selected subset with display labels (max 20). Attributes already in the hardcoded base set (`LDAP_ATTRS`) are rejected. Empty or missing `ldapFields` means no extra LDAP attributes are synced (backward compatible).
 - `_migratedFrom` is set to `"roster-sync-config.json"` after one-time migration from the legacy config file. The old file is never deleted (rollback safety net).
 
@@ -252,14 +253,21 @@ Written after each consolidated sync run. Contains the result of the most recent
   "completedAt": "2026-03-27T06:00:12.345Z",
   "status": "success",
   "duration": 12345,
-  "stats": {
-    "totalPeople": 42,
+  "summary": {
+    "total": 42,
     "active": 40,
     "inactive": 2,
     "newlyAdded": 3,
     "reactivated": 0,
     "changed": 5,
     "sheetsEnriched": 38,
+    "cyborgEnriched": 0,
+    "cyborgMatched": 0,
+    "cyborgUnmatched": 0,
+    "cyborgLdapUnmatched": 0,
+    "cyborgStatus": null,
+    "cyborgError": null,
+    "cyborgGeneratedAt": null,
     "githubInferred": 2,
     "gitlabInferred": 1
   },
@@ -268,7 +276,7 @@ Written after each consolidated sync run. Contains the result of the most recent
 ```
 
 **Notes:**
-- On error, the log contains `status: "error"`, `message`, `duration`, and `completedAt` — no `stats` or `coverage`.
+- On error, the log contains `status: "error"`, `message`, `duration`, and `completedAt` — no `summary` or `coverage`.
 - Overwritten on each sync run (not appended).
 
 ## Module State — `data/modules-state.json`
@@ -329,9 +337,64 @@ Team key is sanitized: `::` becomes `--`, special chars become `_`. The filename
 }
 ```
 
+## Cyborg Snapshot — `data/team-data/cyborg/enrichment.json`
+
+Versioned JSON snapshot emitted by an external Python/Cyborg exporter and consumed by the Org Pulse Cyborg adapter. The machine-readable contract is [`fixtures/team-data/cyborg/enrichment.schema.json`](../fixtures/team-data/cyborg/enrichment.schema.json).
+
+```json
+{
+  "schemaVersion": 1,
+  "source": "cyborg",
+  "generatedAt": "2026-09-16T12:00:00.000Z",
+  "scope": {
+    "name": "Fleet Engineering",
+    "type": "org"
+  },
+  "people": [
+    {
+      "uid": "person-001",
+      "fullName": "Example Person",
+      "email": "person@example.invalid",
+      "jobTitle": "Software Engineer",
+      "managerUid": "person-010",
+      "teams": ["Fleet Console Next"],
+      "githubUsername": "example-user"
+    },
+    {
+      "uid": "person-010",
+      "fullName": "Example Manager",
+      "email": "manager@example.invalid",
+      "jobTitle": "Engineering Manager",
+      "managerUid": null,
+      "teams": []
+    }
+  ]
+}
+```
+
+**Notes:**
+- `schemaVersion` must equal `1`.
+- `source` must equal `"cyborg"`.
+- `generatedAt` must be a valid UTC ISO date string and cannot be in the unreasonable future (> 15 minutes ahead).
+- `scope` must be an object with non-empty `name` and `type` strings.
+- When configured, `scope.name` and `scope.type` must exactly match `cyborgConfig`; a mismatched snapshot is not applied.
+- For a complete roster, `people` is an array and each entry requires its own non-empty `uid`. The older UID-keyed object form remains accepted during migration.
+- `people` must contain at least one entry. Duplicate normalized UIDs are rejected as collisions.
+- Each person entry requires a `teams` array. It may be empty for a direct member of the configured scope who has no descendant-team assignment.
+- Complete-roster identity fields are `fullName`, `email`, `jobTitle`, and `managerUid` (all optional for backward compatibility). `managerUid` may point outside the scoped roster; it is not imported as a phantom person.
+- Optional fields: `githubUsername` (non-empty string or null), `repositories` (array of HTTP/HTTPS URLs), `jira` (array of objects containing `project` or `boardId`), and `slackChannels` (array of non-empty strings).
+- Unknown top-level and person-entry fields are rejected. Contract additions require a compatible schema update.
+- In `teamDataSource: "cyborg"` mode, Cyborg is the complete roster source: LDAP is not contacted. The exporter must include direct scope members plus descendant-team members, deduplicated by UID.
+- A valid complete snapshot is authoritative. People omitted from a later valid snapshot follow normal lifecycle handling; a failed or invalid snapshot never replaces the last-known-good registry.
+- Cyborg owns identity, manager, team, repository, Jira, Slack, and explicitly supplied GitHub data. Manual GitHub overrides take precedence.
+- Contains no secrets, access tokens, or raw GCS credentials.
+
 ## People Registry — `data/team-data/registry.json`
 
-The single source of truth for all people data. Built by the consolidated sync pipeline (`shared/server/roster-sync/consolidated-sync.js`) which combines LDAP traversal, Google Sheets enrichment, username inference, and lifecycle tracking.
+The single source of truth for all people data. Built by the consolidated sync pipeline (`shared/server/roster-sync/consolidated-sync.js`). Sheets mode combines LDAP traversal with Sheets enrichment; Cyborg mode builds the roster directly from the complete Cyborg snapshot and only then applies lifecycle tracking.
+
+For local Cyborg-mode testing, use the synthetic complete-roster fixture at
+[`fixtures/team-data/cyborg/full-roster.json`](../fixtures/team-data/cyborg/full-roster.json).
 
 ```json
 {

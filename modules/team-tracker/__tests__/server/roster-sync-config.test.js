@@ -380,6 +380,107 @@ describe('Roster Sync Config API', () => {
     })
   })
 
+  describe('Cyborg data source configuration', () => {
+    it('accepts teamDataSource: cyborg with valid cyborgConfig and persists it', async () => {
+      mockStorage['team-data/config.json'] = {
+        orgRoots: [{ uid: 'testorg', displayName: 'Test Org' }]
+      }
+
+      const payload = {
+        teamDataSource: 'cyborg',
+        cyborgConfig: {
+          snapshotKey: 'team-data/cyborg/custom-enrichment.json',
+          scopeName: 'Fleet Engineering',
+          scopeType: 'pillar',
+          maxStalenessMinutes: 120
+        }
+      }
+
+      const res = await request(app, 'POST', '/api/modules/team-tracker/admin/roster-sync/config', payload)
+      expect(res.status).toBe(200)
+      expect(res.body.teamDataSource).toBe('cyborg')
+      expect(res.body.cyborgConfig.snapshotKey).toBe('team-data/cyborg/custom-enrichment.json')
+      expect(res.body.cyborgConfig.scopeName).toBe('Fleet Engineering')
+      expect(res.body.cyborgConfig.maxStalenessMinutes).toBe(120)
+
+      const saved = writeToStorage.mock.calls[0][1]
+      expect(saved.teamDataSource).toBe('cyborg')
+      expect(saved.cyborgConfig.snapshotKey).toBe('team-data/cyborg/custom-enrichment.json')
+    })
+
+    it('rejects invalid teamDataSource values', async () => {
+      mockStorage['team-data/config.json'] = {
+        orgRoots: [{ uid: 'testorg', displayName: 'Test Org' }]
+      }
+
+      const res = await request(app, 'POST', '/api/modules/team-tracker/admin/roster-sync/config', {
+        teamDataSource: 'unsupported-source'
+      })
+      expect(res.status).toBe(400)
+      expect(res.body.error).toContain('teamDataSource must be "sheets", "in-app", or "cyborg"')
+    })
+
+    it('requires scope and freshness configuration before enabling Cyborg', async () => {
+      mockStorage['team-data/config.json'] = {
+        orgRoots: [{ uid: 'testorg', displayName: 'Test Org' }]
+      }
+
+      const res = await request(app, 'POST', '/api/modules/team-tracker/admin/roster-sync/config', {
+        teamDataSource: 'cyborg'
+      })
+      expect(res.status).toBe(400)
+      expect(res.body.error).toContain('requires scopeName, scopeType, and maxStalenessMinutes')
+    })
+
+    it('rejects unsafe Cyborg staleness thresholds', async () => {
+      mockStorage['team-data/config.json'] = {
+        orgRoots: [{ uid: 'testorg', displayName: 'Test Org' }]
+      }
+
+      const res = await request(app, 'POST', '/api/modules/team-tracker/admin/roster-sync/config', {
+        teamDataSource: 'cyborg',
+        cyborgConfig: {
+          scopeName: 'Fleet Engineering',
+          scopeType: 'pillar',
+          maxStalenessMinutes: 0
+        }
+      })
+      expect(res.status).toBe(400)
+      expect(res.body.error).toContain('integer from 1 to 10080')
+    })
+
+    it('rejects path traversal sequences in cyborgConfig.snapshotKey', async () => {
+      mockStorage['team-data/config.json'] = {
+        orgRoots: [{ uid: 'testorg', displayName: 'Test Org' }]
+      }
+
+      const res = await request(app, 'POST', '/api/modules/team-tracker/admin/roster-sync/config', {
+        teamDataSource: 'cyborg',
+        cyborgConfig: {
+          snapshotKey: '../secret.json'
+        }
+      })
+      expect(res.status).toBe(400)
+      expect(res.body.error).toContain('cannot contain path traversal sequences')
+    })
+
+    it('rejects credential and secret fields in cyborgConfig', async () => {
+      mockStorage['team-data/config.json'] = {
+        orgRoots: [{ uid: 'testorg', displayName: 'Test Org' }]
+      }
+
+      const res = await request(app, 'POST', '/api/modules/team-tracker/admin/roster-sync/config', {
+        teamDataSource: 'cyborg',
+        cyborgConfig: {
+          snapshotKey: 'team-data/cyborg/enrichment.json',
+          credentials: { key: 'secret' }
+        }
+      })
+      expect(res.status).toBe(400)
+      expect(res.body.error).toContain('cannot contain credential field "credentials"')
+    })
+  })
+
   describe('Backwards compatibility', () => {
     it('handles configs from before gitlabInstances was added', async () => {
       // Old config with legacy gitlabGroups field (will be auto-migrated to instances)
