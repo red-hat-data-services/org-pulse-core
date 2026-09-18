@@ -430,7 +430,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
       }
 
       for (const person of allPeople) {
-        const personOrg = orgKeyToDisplay[person.orgKey] || '';
+        const personOrg = orgKeyToDisplay[person.orgKey] || person.orgKey || '';
         if (!personOrg || !orgMap[personOrg]) continue;
         if (!orgPeople[personOrg]) orgPeople[personOrg] = new Set();
         orgPeople[personOrg].add(person.name);
@@ -478,7 +478,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
       const allPeople = await getAllPeople(storage);
       const orgKeyToDisplay = await buildOrgKeyToDisplayName();
       const orgPeople = isAll ? allPeople : allPeople.filter(function(person) {
-        return (orgKeyToDisplay[person.orgKey] || '') === orgName;
+        return (orgKeyToDisplay[person.orgKey] || person.orgKey || '') === orgName;
       });
 
       const rosterConfig = await loadRosterSyncConfig(storage);
