@@ -596,7 +596,11 @@ async function startServer(options = {}) {
   const { createHealthMetricsRouter } = require('./health-metrics/routes');
   const hmDataRoot = storageModule.DATA_DIR || storageModule.FIXTURES_DIR;
   const eventsDir = path.join(hmDataRoot, 'health-metrics', 'events');
-  app.use('/api/health-metrics', createHealthMetricsRouter(coreServices, { eventsDir }));
+  app.use('/api/health-metrics', createHealthMetricsRouter(coreServices, {
+    eventsDir,
+    // Enabled modules only, so the usage report does not flag views nobody can open
+    getModules: () => builtInModules.filter(m => routeContext.enabledSlugs.has(m.slug)),
+  }));
 
   // ─── Admin & Module Management routes (after module routers to avoid conflicts) ───
 

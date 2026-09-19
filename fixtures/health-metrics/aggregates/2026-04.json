@@ -4,6 +4,8 @@
   "pages": {
     "team-tracker::home": {
       "views": 612,
+"interactions": 184,
+"byAction": { "filter:team": 121, "link:jira": 63 },
       "uniqueUsers": 38,
       "byUserType": { "Backend": 210, "Frontend": 140, "Full Stack": 110, "DevOps": 82, "QE": 45, "unknown": 25 },
       "byPermissionTier": { "admin": 52, "team-admin": 70, "manager": 180, "user": 310 }

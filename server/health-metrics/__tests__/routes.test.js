@@ -39,7 +39,7 @@ describe('Health Metrics Routes', () => {
 
   describe('Per-user rate limiting', () => {
     it('allows requests under the limit', () => {
-      const RATE_LIMIT_MAX = 30;
+      const RATE_LIMIT_MAX = 120;
       const counts = new Map();
       const email = 'user@redhat.com';
       for (let i = 0; i < RATE_LIMIT_MAX; i++) {
@@ -47,13 +47,13 @@ describe('Health Metrics Routes', () => {
         entry.count++;
         counts.set(email, entry);
       }
-      expect(counts.get(email).count).toBe(30);
+      expect(counts.get(email).count).toBe(120);
       expect(counts.get(email).count > RATE_LIMIT_MAX).toBe(false);
     });
 
     it('blocks requests over the limit', () => {
-      const RATE_LIMIT_MAX = 30;
-      const count = 31;
+      const RATE_LIMIT_MAX = 120;
+      const count = 121;
       expect(count > RATE_LIMIT_MAX).toBe(true);
     });
   });
