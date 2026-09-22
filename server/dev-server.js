@@ -37,6 +37,7 @@ async function startServer(options = {}) {
     fixturesDirs = [path.join(__dirname, '..', 'fixtures')],
     modulePaths = [path.join(__dirname, '..', 'modules')],
     platformPaths = [path.join(__dirname, '..', 'platform')],
+    moduleMigrations = [],
     port = process.env.API_PORT || 3001,
   } = options;
 
@@ -66,7 +67,25 @@ async function startServer(options = {}) {
     storageModule.initStorage({ dataDir });
   }
 
+  if (dbConnection && !DEMO_MODE) {
+    const { runMigration } = require('../shared/server/migration');
+    await runMigration({ connection: dbConnection, storage: storageModule, dataDir, moduleMigrations });
+  }
+
   const { readFromStorage, writeToStorage, getFileMtime } = storageModule;
+
+  // ─── Config Store ───
+  // Constructed early: needed by roleStoreOpts.getAuthDomain below and by
+  // module state loading further down, both of which run before other
+  // consumer modules load.
+  const { createConfigStore } = require('../shared/server/config-store');
+  const configStoreOpts = {};
+  if (dbConnection) {
+    const { configSchema } = require('../shared/server/models/config');
+    configStoreOpts.model = dbConnection.model('core__config', configSchema, 'core__config');
+  }
+  const configStore = createConfigStore(storageModule, configStoreOpts);
+
   const { createAuthMiddleware, proxySecretGuard, blockDuringImpersonation } = require('../shared/server/auth');
   const { createRoleStore } = require('../shared/server/role-store');
   const { createRoleRegistry } = require('../shared/server/role-registry');
@@ -248,7 +267,12 @@ async function startServer(options = {}) {
     'release-planning:read': 'releases:read',
     'release-planning:write': 'releases:write',
   };
-  await apiTokens.init(storageModule, { scopeRegistry, scopeMigrationMap });
+  const apiTokenOpts = { scopeRegistry, scopeMigrationMap };
+  if (dbConnection) {
+    const { apiTokenSchema } = require('../shared/server/models/api-token');
+    apiTokenOpts.model = dbConnection.model('core__api_tokens', apiTokenSchema, 'core__api_tokens');
+  }
+  await apiTokens.init(storageModule, apiTokenOpts);
 
   const PORT = port;
 
@@ -313,11 +337,12 @@ async function startServer(options = {}) {
   // ─── Auth ───
 
   const roleStoreOpts = {
+    configStore,
     getAuthDomain: async () => {
       if (process.env.AUTH_EMAIL_DOMAIN) {
         return process.env.AUTH_EMAIL_DOMAIN.trim().toLowerCase();
       }
-      const config = await readFromStorage('site-config.json');
+      const config = await configStore.readFromStorage('site-config.json');
       return config?.authEmailDomain || null;
     },
     roleRegistry
@@ -340,16 +365,31 @@ async function startServer(options = {}) {
   roleStoreOpts.auditLog = auditLog;
 
   const roleStore = createRoleStore(readFromStorage, writeToStorage, roleStoreOpts);
+
+  // ─── Registry Store ───
+  // Created before auth middleware, which caches registry reads for
+  // resolveUserUid and needs the dual-path store to do so correctly.
+
+  const { createRegistryStore } = require('../shared/server/registry-store');
+  const registryStoreOpts = {};
+  if (dbConnection) {
+    const { registryEntrySchema } = require('../shared/server/models/registry-entry');
+    registryStoreOpts.model = dbConnection.model('core__registry_entries', registryEntrySchema, 'core__registry_entries');
+  }
+  const registryStore = createRegistryStore(storageModule, registryStoreOpts);
+
   const { authMiddleware, requireAuth, requireAdmin, requireTeamAdmin, requireRole, requireScope, seedRoles } = createAuthMiddleware(readFromStorage, writeToStorage, {
     tokenValidator: apiTokens,
     roleStore,
-    getFileMtime
+    getFileMtime,
+    registryStore,
+    configStore
   });
 
   // ─── Field Store ───
 
   const { createFieldStore } = require('../shared/server/field-store');
-  const fieldStoreOpts = { auditLog };
+  const fieldStoreOpts = { auditLog, registryStore };
   if (dbConnection) {
     const { fieldDefinitionSchema } = require('../shared/server/models/field-definition');
     fieldStoreOpts.model = dbConnection.model('core__field_definitions', fieldDefinitionSchema, 'core__field_definitions');
@@ -359,12 +399,24 @@ async function startServer(options = {}) {
   // ─── Team Store ───
 
   const { createTeamStore } = require('../shared/server/team-store');
-  const teamStoreOpts = { auditLog };
+  const teamStoreOpts = { auditLog, registryStore };
   if (dbConnection) {
     const { teamSchema } = require('../shared/server/models/team');
     teamStoreOpts.model = dbConnection.model('core__teams', teamSchema, 'core__teams');
   }
   const teamStore = createTeamStore(storageModule, teamStoreOpts);
+
+  // ─── Health Metrics Store ───
+
+  const { createHealthMetricsStore } = require('./health-metrics/store');
+  const healthMetricsStoreOpts = {};
+  let healthMetricsEventModel = null;
+  if (dbConnection) {
+    const { healthMetricsStateSchema, healthMetricsEventSchema } = require('./health-metrics/model');
+    healthMetricsStoreOpts.model = dbConnection.model('core__health_metrics', healthMetricsStateSchema, 'core__health_metrics');
+    healthMetricsEventModel = dbConnection.model('core__health_metric_events', healthMetricsEventSchema, 'core__health_metric_events');
+  }
+  const healthMetricsStore = createHealthMetricsStore(storageModule, healthMetricsStoreOpts);
 
   // ─── Swagger UI (before auth) ───
 
@@ -384,7 +436,7 @@ async function startServer(options = {}) {
   const messageRegistry = require('../shared/server/message-registry');
   const { createRefreshRegistry } = require('../shared/server/refresh-registry');
   const { createExportRegistry } = require('../shared/server/export-registry');
-  const refreshRegistry = await createRefreshRegistry(storageModule);
+  const refreshRegistry = await createRefreshRegistry(configStore);
   const exportRegistry = createExportRegistry();
   const { createSearchIndexRegistry } = require('../shared/server/search-index-registry');
   const searchIndexRegistry = createSearchIndexRegistry();
@@ -429,7 +481,9 @@ async function startServer(options = {}) {
     requireScope,
     blockDuringImpersonation,
     roleStore,
+    registryStore,
     auditLog,
+    configStore,
     roleRegistry,
     scopeRegistry,
     secretRegistry,
@@ -501,10 +555,10 @@ async function startServer(options = {}) {
 
   // ─── Module State ───
 
-  const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, fieldStore, teamStore, auditLog, roleRegistry, scopeRegistry, secretRegistry, dbConnection };
+  const coreServices = { storage: storageModule, requireAuth: authMiddleware, requireAdmin, requireTeamAdmin, requireRole, requireScope, roleStore, fieldStore, teamStore, registryStore, healthMetricsStore, healthMetricsEventModel, auditLog, configStore, roleRegistry, scopeRegistry, secretRegistry, dbConnection };
   const registries = { diagnostics: diagnosticsRegistry, messages: messageRegistry, refresh: refreshRegistry, exports: exportRegistry, searchIndex: searchIndexRegistry };
 
-  const persistedState = await loadModuleState(storageModule);
+  const persistedState = await loadModuleState(configStore);
   const startupState = Object.assign({}, persistedState);
   let startupStateChanged = false;
   for (const mod of builtInModules) {
@@ -514,10 +568,10 @@ async function startServer(options = {}) {
     }
   }
   if (startupStateChanged) {
-    await saveModuleState(storageModule, startupState);
+    await saveModuleState(configStore, startupState);
   }
   const effectiveState = getEffectiveState(builtInModules, startupState);
-  await reconcileStartupState(builtInModules, effectiveState, storageModule);
+  await reconcileStartupState(builtInModules, effectiveState, configStore);
   const enabledSlugs = new Set(Object.entries(effectiveState).filter(([, v]) => v).map(([k]) => k));
 
   // Update route context with resolved enabledSlugs
@@ -605,7 +659,7 @@ async function startServer(options = {}) {
 
   // ─── Static Module Content Serving ───
 
-  app.use('/modules', createModuleStaticMiddleware(storageModule));
+  app.use('/modules', createModuleStaticMiddleware(storageModule, configStore));
 
   // CORS preflight
   app.options('/api/{*path}', function(req, res) { res.status(200).end(); });
@@ -619,12 +673,20 @@ async function startServer(options = {}) {
     }
   }
 
-  await seedRoles();
-  await roleStore.migrateEmailDomains();
-  await modulesConfig.seedIfMissing(storageModule);
+  if (dbConnection) {
+    const { withMigrationLock } = require('../shared/server/migration');
+    await withMigrationLock(dbConnection, 'role-store-startup', async () => {
+      await seedRoles();
+      await roleStore.migrateEmailDomains();
+    });
+  } else {
+    await seedRoles();
+    await roleStore.migrateEmailDomains();
+  }
+  await modulesConfig.seedIfMissing(configStore);
 
   if (!DEMO_MODE) {
-    gitSync.scheduleDaily(storageModule);
+    gitSync.scheduleDaily(storageModule, configStore);
   }
 
   return new Promise(function(resolve) {

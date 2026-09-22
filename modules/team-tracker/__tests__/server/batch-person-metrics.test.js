@@ -1,5 +1,8 @@
 const { createFieldStore } = require('../../../../shared/server/field-store')
 const { createAuditLog } = require('../../../../shared/server/audit-log')
+const { createRegistryStore } = require('../../../../shared/server/registry-store')
+const { createConfigStore } = require('../../../../shared/server/config-store')
+const { createTeamStore } = require('../../../../shared/server/team-store')
 import { describe, it, expect, vi } from 'vitest'
 
 
@@ -29,7 +32,10 @@ async function setupRoutes(storageData) {
   }
 
   const storage = makeStorage(storageData)
-  const fieldStore = createFieldStore(storage, { auditLog: createAuditLog(storage) })
+  const registryStore = createRegistryStore(storage)
+  const configStore = createConfigStore(storage)
+  const auditLog = createAuditLog(storage)
+  const fieldStore = createFieldStore(storage, { auditLog, registryStore })
   const context = {
     storage,
     requireAdmin: (req, res, next) => next(),
@@ -41,6 +47,10 @@ async function setupRoutes(storageData) {
       isTeamAdmin: vi.fn(() => false)
     },
     fieldStore,
+    teamStore: createTeamStore(storage, { auditLog, registryStore }),
+    auditLog,
+    registryStore,
+    configStore,
     registerScopes: vi.fn()
   }
 

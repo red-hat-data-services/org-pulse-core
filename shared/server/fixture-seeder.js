@@ -16,7 +16,7 @@ async function seedFixtures(connection, modules, fixturesDirs) {
       const data = await loadFixtureFile(fixtureFile, mod, fixturesDirs)
       if (data === null) continue
 
-      const docs = Array.isArray(data) ? data : [data]
+      const docs = normalizeFixture(fixtureFile, collectionName, data)
       if (docs.length === 0) continue
 
       const collection = connection.db.collection(fullCollectionName)
@@ -29,6 +29,16 @@ async function seedFixtures(connection, modules, fixturesDirs) {
   if (totalSeeded > 0) {
     console.log(`[fixture-seeder] Seeded ${totalSeeded} documents into MongoDB`)
   }
+}
+
+function normalizeFixture(fixtureFile, collectionName, data) {
+  if (collectionName === 'field-exception' && Array.isArray(data.exceptions)) {
+    return data.exceptions.map(({ id, ...exception }) => ({ exceptionId: id, ...exception }))
+  }
+  if (collectionName === 'field-option') {
+    return [{ optionId: path.basename(fixtureFile, '.json'), ...data }]
+  }
+  return Array.isArray(data) ? data : [data]
 }
 
 async function loadFixtureFile(fixtureFile, mod, fixturesDirs) {

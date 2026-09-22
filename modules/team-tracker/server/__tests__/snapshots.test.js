@@ -1,4 +1,5 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest'
+import mongoose from 'mongoose'
 import {
   getSnapshotPeriods,
   getCurrentPeriod,
@@ -12,6 +13,7 @@ import {
   sanitizeTeamKey,
   SNAPSHOT_EPOCH
 } from '../snapshots'
+const { snapshotSchema } = require('../models/snapshot')
 
 function createMockStorage(data = {}) {
   const store = { ...data }
@@ -413,5 +415,106 @@ describe('snapshots', () => {
       const result = await loadPersonSnapshots(storage, 'org::team', 'Unknown Person')
       expect(result).toEqual([])
     })
+  })
+
+  describe('generateSnapshot with a readPerson override', () => {
+    it('uses the override instead of reading people/<key>.json from storage', async () => {
+      const storage = createMockStorage({}) // deliberately empty — override must be used instead
+      const period = { start: new Date('2026-01-01'), end: new Date('2026-02-01'), monthKey: '2026-01' }
+      const readPerson = vi.fn(async (key) => mockPersonData[`people/${key}.json`] || null)
+
+      const snapshot = await generateSnapshot(storage, 'org::team', mockTeam, period, {
+        githubCache: { users: {} },
+        gitlabCache: { users: {} },
+        readPerson
+      })
+
+      expect(readPerson).toHaveBeenCalledWith('alice_smith')
+      expect(readPerson).toHaveBeenCalledWith('bob_jones')
+      expect(snapshot.team.resolvedCount).toBe(4)
+    })
+  })
+})
+
+// ─── MongoDB-backed parity tests ───
+
+describe('snapshots (MongoDB)', () => {
+  let connection
+  let SnapshotModel
+  const dbName = 'test_tt_snapshot_' + process.pid
+
+  beforeAll(async () => {
+    const uri = process.env.MONGODB_URI
+    if (!uri) return
+    connection = await mongoose.createConnection(uri, { dbName })
+    SnapshotModel = connection.model('team_tracker__snapshot', snapshotSchema, 'team_tracker__snapshot')
+  })
+
+  afterAll(async () => {
+    if (connection) {
+      await connection.db.dropDatabase()
+      await connection.close()
+    }
+  })
+
+  beforeEach(async () => {
+    if (SnapshotModel) await SnapshotModel.deleteMany({})
+  })
+
+  const period = { start: new Date('2026-01-01'), end: new Date('2026-02-01'), monthKey: '2026-01' }
+  const cacheOptions = {
+    githubHistory: mockGithubHistory,
+    gitlabHistory: mockGitlabHistory,
+    githubCache: mockGithubCache,
+    gitlabCache: mockGitlabCache
+  }
+
+  it.skipIf(!process.env.MONGODB_URI)('generateAndStoreSnapshot writes to MongoDB and returns the same shape as the file path', async () => {
+    if (!SnapshotModel) return
+    const storage = createMockStorage(mockPersonData)
+
+    const fileSnapshot = await generateAndStoreSnapshot(createMockStorage(mockPersonData), 'org::team', mockTeam, period, cacheOptions)
+    const dbSnapshot = await generateAndStoreSnapshot(storage, 'org::team', mockTeam, period, { ...cacheOptions, model: SnapshotModel })
+
+    // generatedAt is a fresh timestamp on each call — compare everything else.
+    expect({ ...dbSnapshot, generatedAt: undefined }).toEqual({ ...fileSnapshot, generatedAt: undefined })
+
+    const doc = await SnapshotModel.findOne({ team: 'org::team', date: '2026-02-01' }).lean()
+    expect(doc.data).toEqual(dbSnapshot)
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('generateAndStoreSnapshot does not regenerate an existing snapshot', async () => {
+    if (!SnapshotModel) return
+    const storage = createMockStorage(mockPersonData)
+    await generateAndStoreSnapshot(storage, 'org::team', mockTeam, period, { ...cacheOptions, model: SnapshotModel })
+    expect(await SnapshotModel.countDocuments({})).toBe(1)
+
+    const second = await generateAndStoreSnapshot(storage, 'org::team', mockTeam, period, { ...cacheOptions, model: SnapshotModel })
+    expect(await SnapshotModel.countDocuments({})).toBe(1)
+    expect(second).toBeTruthy()
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('loadTeamSnapshots reads back sorted by periodStart', async () => {
+    if (!SnapshotModel) return
+    const storage = createMockStorage(mockPersonData)
+    const period2 = { start: new Date('2025-12-01'), end: new Date('2026-01-01'), monthKey: '2025-12' }
+
+    await generateAndStoreSnapshot(storage, 'org::team', mockTeam, period, { ...cacheOptions, model: SnapshotModel })
+    await generateAndStoreSnapshot(storage, 'org::team', mockTeam, period2, { ...cacheOptions, model: SnapshotModel })
+
+    const snapshots = await loadTeamSnapshots(storage, 'org::team', { model: SnapshotModel })
+    expect(snapshots).toHaveLength(2)
+    expect(snapshots[0].periodStart).toBe('2025-12-01')
+    expect(snapshots[1].periodStart).toBe('2026-01-01')
+  })
+
+  it.skipIf(!process.env.MONGODB_URI)('loadPersonSnapshots filters to the requested person', async () => {
+    if (!SnapshotModel) return
+    const storage = createMockStorage(mockPersonData)
+    await generateAndStoreSnapshot(storage, 'org::team', mockTeam, period, { ...cacheOptions, model: SnapshotModel })
+
+    const aliceSnapshots = await loadPersonSnapshots(storage, 'org::team', 'Alice Smith', { model: SnapshotModel })
+    expect(aliceSnapshots).toHaveLength(1)
+    expect(aliceSnapshots[0].metrics.resolvedCount).toBe(2)
   })
 })

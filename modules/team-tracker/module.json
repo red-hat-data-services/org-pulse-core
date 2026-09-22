@@ -80,7 +80,8 @@
     "team-data/registry.json": "registry",
     "team-data/teams.json": "teams",
     "team-data/field-definitions.json": "field-definitions",
-    "team-data/field-exceptions.json": "field-exceptions",
+    "team-data/field-exceptions.json": "field-exception",
+    "team-data/field-options/component.json": "field-option",
     "team-data/config.json": "config",
     "github-contributions.json": "github-contributions",
     "github-history.json": "github-history",
@@ -98,10 +99,7 @@
       { "path": "gitlab-contributions.json", "notes": "GitLab contribution counts" },
       { "path": "gitlab-history.json", "notes": "Monthly GitLab history" },
       { "path": "snapshots/**/*.json", "notes": "Team snapshots" },
-      { "path": "jira-name-map.json", "notes": "Jira accountId cache" },
-      { "path": "org-roster/teams-metadata.json", "notes": "Team boards and org structure" },
-      { "path": "org-roster/components.json", "notes": "Component-to-team mapping" },
-      { "path": "org-roster/rfe-backlog.json", "notes": "RFE backlog by team and component" }
+      { "path": "jira-name-map.json", "notes": "Jira accountId cache" }
     ]
   }
 }

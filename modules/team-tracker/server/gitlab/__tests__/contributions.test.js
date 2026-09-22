@@ -238,6 +238,13 @@ describe('fetchGitlabData integration', () => {
     }
   }
 
+  function makeMissingGroupResponse() {
+    return {
+      ok: true,
+      json: async () => ({ data: { group: null } })
+    }
+  }
+
   function makeInstance(overrides = {}) {
     return {
       label: 'Test GitLab',
@@ -340,6 +347,39 @@ describe('fetchGitlabData integration', () => {
     }
   })
 
+  it('returns null results when a group is missing or inaccessible', async () => {
+    const refs = setup()
+    try {
+      mockFetch.mockImplementation(async () => makeMissingGroupResponse())
+
+      const results = await fetchGitlabData(['testuser'], {
+        gitlabInstances: [makeInstance({ groups: ['missing-group'] })]
+      })
+
+      expect(results.testuser).toBeNull()
+    } finally {
+      cleanup(refs)
+    }
+  })
+
+  it('returns zero contributions when an accessible group is empty', async () => {
+    const refs = setup()
+    try {
+      mockFetch.mockImplementation(async () => makeGraphQLResponse([]))
+
+      const results = await fetchGitlabData(['testuser'], {
+        gitlabInstances: [makeInstance({ groups: ['empty-group'] })]
+      })
+
+      expect(results.testuser).toMatchObject({
+        totalContributions: 0,
+        months: {}
+      })
+    } finally {
+      cleanup(refs)
+    }
+  })
+
   it('returns null for all users when no instances configured', async () => {
     const refs = setup()
     try {
@@ -392,20 +432,25 @@ describe('fetchGitlabData integration', () => {
     }
   })
 
-  it('handles GraphQL errors gracefully', async () => {
+  it('returns null results when an individual monthly fetch fails', async () => {
     const refs = setup()
     try {
+      let requestCount = 0
       mockFetch.mockImplementation(async () => {
-        return makeErrorResponse('The given date range is larger than 93 days')
+        requestCount++
+        if (requestCount === 2) {
+          return makeErrorResponse('The given date range is larger than 93 days')
+        }
+        return makeGraphQLResponse([
+          { user: { username: 'testuser' }, totalEvents: 10 }
+        ])
       })
 
       const results = await fetchGitlabData(['testuser'], {
         gitlabInstances: [makeInstance()]
       })
 
-      // Should still return a result with 0 contributions (errors are caught per-window)
-      expect(results.testuser).toBeTruthy()
-      expect(results.testuser.totalContributions).toBe(0)
+      expect(results.testuser).toBeNull()
     } finally {
       cleanup(refs)
     }
@@ -441,7 +486,7 @@ describe('fetchGitlabData integration', () => {
     }
   })
 
-  it('skips instances with missing token env var', async () => {
+  it('returns null results when an instance token is missing', async () => {
     const refs = setup()
     try {
       delete process.env.MISSING_TOKEN
@@ -459,10 +504,7 @@ describe('fetchGitlabData integration', () => {
         ]
       })
 
-      // Only the first instance contributes (second is skipped)
-      expect(results.testuser.totalContributions).toBe(120) // 10 * 12
-      expect(Object.keys(results.testuser.instances)).toHaveLength(1)
-      expect(results.testuser.instances['https://gitlab.test'].totalContributions).toBe(120)
+      expect(results.testuser).toBeNull()
     } finally {
       cleanup(refs)
     }

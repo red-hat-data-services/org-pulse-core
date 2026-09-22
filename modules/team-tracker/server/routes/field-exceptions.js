@@ -3,11 +3,15 @@
  * CRUD for per-field exceptions that exclude specific fields from completeness checks.
  */
 
-const fieldExceptionsStore = require('../field-exceptions-store');
-
 module.exports = function registerFieldExceptionRoutes(router, context) {
-  const { storage, requireTeamAdmin, requireScope, fieldStore, teamStore, auditLog } = context;
-  const { readFromStorage } = storage;
+  const { requireTeamAdmin, requireScope, fieldStore, teamStore, fieldExceptionsStore, registryStore: contextRegistryStore } = context;
+  if (!contextRegistryStore) {
+    throw new Error('registerFieldExceptionRoutes requires context.registryStore (from the module context) — there is no fallback');
+  }
+  const registryStore = contextRegistryStore;
+  if (!fieldExceptionsStore) {
+    throw new Error('registerFieldExceptionRoutes requires context.fieldExceptionsStore');
+  }
 
   const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
@@ -27,7 +31,7 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
     // Manager: filter to managed people and managed teams
     const permissions = require('../../../../shared/server/permissions');
 
-    const registry = await readFromStorage('team-data/registry.json');
+    const registry = await registryStore.readRegistry();
     if (!registry) return [];
 
     const teamsData = await teamStore.readTeams();
@@ -74,7 +78,7 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
     if (req.query.entityId) filters.entityId = req.query.entityId;
     if (req.query.fieldId) filters.fieldId = req.query.fieldId;
 
-    let exceptions = await fieldExceptionsStore.listExceptions(storage, filters);
+    let exceptions = await fieldExceptionsStore.listExceptions(filters);
     exceptions = await filterExceptionsForUser(exceptions, req);
 
     res.json({ exceptions });
@@ -152,7 +156,7 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
 
     // Validate entity exists
     if (entityType === 'person') {
-      const registry = await readFromStorage('team-data/registry.json');
+      const registry = await registryStore.readRegistry();
       if (!registry || !registry.people || !registry.people[entityId]) {
         return res.status(400).json({ error: `Person "${entityId}" not found in registry` });
       }
@@ -178,10 +182,8 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
 
     const actorEmail = req.userEmail || 'unknown';
     const { exception, created } = await fieldExceptionsStore.createException(
-      storage,
       { entityType, entityId, fieldId, reason: reason.trim() },
-      actorEmail,
-      auditLog
+      actorEmail
     );
 
     res.status(created ? 201 : 200).json({ exception });
@@ -214,7 +216,7 @@ module.exports = function registerFieldExceptionRoutes(router, context) {
     if (guarded) return;
 
     const actorEmail = req.userEmail || 'unknown';
-    const removed = await fieldExceptionsStore.removeException(storage, req.params.id, actorEmail, auditLog);
+    const removed = await fieldExceptionsStore.removeException(req.params.id, actorEmail);
 
     if (!removed) {
       return res.status(404).json({ error: 'Exception not found' });

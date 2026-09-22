@@ -63,6 +63,21 @@ describe('export orchestrator logic', () => {
     expect(copy).toEqual(state)
   })
 
+  it('reads platform export files from configStore', async () => {
+    const { readPlatformFiles } = require('../export')
+    const configStore = makeStorage({
+      'allowlist.json': { emails: ['mongo@example.com'] },
+      'modules-state.json': { 'mongo-module': true },
+      'last-refreshed.json': { at: '2026-09-02T00:00:00.000Z' }
+    })
+
+    expect(await readPlatformFiles(configStore)).toEqual({
+      allowlist: { emails: ['mongo@example.com'] },
+      modulesState: { 'mongo-module': true },
+      lastRefreshed: { at: '2026-09-02T00:00:00.000Z' }
+    })
+  })
+
   it('handles null roster gracefully', () => {
     const mapping = buildMapping(null)
     expect(mapping).toBeDefined()

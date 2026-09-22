@@ -274,9 +274,9 @@ async function resolveBoardNames(teams, secrets) {
  * Derive teams from people's _teamGrouping (or miroTeam) values.
  * Used as a fallback when no team-boards spreadsheet tab is configured or available.
  */
-async function deriveTeamsFromPeople(storage) {
-  const allPeople = await getAllPeople(storage);
-  const orgDisplayNames = await getOrgDisplayNames(storage);
+async function deriveTeamsFromPeople(storage, registryStore, configStore = storage) {
+  const allPeople = await getAllPeople(configStore, registryStore);
+  const orgDisplayNames = await getOrgDisplayNames(configStore);
   const teamSet = new Map();
 
   for (const person of allPeople) {
@@ -300,7 +300,10 @@ async function deriveTeamsFromPeople(storage) {
  * Does NOT sync people (those come from team-tracker's roster-sync via shared/server/roster.js).
  * sheetId may be null — in that case, teams are derived from people data.
  */
-async function runSync(storage, sheetId, config, secrets, fieldStore) {
+async function runSync(storage, sheetId, config, secrets, fieldStore, registryStore, configStore) {
+  if (!configStore) {
+    throw new Error('runSync requires an injected configStore (from context) — there is no fallback');
+  }
   const teamBoardsTab = config?.teamBoardsTab || null;
   const componentsTab = config?.componentsTab || null;
   const orgNameMapping = config?.orgNameMapping || {};
@@ -308,7 +311,7 @@ async function runSync(storage, sheetId, config, secrets, fieldStore) {
   console.log('[org-roster sync] Starting metadata sync...');
 
   // 0. Determine which orgs are configured
-  const orgDisplayNames = await getOrgDisplayNames(storage);
+  const orgDisplayNames = await getOrgDisplayNames(configStore);
   const configuredOrgNames = new Set(Object.values(orgDisplayNames));
   if (configuredOrgNames.size === 0) {
     console.warn('[org-roster sync] No org roots configured — sync will include all orgs from sheet');
@@ -348,7 +351,7 @@ async function runSync(storage, sheetId, config, secrets, fieldStore) {
 
   // Fallback: derive teams from people data
   if (rawTeams.length === 0) {
-    rawTeams = await deriveTeamsFromPeople(storage);
+    rawTeams = await deriveTeamsFromPeople(storage, registryStore, configStore);
     console.log(`[org-roster sync] Derived ${rawTeams.length} teams from people data`);
   }
 
@@ -392,20 +395,20 @@ async function runSync(storage, sheetId, config, secrets, fieldStore) {
   }
 
   // 5. Write metadata files
-  await storage.writeToStorage('org-roster/teams-metadata.json', {
+  await configStore.writeToStorage('org-roster/teams-metadata.json', {
     fetchedAt: new Date().toISOString(),
     boardNames,
     teams: rawTeams
   });
 
   if (!hasInAppComponents) {
-    await storage.writeToStorage('org-roster/components.json', {
+    await configStore.writeToStorage('org-roster/components.json', {
       fetchedAt: new Date().toISOString(),
       components: componentMap
     });
   }
 
-  await storage.writeToStorage('org-roster/sync-status.json', {
+  await configStore.writeToStorage('org-roster/sync-status.json', {
     lastSyncAt: new Date().toISOString(),
     status: 'success',
     error: null,

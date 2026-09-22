@@ -581,17 +581,29 @@ async function createRefreshRegistry(storage) {
     if (handlerId === '__proto__' || handlerId === 'constructor' || handlerId === 'prototype') {
       throw new Error('Invalid handlerId')
     }
-    if (cadence === null || cadence === undefined) {
-      delete cadenceOverrides[handlerId]
-    } else {
+    if (cadence !== null && cadence !== undefined) {
       var ms = parseCadence(cadence)
       if (ms < MIN_OVERRIDE_MS) {
         throw new Error('Cadence override "' + cadence + '" is below the minimum of 15m')
       }
-      cadenceOverrides[handlerId] = cadence
     }
     if (storage) {
-      await storage.writeToStorage(OVERRIDES_KEY, cadenceOverrides)
+      if (typeof storage.updateFromStorage === 'function') {
+        cadenceOverrides = await storage.updateFromStorage(OVERRIDES_KEY, function(current) {
+          var next = { ...(current || {}) }
+          if (cadence === null || cadence === undefined) delete next[handlerId]
+          else next[handlerId] = cadence
+          return next
+        })
+      } else {
+        if (cadence === null || cadence === undefined) delete cadenceOverrides[handlerId]
+        else cadenceOverrides[handlerId] = cadence
+        await storage.writeToStorage(OVERRIDES_KEY, cadenceOverrides)
+      }
+    } else if (cadence === null || cadence === undefined) {
+      delete cadenceOverrides[handlerId]
+    } else {
+      cadenceOverrides[handlerId] = cadence
     }
   }
 

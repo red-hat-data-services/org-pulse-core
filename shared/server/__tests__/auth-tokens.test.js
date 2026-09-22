@@ -152,6 +152,44 @@ describe('authMiddleware with Bearer tokens', () => {
   })
 })
 
+describe('auth allowlist storage', () => {
+  it('uses configStore for legacy allowlist reads', async () => {
+    const storage = createMockStorage()
+    const configStore = {
+      readFromStorage: async () => ({ emails: ['current@test.com'] }),
+      writeToStorage: async () => {}
+    }
+    const { isAdmin } = createAuthMiddleware(
+      storage.readFromStorage.bind(storage),
+      storage.writeToStorage.bind(storage),
+      { configStore }
+    )
+
+    expect(await isAdmin('current@test.com')).toBe(true)
+    expect(await isAdmin('admin@test.com')).toBe(false)
+  })
+
+  it('writes first-user allowlist updates through configStore', async () => {
+    const storage = createMockStorage()
+    let allowlist = null
+    const configStore = {
+      readFromStorage: async () => allowlist,
+      writeToStorage: async (_key, value) => { allowlist = value }
+    }
+    const { authMiddleware } = createAuthMiddleware(
+      storage.readFromStorage.bind(storage),
+      storage.writeToStorage.bind(storage),
+      { configStore }
+    )
+    const req = createMockReq({ headers: { 'x-forwarded-email': 'first@test.com' } })
+
+    await authMiddleware(req, createMockRes(), () => {})
+
+    expect(allowlist).toEqual({ emails: ['first@test.com'] })
+    expect(storage.readFromStorage('allowlist.json')).toEqual({ emails: ['admin@test.com'] })
+  })
+})
+
 describe('requireScope', () => {
   let requireScope
 
