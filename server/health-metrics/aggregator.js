@@ -14,9 +14,19 @@ function aggregateEvents(events, month) {
       };
     }
     const p = pages[pageId];
-    p.views++;
     p._emails.add(event.email);
     allEmails.add(event.email);
+
+    // Interactions inside a view (tab, filter, link...) are counted apart from views
+    // and do not feed the per-view persona/role splits below.
+    if (event.action && event.action !== 'view') {
+      const key = event.detail ? `${event.action}:${event.detail}` : event.action;
+      p.interactions = (p.interactions || 0) + 1;
+      p.byAction = p.byAction || {};
+      p.byAction[key] = (p.byAction[key] || 0) + 1;
+      continue;
+    }
+    p.views++;
 
     const ut = event.userType || 'unknown';
     p.byUserType[ut] = (p.byUserType[ut] || 0) + 1;
@@ -56,6 +66,7 @@ function aggregateEvents(events, month) {
 function mergeDailyBreakdown(events) {
   const days = {};
   for (const event of events) {
+    if (event.action && event.action !== 'view') continue;
     const day = event.ts.slice(0, 10);
     if (!days[day]) {
       days[day] = { views: 0, _emails: new Set() };
