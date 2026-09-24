@@ -50,6 +50,7 @@ export default defineConfig({
           name: 'client',
           globals: true,
           environment: 'jsdom',
+          setupFiles: ['shared/__tests__/client-setup.js'],
           include: ['**/*.{test,spec}.js'],
           exclude: [
             ...sharedExclude,
