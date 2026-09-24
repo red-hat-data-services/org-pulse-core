@@ -5,6 +5,7 @@
 
 const CONFIG_KEY = 'team-data/config.json';
 const LEGACY_CONFIG_KEY = 'roster-sync-config.json';
+const VALID_DATA_SOURCES = ['sheets', 'in-app', 'cyborg'];
 
 // Simple cache for getOrgDisplayNames — invalidated on saveConfig
 let _orgDisplayNamesCache = null;
@@ -161,6 +162,7 @@ function clearDisplayNamesCache() {
 }
 
 module.exports = {
+  VALID_DATA_SOURCES,
   loadConfig,
   saveConfig,
   isConfigured,
