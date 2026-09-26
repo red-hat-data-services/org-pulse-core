@@ -4,6 +4,7 @@ const manifestModules = import.meta.glob('/modules/*/module.json', { eager: true
 const clientEntries = import.meta.glob('/modules/*/client/index.js')
 const settingsComponents = import.meta.glob('/modules/*/client/components/*Settings.vue')
 const widgetComponents = import.meta.glob('/modules/*/client/widgets/*Widget.vue')
+const blockComponents = import.meta.glob('/modules/*/client/blocks/*Block.vue')
 
 export function loadModuleManifests() {
   const modules = []
@@ -45,6 +46,19 @@ export function loadModuleWidget(slug, widgetPath) {
   const loader = widgetComponents[globKey]
   if (!loader) {
     throw new Error(`Widget component not found for module "${slug}": ${globKey}`)
+  }
+  return defineAsyncComponent(loader)
+}
+
+export function loadLandingBlock(slug, blockPath) {
+  if (blockPath.includes('..')) {
+    throw new Error(`Invalid block path for module "${slug}": path traversal not allowed`)
+  }
+  const normalized = blockPath.replace(/^\.\//, '')
+  const globKey = `/modules/${slug}/${normalized}`
+  const loader = blockComponents[globKey]
+  if (!loader) {
+    throw new Error(`Landing block component not found for module "${slug}": ${globKey}`)
   }
   return defineAsyncComponent(loader)
 }

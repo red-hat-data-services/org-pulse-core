@@ -192,6 +192,47 @@ function validate() {
       }
     }
 
+    // Landing blocks validation
+    if (manifest.client?.landingBlocks) {
+      if (!Array.isArray(manifest.client.landingBlocks)) {
+        error(`landingBlocks must be an array`)
+      } else {
+        const blockIds = new Set()
+        for (const block of manifest.client.landingBlocks) {
+          if (!block.id || typeof block.id !== 'string') {
+            error(`landingBlocks entry missing required "id" string`)
+          }
+          if (!block.name || typeof block.name !== 'string') {
+            error(`landingBlocks entry missing required "name" string`)
+          }
+          if (!block.description || typeof block.description !== 'string') {
+            error(`landingBlocks entry missing required "description" string`)
+          }
+          if (!block.component || typeof block.component !== 'string') {
+            error(`landingBlocks entry missing required "component" string`)
+          }
+
+          if (block.id) {
+            if (blockIds.has(block.id)) {
+              error(`Duplicate landingBlocks id "${block.id}" in module "${dir}"`)
+            }
+            blockIds.add(block.id)
+          }
+
+          if (block.component) {
+            const blockPath = path.join(MODULES_DIR, dir, block.component.replace(/^\.\//, ''))
+            if (!fs.existsSync(blockPath)) {
+              error(`Landing block component "${block.component}" not found for block "${block.id}"`)
+            }
+            const normalized = block.component.replace(/^\.\//, '')
+            if (!/^client\/blocks\/.*Block\.vue$/.test(normalized)) {
+              error(`Landing block component "${block.component}" must match pattern "client/blocks/*Block.vue"`)
+            }
+          }
+        }
+      }
+    }
+
     // Secrets field validation
     if (manifest.secrets !== undefined) {
       if (typeof manifest.secrets !== 'object' || Array.isArray(manifest.secrets)) {
@@ -483,6 +524,21 @@ function validate() {
         error(`Duplicate globally-qualified widget ID "${qualifiedId}"`)
       }
       globalWidgetIds.add(qualifiedId)
+    }
+  }
+
+  // Cross-module landing block ID uniqueness
+  const globalBlockIds = new Set()
+  for (const [slug, manifest] of Object.entries(allManifests)) {
+    const blocks = manifest.client?.landingBlocks
+    if (!Array.isArray(blocks)) continue
+    for (const block of blocks) {
+      if (!block.id) continue
+      const qualifiedId = `${slug}:${block.id}`
+      if (globalBlockIds.has(qualifiedId)) {
+        error(`Duplicate globally-qualified landing block ID "${qualifiedId}"`)
+      }
+      globalBlockIds.add(qualifiedId)
     }
   }
 

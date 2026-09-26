@@ -303,6 +303,76 @@ function registerPostAuthRoutes(app, context) {
     }
   });
 
+  /**
+   * @openapi
+   * /api/landing-page-config:
+   *   get:
+   *     tags: [Config]
+   *     summary: Get landing page block configuration
+   *     responses:
+   *       200:
+   *         description: Landing page block configuration
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 activeBlock:
+   *                   type: string
+   *                   nullable: true
+   *                   description: 'Module-qualified block ID (e.g. "team-tracker:my-block") or null if none selected'
+   */
+  app.get('/api/landing-page-config', async function(req, res) {
+    try {
+      const config = (await readFromStorage('landing-page-config.json')) || {};
+      res.json({ activeBlock: config.activeBlock || null });
+    } catch (error) {
+      console.error('Get landing-page-config error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * @openapi
+   * /api/landing-page-config:
+   *   post:
+   *     tags: [Config]
+   *     summary: Update landing page block configuration (admin only)
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               activeBlock:
+   *                 type: string
+   *                 nullable: true
+   *                 description: 'Module-qualified block ID or null to disable'
+   *     responses:
+   *       200:
+   *         description: Updated landing page block configuration
+   */
+  app.post('/api/landing-page-config', requireAdmin, requireScope('admin:manage'), async function(req, res) {
+    try {
+      if (DEMO_MODE) {
+        return res.json({ status: 'skipped', message: 'Configuration changes disabled in demo mode' });
+      }
+      const { activeBlock } = req.body;
+      if (activeBlock !== null && activeBlock !== undefined) {
+        if (typeof activeBlock !== 'string' || !activeBlock.includes(':')) {
+          return res.status(400).json({ error: 'activeBlock must be a module-qualified ID (e.g. "module-slug:block-id") or null' });
+        }
+      }
+      const config = { activeBlock: activeBlock || null };
+      await writeToStorage('landing-page-config.json', config);
+      res.json(config);
+    } catch (error) {
+      console.error('Save landing-page-config error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // App-wide messages
   app.get('/api/messages', async function(req, res) {
     const userContext = {

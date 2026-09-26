@@ -152,6 +152,21 @@ Platform-level configuration for the site. Created when an admin saves settings 
 - `authEmailDomain` is a string (max 253 characters, valid RFC 1123 domain). When set, role assignments normalize emails to this domain so that LDAP-provided emails (e.g. `user@redhat.com`) match OAuth proxy emails (e.g. `user@cluster.local`). Can also be set via the `AUTH_EMAIL_DOMAIN` env var, which takes precedence.
 - If this file doesn't exist, both fields default to `""` (empty string).
 
+## Landing Page Config — `data/landing-page-config.json`
+
+Administrator-selected landing page block configuration. Created when an admin selects a block in Settings > Landing Page.
+
+```json
+{
+  "activeBlock": "team-tracker:organization-overview"
+}
+```
+
+**Notes:**
+- `activeBlock` is a module-qualified block ID (`"moduleSlug:blockId"`) or `null` if no block is selected.
+- When `null` or the file does not exist, the landing page renders without a block (existing behavior).
+- If the referenced module is disabled or removed, the block is silently omitted at render time.
+
 ## Messages — `data/messages.json`
 
 Admin-created announcements stored as a JSON array. Merged with computed provider messages at `GET /api/messages`.
