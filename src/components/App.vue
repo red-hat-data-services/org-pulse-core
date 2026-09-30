@@ -251,6 +251,7 @@ import { useGitlabStats } from '@shared/client/composables/useGitlabStats'
 import { useModules } from '../composables/useModules'
 import { useTheme } from '../composables/useTheme'
 import { refreshMetrics, getLastRefreshed, apiRequest, getSiteConfig } from '@shared/client/services/api'
+import { trackPageView } from '@shared/client/services/usageTracking'
 import { loadModuleManifests, loadModuleClient } from '../module-loader'
 import { loadPlatformAboutTabs, loadModuleViewExtensions } from '../platform-loader'
 import { resolveIcon } from '../utils/icon-map'
@@ -678,14 +679,6 @@ export default {
       // Fetch messages independently -- non-blocking, never delays initial render
       this.fetchMessages()
 
-      // Check tracking opt-out status (non-blocking)
-      this._trackingDisabled = import.meta.env.VITE_DEMO_MODE === 'true';
-      if (!this._trackingDisabled) {
-        fetch('/api/health-metrics/tracking/status')
-          .then(r => r.json())
-          .then(data => { if (data.optedOut) this._trackingDisabled = true; })
-          .catch(() => {});
-      }
     },
 
     parseHash(hash) {
@@ -811,25 +804,15 @@ export default {
 
         const viewId = parts[1] || this.getDefaultViewId(manifest)
         this.activeViewId = viewId
-        await this.loadModuleView(manifest.slug, viewId)
 
-        // Usage tracking beacon — fire-and-forget
-        if (!this._trackingDisabled) {
-          let page = `${manifest.slug}::${viewId}`;
-          // Per-report tracking granularity: append report ID when viewing a specific report
-          if (viewId === 'reports' && params.report) {
-            page = `${manifest.slug}::reports/${params.report}`;
-          }
-          if (this._lastTrackedPage !== page || Date.now() - (this._lastTrackTime || 0) > 2000) {
-            this._lastTrackedPage = page;
-            this._lastTrackTime = Date.now();
-            fetch('/api/health-metrics/track', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ page })
-            }).catch(() => {});
-          }
-        }
+        // Usage tracking beacon — fire-and-forget (opt-out, demo mode and dedup live in the helper).
+        // Before the view loads, so interactions the view reports on mount land on this page.
+        // Per-report tracking granularity: append report ID when viewing a specific report
+        trackPageView(viewId === 'reports' && params.report
+          ? `${manifest.slug}::reports/${params.report}`
+          : `${manifest.slug}::${viewId}`)
+
+        await this.loadModuleView(manifest.slug, viewId)
         return
       }
 

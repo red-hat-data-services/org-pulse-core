@@ -44,6 +44,8 @@ Core team owns `shared/` via CODEOWNERS. Changes require core team review.
 | `apiRequest(url, options)` | Fetch wrapper with error handling |
 | `getSiteConfig()` | Fetch site configuration (`{ titlePrefix, authEmailDomain }`) — no cache |
 | `saveSiteConfig(config)` | Save site configuration (admin only) |
+| `trackUsage(action, detail?, page?)` | Record an interaction inside the current view for health-metrics (fire-and-forget). `action` and `detail` are fixed ids such as `filter` / `status`, never user input. `page` is only for UI outside a module view, e.g. a home-page widget. |
+| `trackPageView(page)` | Record a view open (`moduleSlug::viewId`). The shell calls this on every route change; modules normally do not. |
 
 ### Components
 

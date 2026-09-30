@@ -1,8 +1,44 @@
 const express = require('express');
 const { createEventStore } = require('./event-store');
 const { aggregateEvents, mergeDailyBreakdown } = require('./aggregator');
+const { buildReport, renderReportText } = require('./report');
 
-function createHealthMetricsRouter(context, { eventsDir } = {}) {
+const PAGE_ID_PATTERN = /^[a-zA-Z0-9:_/-]+$/;
+const PAGE_ID_MAX_LENGTH = 200;
+const ACTION_MAX_LENGTH = 64;
+
+// Resolves the /report date range. Returns null when either date is malformed or not a
+// real date (9999-99-99), or from > to. Default: the 7 days ending at `to` (today, UTC).
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+function resolveReportRange({ from, to } = {}, today = new Date().toISOString().slice(0, 10)) {
+  to = to || today;
+  if (!DAY.test(to) || isNaN(Date.parse(to))) return null;
+  from = from || new Date(Date.parse(to) - 6 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  if (!DAY.test(from) || isNaN(Date.parse(from)) || from > to) return null;
+  return { from, to };
+}
+
+// Validates a POST /track body. Returns { error } or { page, action, detail }.
+// action/detail use the same allowlist as page so free text (search queries,
+// issue titles) cannot be stored even if a caller passes it by mistake.
+function validateTrackBody(body) {
+  const { page, action = 'view', detail = '' } = body || {};
+  if (!page || typeof page !== 'string' || !page.includes('::')) {
+    return { error: 'Invalid page format. Expected module::viewId.' };
+  }
+  if (page.length > PAGE_ID_MAX_LENGTH || !PAGE_ID_PATTERN.test(page)) {
+    return { error: 'Invalid page ID: too long or contains invalid characters.' };
+  }
+  for (const [name, val, required] of [['action', action, true], ['detail', detail, false]]) {
+    if (typeof val !== 'string' || (required && !val)) return { error: `Invalid ${name}.` };
+    if (val && (val.length > ACTION_MAX_LENGTH || !PAGE_ID_PATTERN.test(val))) {
+      return { error: `Invalid ${name}: too long or contains invalid characters.` };
+    }
+  }
+  return { page, action, detail };
+}
+
+function createHealthMetricsRouter(context, { eventsDir, getModules } = {}) {
   const { storage, requireAdmin, requireScope, roleStore } = context;
   const { readFromStorage, writeToStorage, getFileMtime, listStorageFiles } = storage;
 
@@ -76,8 +112,8 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
   const recentEvents = new Set();
   const DEDUP_WINDOW_MS = 10_000;
 
-  function isDuplicate(email, page) {
-    const key = `${email}::${page}`;
+  function isDuplicate(email, page, action, detail) {
+    const key = `${email}::${page}::${action}::${detail}`;
     if (recentEvents.has(key)) return true;
     recentEvents.add(key);
     setTimeout(() => recentEvents.delete(key), DEDUP_WINDOW_MS);
@@ -234,7 +270,8 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
 
   // ─── Per-user rate limiting for /track ───
 
-  const RATE_LIMIT_MAX = 30;
+  // 120/min: a view open plus in-view interactions (tabs, filters, links) share this budget
+  const RATE_LIMIT_MAX = 120;
   const RATE_LIMIT_WINDOW_MS = 60_000;
   const rateCounts = new Map();
 
@@ -251,19 +288,37 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
 
   // ─── Routes: Tracking ───
 
-  const PAGE_ID_PATTERN = /^[a-zA-Z0-9:_/-]+$/;
-  const PAGE_ID_MAX_LENGTH = 200;
-
+  /**
+   * @openapi
+   * /api/health-metrics/track:
+   *   post:
+   *     tags: [Health Metrics]
+   *     summary: Record a view open or an interaction inside a view
+   *     description: Rate limited to 120 events per user per minute. Identical events within 10 seconds are dropped.
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [page]
+   *             properties:
+   *               page: { type: string, description: 'moduleSlug::viewId', example: 'ai-impact::rfe-review' }
+   *               action: { type: string, description: 'Defaults to view. Id-style characters only, max 64.', example: filter }
+   *               detail: { type: string, description: 'Stable id of the control used. Id-style characters only, max 64.', example: status }
+   *     responses:
+   *       200:
+   *         description: Recorded, deduplicated, or skipped because the user opted out
+   *       400:
+   *         description: Invalid page, action or detail
+   *       429:
+   *         description: Rate limit exceeded
+   */
   router.post('/track', requireScope('health-metrics:write'), async (req, res) => {
     if (DEMO_MODE) return res.json({ ok: true });
 
-    const { page } = req.body;
-    if (!page || typeof page !== 'string' || !page.includes('::')) {
-      return res.status(400).json({ error: 'Invalid page format. Expected module::viewId.' });
-    }
-    if (page.length > PAGE_ID_MAX_LENGTH || !PAGE_ID_PATTERN.test(page)) {
-      return res.status(400).json({ error: 'Invalid page ID: too long or contains invalid characters.' });
-    }
+    const { error, page, action, detail } = validateTrackBody(req.body);
+    if (error) return res.status(400).json({ error });
 
     const email = req.userEmail;
     if (!email) return res.status(401).json({ error: 'Authentication required.' });
@@ -280,19 +335,23 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
     }
 
     // Server-side dedup
-    if (isDuplicate(email, page)) {
+    if (isDuplicate(email, page, action, detail)) {
       return res.json({ ok: true, deduped: true });
     }
 
     const userType = (req.userUid && userTypeCache.get(req.userUid)) || 'unknown';
 
-    eventStore.append({
+    const event = {
       ts: new Date().toISOString(),
       page,
+      action,
       email,
       userType,
       roles: req.userRoles || [],
-    });
+      isManager: !!req.isManager,
+    };
+    if (detail) event.detail = detail;
+    eventStore.append(event);
 
     invalidateCurrentMonthCache();
     res.json({ ok: true });
@@ -480,6 +539,58 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
     res.json({ userTypes });
   });
 
+  // ─── Routes: Text report (admin or viewer) ───
+
+  /**
+   * @openapi
+   * /api/health-metrics/report:
+   *   get:
+   *     tags: [Health Metrics]
+   *     summary: Usage report over raw events, as plain text or JSON
+   *     description: Requires admin or the usage-metrics-viewer role. Reaches back only as far as the event retention period.
+   *     parameters:
+   *       - in: query
+   *         name: from
+   *         schema: { type: string, format: date }
+   *         description: Start date, inclusive (default 6 days before `to`)
+   *       - in: query
+   *         name: to
+   *         schema: { type: string, format: date }
+   *         description: End date, inclusive (default today, UTC)
+   *       - in: query
+   *         name: format
+   *         schema: { type: string, enum: [text, json], default: text }
+   *     responses:
+   *       200:
+   *         description: Usage report
+   *       400:
+   *         description: Invalid date range
+   *       403:
+   *         description: Requires admin or usage-metrics-viewer role
+   *       503:
+   *         description: Raw events are not recorded in demo mode
+   */
+  router.get('/report', requireMetricsViewer, requireScope('health-metrics:read'), async (req, res) => {
+    const range = resolveReportRange(req.query);
+    if (!range) return res.status(400).json({ error: 'from and to must be YYYY-MM-DD, with from <= to.' });
+    const { from, to } = range;
+    if (!eventStore) return res.status(503).json({ error: 'Raw events are not recorded in demo mode.' });
+
+    // Raw events only: the report needs per-user days, which monthly aggregates drop.
+    const events = [];
+    for (const monthKey of eventStore.listMonthFiles()) {
+      if (monthKey < from.slice(0, 7) || monthKey > to.slice(0, 7)) continue;
+      for (const e of eventStore.readMonth(monthKey)) {
+        const day = (e.ts || '').slice(0, 10);
+        if (day >= from && day <= to) events.push(e);
+      }
+    }
+
+    const report = buildReport(events, getModules ? getModules() : [], { from, to });
+    if (req.query.format === 'json') return res.json(report);
+    res.type('text/plain').send(renderReportText(report));
+  });
+
   // ─── Routes: Admin config ───
 
   router.get('/config', requireAdmin, requireScope('health-metrics:read'), async (req, res) => {
@@ -560,4 +671,4 @@ function createHealthMetricsRouter(context, { eventsDir } = {}) {
   return router;
 }
 
-module.exports = { createHealthMetricsRouter };
+module.exports = { createHealthMetricsRouter, validateTrackBody, resolveReportRange };

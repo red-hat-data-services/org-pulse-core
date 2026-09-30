@@ -639,11 +639,37 @@ JSON Lines format (one JSON object per line). Partitioned by month for efficient
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `ts` | ISO string | Timestamp of the page view |
+| `ts` | ISO string | Timestamp of the event |
 | `page` | string | `moduleSlug::viewId` composite key |
+| `action` | string | `view` for a view open, otherwise the kind of interaction inside the view (`tab`, `filter`, `search`, `open`, `link`, `button`, `wizard`, `settings`). Events written before this field existed have none and count as `view`. |
+| `detail` | string | Optional stable id of the control used (e.g. `status`, `jira`). Same character allowlist as `page`, max 64 chars, so search text and work-item content cannot be stored. |
 | `email` | string | User email (for unique-user counting) |
 | `userType` | string | Value from configured person field at event time, or `"unknown"` |
 | `roles` | string[] | User's roles at event time (e.g., `["admin"]`, `["team-admin"]`, `[]`). Legacy events may have `permissionTier` string instead; the aggregator handles both formats. |
+| `isManager` | boolean | Whether the user manages people in the org tree at event time |
+
+An interaction event looks like:
+
+```
+{"ts":"2026-05-11T15:30:04.000Z","page":"ai-impact::rfe-review","action":"filter","email":"user@redhat.com","userType":"PM","roles":[],"isManager":false,"detail":"status"}
+```
+
+Modules record interactions with `trackUsage(action, detail)` from `@shared/client`. The shell records view opens.
+
+### Usage Report — `GET /api/health-metrics/report`
+
+Plain-text report over raw events (so it only reaches back as far as `retentionDays`). Admin or `usage-metrics-viewer`; API tokens need the `health-metrics:read` scope.
+
+| Query param | Default | Description |
+|-------------|---------|-------------|
+| `from`, `to` | last 7 days | Inclusive UTC dates, `YYYY-MM-DD` |
+| `format` | `text` | `json` returns the same data as an object |
+
+Sections: totals, by persona (user type), by role, by feature x persona/role, interaction breakdown per view, and "measurement missing" (share of events with persona `unknown`, enabled views with no events, views with visits but no interactions in modules that report interactions). Each row has visits, interactions, distinct users and repeat users (seen on 2+ days).
+
+```
+curl -H "Authorization: Bearer tt_..." "https://<host>/api/health-metrics/report?from=2026-05-04&to=2026-05-10"
+```
 
 ### Monthly Aggregates — `data/health-metrics/aggregates/YYYY-MM.json`
 
@@ -654,6 +680,8 @@ JSON Lines format (one JSON object per line). Partitioned by month for efficient
   "pages": {
     "team-tracker::org-dashboard": {
       "views": 342,
+      "interactions": 97,
+      "byAction": { "filter:status": 60, "link:jira": 37 },
       "uniqueUsers": 28,
       "byUserType": { "Backend": 12, "Frontend": 8, "unknown": 3 },
       "byRole": { "admin": 3, "team-admin": 2, "planning-manager": 5 },

@@ -1,4 +1,5 @@
 {
   "server/dev-server.js": 27,
+  "server/health-metrics/*.js": 2,
   "modules/team-tracker/server/**/*.js": 91
 }

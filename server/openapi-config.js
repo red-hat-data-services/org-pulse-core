@@ -27,6 +27,7 @@ function createOpenApiSpec() {
         : [{ url: '/', description: 'Application root' }],
       tags: [
         { name: 'Health', description: 'Health check endpoints' },
+        { name: 'Health Metrics', description: 'Usage tracking and usage reports' },
         { name: 'Auth', description: 'Authentication, user info, and API tokens' },
         { name: 'Allowlist', description: 'Email allowlist management (admin)' },
         { name: 'Git-Static Modules', description: 'Git-static module management' },
@@ -292,7 +293,7 @@ function createOpenApiSpec() {
       },
       security: [{ forwardedEmail: [] }, { bearerToken: [] }]
     },
-    apis: ['server/dev-server.js', 'modules/*/server/**/*.js', 'platform/*/server/**/*.js']
+    apis: ['server/dev-server.js', 'server/health-metrics/*.js', 'modules/*/server/**/*.js', 'platform/*/server/**/*.js']
   };
 
   return swaggerJsdoc(options);
