@@ -324,6 +324,46 @@ To contribute widgets to the customizable "State of the Union" dashboard, declar
 5. Pass `from: 'sotu'` in navigation params so destination views can show a "Back to State of the Union" button that navigates to `#/`.
 6. Users can add, remove, reorder, and resize widgets via the dashboard UI. Layout is persisted to localStorage.
 
+## Landing Page Blocks
+
+Modules can contribute full-width content blocks that an administrator can select to display above the widget dashboard on the landing page. Unlike SOTU widgets, landing blocks are administrator-selected, deployment-wide (persisted on the server), and render without card chrome at the full available width.
+
+Declare landing blocks in `module.json`:
+
+```json
+{
+  "client": {
+    "landingBlocks": [
+      {
+        "id": "organization-overview",
+        "name": "Organization Overview",
+        "description": "Dynamic organization-wide delivery summary",
+        "component": "./client/blocks/OrganizationOverviewBlock.vue"
+      }
+    ]
+  }
+}
+```
+
+**Landing block manifest fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | Yes | Unique within the module. Globally qualified as `{moduleSlug}:{id}` |
+| `name` | Yes | Display name in the admin settings |
+| `description` | Yes | Short description shown in the settings selector |
+| `component` | Yes | Path relative to module dir. Must match `client/blocks/*Block.vue` |
+
+**Requirements:**
+
+1. Block files must be named `*Block.vue` and live in `client/blocks/` (enforced by CI via `validate-modules`).
+2. Blocks are fully self-contained — they fetch their own data, manage their own layout, and determine their own height.
+3. Blocks render at the full width of the landing page with no surrounding card chrome. Height grows with content.
+4. Only one block can be active at a time, selected by an administrator in Settings > Landing Page.
+5. The selection is persisted globally via `landing-page-config.json` and applies to all users.
+6. If the module providing the active block is disabled or removed, the block is silently omitted and the landing page renders normally.
+7. A failure while loading a block does not prevent the widget dashboard from rendering.
+
 ## Testing
 
 - **Unit tests**: Use Vitest with @vue/test-utils for frontend, Vitest for backend

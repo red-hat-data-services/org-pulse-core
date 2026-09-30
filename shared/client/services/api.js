@@ -83,6 +83,20 @@ export async function saveSiteConfig(config) {
   })
 }
 
+// ─── Landing Page Config ───
+
+export async function getLandingPageConfig() {
+  return apiRequest('/landing-page-config')
+}
+
+export async function saveLandingPageConfig(config) {
+  return apiRequest('/landing-page-config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config)
+  })
+}
+
 // ─── Last Refreshed ───
 
 export async function getLastRefreshed() {

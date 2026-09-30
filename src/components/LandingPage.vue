@@ -1,5 +1,10 @@
 <template>
   <div>
+    <!-- Landing page block (admin-selected, deployment-wide) -->
+    <div v-if="landingBlockComponent && !showModuleGrid" class="mb-6 w-full">
+      <component :is="landingBlockComponent" />
+    </div>
+
     <!-- Widget dashboard (when widgets exist) -->
     <template v-if="allWidgets.length > 0 && !showModuleGrid">
       <!-- Dashboard header -->
@@ -188,7 +193,7 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, onErrorCaptured, nextTick, watch, shallowRef } from 'vue'
 import {
   BarChart3,
   Search,
@@ -211,7 +216,8 @@ import {
 } from 'lucide-vue-next'
 import Sortable from 'sortablejs'
 import { useAuth } from '@shared/client/composables/useAuth.js'
-import { loadModuleWidget } from '../module-loader'
+import { getLandingPageConfig } from '@shared/client/services/api.js'
+import { loadModuleWidget, loadLandingBlock } from '../module-loader'
 import { useSotuLayout } from '../composables/useSotuLayout.js'
 import SotuWidget from './SotuWidget.vue'
 import WidgetPicker from './WidgetPicker.vue'
@@ -229,6 +235,49 @@ const showModuleGrid = ref(false)
 const showWidgetPicker = ref(false)
 const gridRef = ref(null)
 let sortableInstance = null
+
+// Landing page block (admin-selected, deployment-wide)
+const landingBlockComponent = shallowRef(null)
+
+const allBlocks = computed(() => {
+  const blocks = []
+  for (const mod of props.builtInManifests) {
+    const landingBlocks = mod.client?.landingBlocks
+    if (!landingBlocks || !Array.isArray(landingBlocks)) continue
+    for (const b of landingBlocks) {
+      blocks.push({
+        qualifiedId: `${mod.slug}:${b.id}`,
+        moduleSlug: mod.slug,
+        component: b.component
+      })
+    }
+  }
+  return blocks
+})
+
+async function loadLandingBlockConfig() {
+  try {
+    const config = await getLandingPageConfig()
+    if (!config.activeBlock) return
+    const block = allBlocks.value.find(b => b.qualifiedId === config.activeBlock)
+    if (!block) return
+    landingBlockComponent.value = loadLandingBlock(block.moduleSlug, block.component)
+  } catch {
+    // Block loading failure must not break the page
+  }
+}
+
+onErrorCaptured((err) => {
+  if (landingBlockComponent.value) {
+    console.warn('[LandingPage] Landing block error, hiding block:', err)
+    landingBlockComponent.value = null
+    return false
+  }
+})
+
+onMounted(() => {
+  loadLandingBlockConfig()
+})
 
 const {
   layout,

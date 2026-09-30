@@ -44,6 +44,8 @@ Core team owns `shared/` via CODEOWNERS. Changes require core team review.
 | `apiRequest(url, options)` | Fetch wrapper with error handling |
 | `getSiteConfig()` | Fetch site configuration (`{ titlePrefix, authEmailDomain }`) — no cache |
 | `saveSiteConfig(config)` | Save site configuration (admin only) |
+| `getLandingPageConfig()` | Fetch landing page block configuration (`{ activeBlock }`) |
+| `saveLandingPageConfig(config)` | Save landing page block configuration (admin only) |
 
 ### Components
 
