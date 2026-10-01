@@ -4538,7 +4538,11 @@ module.exports = async function registerRoutes(router, context) {
           return res.status(400).json({ error: 'cyborgConfig must be an object or null' });
         }
         if (cyborgConfig) {
-          const validated = Object.assign({}, config.cyborgConfig || {});
+          const validated = {};
+          const existingCyborgConfig = config.cyborgConfig || {};
+          for (const key of ['snapshotKey', 'scopeName', 'scopeType', 'maxStalenessMinutes']) {
+            if (existingCyborgConfig[key] !== undefined) validated[key] = existingCyborgConfig[key];
+          }
           if (cyborgConfig.snapshotKey !== undefined) {
             if (typeof cyborgConfig.snapshotKey !== 'string' || !cyborgConfig.snapshotKey.trim()) {
               return res.status(400).json({ error: 'cyborgConfig.snapshotKey must be a non-empty string' });

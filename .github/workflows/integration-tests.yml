@@ -103,18 +103,37 @@ jobs:
         with:
           module: ${{ matrix.module }}
 
+  # Keep the default in-app deployment coverage and add a separate deployment
+  # configured with the Cyborg source so the Cyborg roster shape is exercised.
+  cyborg-people-teams:
+    name: Test people-teams (Cyborg)
+    needs: detect-changes
+    if: contains(needs.detect-changes.outputs.enabled-modules, 'people-teams')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run Cyborg-configured integration test
+        uses: ./.github/actions/test-org-pulse-module
+        with:
+          module: people-teams
+          cyborg: 'true'
+
   integration-test-status:
     name: Integration Test Status
     runs-on: ubuntu-latest
     if: always()
-    needs: [detect-changes, run-tests]
+    needs: [detect-changes, run-tests, cyborg-people-teams]
     steps:
       - name: Evaluate integration test results
         run: |
           MODULES='${{ needs.detect-changes.outputs.enabled-modules }}'
           if [ "$MODULES" = "[]" ] || [ -z "$MODULES" ]; then
             echo "No module changes — integration tests skipped"
-          elif [ "${{ needs.run-tests.result }}" = "success" ]; then
+          elif [ "${{ needs.run-tests.result }}" = "success" ] && \
+               { [ "${{ needs['cyborg-people-teams'].result }}" = "success" ] || [ "${{ needs['cyborg-people-teams'].result }}" = "skipped" ]; }; then
             echo "All integration tests passed"
           elif [ "${{ needs.run-tests.result }}" = "skipped" ]; then
             echo "No module changes — integration tests skipped"

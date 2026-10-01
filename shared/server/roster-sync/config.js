@@ -133,7 +133,21 @@ async function saveConfig(storage, config) {
 
 async function isConfigured(storage) {
   const config = await loadConfig(storage);
-  return config && Array.isArray(config.orgRoots) && config.orgRoots.length > 0;
+  if (!config) return false;
+
+  if (config.teamDataSource === 'cyborg') {
+    const cyborg = config.cyborgConfig;
+    return Boolean(
+      cyborg &&
+      typeof cyborg.scopeName === 'string' && cyborg.scopeName.trim() &&
+      typeof cyborg.scopeType === 'string' && cyborg.scopeType.trim() &&
+      Number.isInteger(cyborg.maxStalenessMinutes) &&
+      cyborg.maxStalenessMinutes >= 1 &&
+      cyborg.maxStalenessMinutes <= 10080
+    );
+  }
+
+  return Array.isArray(config.orgRoots) && config.orgRoots.length > 0;
 }
 
 async function getOrgDisplayNames(storage) {

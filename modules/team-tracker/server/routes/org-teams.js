@@ -68,7 +68,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
     return map;
   }
 
-  function groupPeopleByOrgTeamFromRegistry(allPeople, orgKeyToDisplay, structureData) {
+  function groupPeopleByOrgTeamFromRegistry(allPeople, orgKeyToDisplay, structureData, useNamedTeams) {
     const map = {};
     const teamLookup = {};
     for (const [id, t] of Object.entries(structureData.teams)) {
@@ -79,7 +79,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
       // In-app records use structure teamIds. Cyborg records carry the
       // normalized team names directly (and may not have structure records
       // yet), so retain those assignments as a fallback.
-      if (person.teamIds && person.teamIds.length > 0) {
+      if (!useNamedTeams && person.teamIds && person.teamIds.length > 0) {
         for (const teamId of person.teamIds) {
           const entry = teamLookup[teamId];
           if (!entry) continue;
@@ -100,9 +100,9 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
   async function buildEnrichedTeams(orgFilter) {
     const rosterConfig = await loadRosterSyncConfig(storage);
     const teamDataSource = rosterConfig?.teamDataSource || 'sheets';
-    // Registry-backed sources carry normalized teamIds.  This includes the
-    // in-app editor and Cyborg snapshots; only the legacy Sheets source uses
-    // the denormalized _teamGrouping/miroTeam fields.
+    // In-app records use structure teamIds; Cyborg snapshots carry their
+    // normalized team names directly. Only the legacy Sheets source uses the
+    // denormalized _teamGrouping/miroTeam fields.
     const isRegistryMode = teamDataSource === 'in-app' || teamDataSource === 'cyborg';
 
     const metaData = await readFromStorage('org-roster/teams-metadata.json');
@@ -132,7 +132,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
     const allPeople = await getAllPeople(storage);
     const orgKeyToDisplay = await buildOrgKeyToDisplayName();
     const orgTeamPeopleMap = isRegistryMode
-      ? groupPeopleByOrgTeamFromRegistry(allPeople, orgKeyToDisplay, structureData)
+      ? groupPeopleByOrgTeamFromRegistry(allPeople, orgKeyToDisplay, structureData, teamDataSource === 'cyborg')
       : groupPeopleByOrgTeamFromGrouping(allPeople, orgKeyToDisplay);
 
     // In in-app mode, PM/Eng Lead are team fields in metadata — skip person-level rollup
@@ -375,7 +375,8 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
         members = teamId ? allPeople.filter(p => p.teamIds?.includes(teamId)) : [];
       } else if (membersInCyborgMode) {
         members = allPeople.filter(function(person) {
-          return (person.orgKey || '') === orgName && (person.teams || []).includes(teamName);
+          const personOrg = orgKeyToDisplay[person.orgKey] || person.orgKey || '';
+          return personOrg === orgName && (person.teams || []).includes(teamName);
         });
       } else {
         members = allPeople.filter(function(person) {
@@ -415,7 +416,12 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
       let orgTeamPeopleMap;
       if (listInAppMode || listInCyborgMode) {
         const structureData = await teamStore.readTeams();
-        orgTeamPeopleMap = groupPeopleByOrgTeamFromRegistry(allPeople, orgKeyToDisplay, structureData);
+        orgTeamPeopleMap = groupPeopleByOrgTeamFromRegistry(
+          allPeople,
+          orgKeyToDisplay,
+          structureData,
+          listInCyborgMode
+        );
       } else {
         orgTeamPeopleMap = groupPeopleByOrgTeamFromGrouping(allPeople, orgKeyToDisplay);
       }

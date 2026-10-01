@@ -479,6 +479,35 @@ describe('Roster Sync Config API', () => {
       expect(res.status).toBe(400)
       expect(res.body.error).toContain('cannot contain credential field "credentials"')
     })
+
+    it('does not persist unknown Cyborg configuration fields', async () => {
+      mockStorage['team-data/config.json'] = {
+        orgRoots: [{ uid: 'testorg', displayName: 'Test Org' }],
+        cyborgConfig: {
+          scopeName: 'Fleet Engineering',
+          scopeType: 'pillar',
+          maxStalenessMinutes: 120,
+          legacySecretPath: '/should-not-persist'
+        }
+      }
+
+      const res = await request(app, 'POST', '/api/modules/team-tracker/admin/roster-sync/config', {
+        teamDataSource: 'cyborg',
+        cyborgConfig: {
+          scopeName: 'Fleet Engineering',
+          scopeType: 'pillar',
+          maxStalenessMinutes: 60,
+          ignoredField: 'ignored'
+        }
+      })
+
+      expect(res.status).toBe(200)
+      expect(res.body.cyborgConfig).toEqual({
+        scopeName: 'Fleet Engineering',
+        scopeType: 'pillar',
+        maxStalenessMinutes: 60
+      })
+    })
   })
 
   describe('Backwards compatibility', () => {
