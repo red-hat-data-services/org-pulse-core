@@ -38,6 +38,12 @@ CONTAINER_FLAGS := --rm -t \
 # Note: npm ci inherently replaces node_modules with Linux packages via bind mount
 SETUP_CMD := mkdir -p /tmp/.cache /tmp/.npm && npm ci --silent --engine-strict=false
 
+# Optional overlay used by the CI Cyborg integration deployment. The overlay
+# replaces only the demo config, registry, and snapshot; the rest of the image
+# fixtures remain unchanged.
+CYBORG_FIXTURE_MOUNT = $(if $(CYBORG_FIXTURE_DIR),-v $(CYBORG_FIXTURE_DIR)/team-data/config.json:/app/fixtures/team-data/config.json:ro -v $(CYBORG_FIXTURE_DIR)/team-data/registry.json:/app/fixtures/team-data/registry.json:ro -v $(CYBORG_FIXTURE_DIR)/team-data/cyborg/enrichment.json:/app/fixtures/team-data/cyborg/enrichment.json:ro,)
+TEST_GREP ?=@$(MODULE)
+
 # Helper function to start a frontend or backend container for smoke testing,
 # then wait for the health check to pass
 define start-container
@@ -137,7 +143,7 @@ test-module: ## Run integration tests for a module (MODULE=<name>)
 	fi
 	@echo "Running integration tests for module: $(MODULE)"
 	# Start backend container
-	$(call start-container,$(BACKEND_CONTAINER),$(CORE_BACKEND_IMAGE),$(BACKEND_PORT),/api/healthz,-e DEMO_MODE=true)
+	$(call start-container,$(BACKEND_CONTAINER),$(CORE_BACKEND_IMAGE),$(BACKEND_PORT),/api/healthz,-e DEMO_MODE=true $(CYBORG_FIXTURE_MOUNT))
 	# Start frontend container
 	@if [ "$(CONTAINER_RUNTIME)" = "podman" ] && [ "$(OS)" = "Darwin" ]; then \
 		BACKEND_HOST=$$($(CONTAINER_RUNTIME) run --rm alpine ip route | awk '/default/ {print $$3}'); \
@@ -149,7 +155,7 @@ test-module: ## Run integration tests for a module (MODULE=<name>)
 	@echo "Running Playwright tests tagged with @$(MODULE)..."
 	$(CONTAINER_RUNTIME) run $(CONTAINER_FLAGS) $(COMMON_ENV) \
 		$(PLAYWRIGHT_IMAGE) \
-		bash -c "$(SETUP_CMD) && npx playwright test --grep @$(MODULE)" || \
+		bash -c "$(SETUP_CMD) && npx playwright test --grep '$(TEST_GREP)'" || \
 		(EXIT_CODE=$$?; $(MAKE) clean-integration-test; exit $$EXIT_CODE)
 	@echo "Integration tests for $(MODULE) passed!"
 	@$(MAKE) clean-integration-test

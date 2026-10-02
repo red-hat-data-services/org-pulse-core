@@ -11,6 +11,7 @@ const { loadConfig, updateSyncStatus } = require('./config');
 const ipaClient = require('./ipa-client');
 const { createIpaClient } = require('./ipa-client');
 const { fetchSheetData } = require('./sheets');
+const { fetchCyborgData, normalizeUid, cyborgEntryToPerson } = require('./cyborg');
 const { enrichPerson } = require('./merge');
 const { inferUsernames } = require('./username-inference');
 const { validateAmbiguousUsernames } = require('./username-validation');
@@ -22,12 +23,16 @@ const SYNC_LOG_KEY = 'team-data/sync-log.json';
 
 let syncInProgress = false;
 
-// Enrichment fields that come from Google Sheets and should be
-// cleared before re-enriching on each sync to prevent stale data.
-const ENRICHMENT_FIELDS = [
+// Each source owns only its own enrichment fields. Keeping these lists
+// separate prevents a successful Sheets sync from deleting Cyborg metadata.
+const SHEETS_ENRICHMENT_FIELDS = [
   '_teamGrouping', 'miroTeam', 'specialty', 'engineeringSpeciality',
   'jiraComponent', 'customFields', 'additionalAssignments', 'sourceSheet',
   'jiraTeam', 'productManager', 'engineeringLead', 'sheetManager'
+];
+const CYBORG_ENRICHMENT_FIELDS = [
+  '_teamGrouping', 'additionalAssignments', 'repositories', 'jira',
+  'slackChannels', 'teams'
 ];
 
 /**
@@ -43,7 +48,8 @@ async function runConsolidatedSync(storage, credentials) {
   }
 
   const config = await loadConfig(storage);
-  if (!config || !config.orgRoots || config.orgRoots.length === 0) {
+  const isCyborgConfig = config?.teamDataSource === 'cyborg';
+  if (!config || (!isCyborgConfig && (!config.orgRoots || config.orgRoots.length === 0))) {
     return { status: 'error', message: 'No org roots configured' };
   }
 
@@ -52,13 +58,12 @@ async function runConsolidatedSync(storage, credentials) {
   console.log('[consolidated-sync] Starting sync...');
 
   try {
-    // ─── Phase 1: LDAP traversal ───
-    console.log('[consolidated-sync] Connecting to IPA LDAP...');
+    var cyborgMode = config.teamDataSource === 'cyborg';
+    var cyborgResult = null;
+    var matchedCyborgUids = new Set();
+
+    // ─── Phase 1: roster source ───
     var creds = credentials || {};
-    var ipa = (creds.IPA_BIND_DN || creds.IPA_BIND_PASSWORD)
-      ? createIpaClient({ bindDn: creds.IPA_BIND_DN, bindPassword: creds.IPA_BIND_PASSWORD })
-      : null;
-    var conn = ipa ? ipa.createConnection() : ipaClient.createClient();
     var ldapOrgs = {};
     var freshPeopleMap = {};
     var vpInfo = null;
@@ -66,23 +71,54 @@ async function runConsolidatedSync(storage, credentials) {
 
     var excludedTitles = config.excludedTitles?.length ? config.excludedTitles : DEFAULT_EXCLUDED_TITLES;
 
-    var extraAttrs = [];
-    if (config.ldapFields && Array.isArray(config.ldapFields.enabled)) {
-      for (var ea = 0; ea < config.ldapFields.enabled.length; ea++) {
-        var attr = config.ldapFields.enabled[ea].attribute;
-        if (attr && ipaClient.LDAP_ATTRS.indexOf(attr) === -1) {
-          extraAttrs.push(attr);
+    if (cyborgMode) {
+      console.log('[consolidated-sync] Loading complete Cyborg roster (LDAP is disabled)...');
+      var activeCyborgConfig = config.cyborgConfig;
+      if (!activeCyborgConfig || !activeCyborgConfig.scopeName || !activeCyborgConfig.scopeType ||
+          !Number.isInteger(activeCyborgConfig.maxStalenessMinutes) ||
+          activeCyborgConfig.maxStalenessMinutes < 1 || activeCyborgConfig.maxStalenessMinutes > 10080) {
+        cyborgResult = {
+          status: 'error', source: 'cyborg', code: 'CONFIG_INVALID',
+          message: 'Cyborg scope and freshness configuration is incomplete or invalid', retryable: false
+        };
+      } else {
+        cyborgResult = await fetchCyborgData(storage, activeCyborgConfig);
+      }
+
+      if (cyborgResult.status === 'ok') {
+        var cyborgPeople = [];
+        for (const entry of cyborgResult.entries.values()) {
+          var cyborgPerson = cyborgEntryToPerson(entry);
+          cyborgPeople.push(cyborgPerson);
+          matchedCyborgUids.add(normalizeUid(cyborgPerson.uid));
+          freshPeopleMap[cyborgPerson.uid] = { person: cyborgPerson, orgRoot: activeCyborgConfig.scopeName };
+        }
+        ldapOrgs[activeCyborgConfig.scopeName] = { leader: null, members: cyborgPeople };
+        _totalPeople = cyborgPeople.length;
+        console.log('[consolidated-sync] Cyborg: ' + cyborgPeople.length + ' complete roster people found');
+      } else {
+        console.warn('[consolidated-sync] Cyborg roster load failed: ' + cyborgResult.message);
+      }
+    } else {
+      console.log('[consolidated-sync] Connecting to IPA LDAP...');
+      var ipa = (creds.IPA_BIND_DN || creds.IPA_BIND_PASSWORD)
+        ? createIpaClient({ bindDn: creds.IPA_BIND_DN, bindPassword: creds.IPA_BIND_PASSWORD })
+        : null;
+      var conn = ipa ? ipa.createConnection() : ipaClient.createClient();
+      var extraAttrs = [];
+      if (config.ldapFields && Array.isArray(config.ldapFields.enabled)) {
+        for (var ea = 0; ea < config.ldapFields.enabled.length; ea++) {
+          var attr = config.ldapFields.enabled[ea].attribute;
+          if (attr && ipaClient.LDAP_ATTRS.indexOf(attr) === -1) extraAttrs.push(attr);
         }
       }
-    }
 
-    try {
-      await ipaClient.bindClient(conn.client, conn.config.bindDn, conn.config.bindPassword);
-
-      for (var i = 0; i < config.orgRoots.length; i++) {
-        var root = config.orgRoots[i];
-        try {
-          var result = await ipaClient.traverseOrg(conn.client, conn.config.baseDn, root.uid, excludedTitles, extraAttrs);
+      try {
+        await ipaClient.bindClient(conn.client, conn.config.bindDn, conn.config.bindPassword);
+        for (var i = 0; i < config.orgRoots.length; i++) {
+          var root = config.orgRoots[i];
+          try {
+            var result = await ipaClient.traverseOrg(conn.client, conn.config.baseDn, root.uid, excludedTitles, extraAttrs);
 
           // VP lookup from first org root's leader's manager
           if (i === 0 && result.leader.managerUid && !vpInfo) {
@@ -102,12 +138,32 @@ async function runConsolidatedSync(storage, credentials) {
 
           _totalPeople += result.people.length;
           console.log('[consolidated-sync] ' + root.uid + ': ' + result.people.length + ' people');
-        } catch (err) {
-          console.error('[consolidated-sync] Failed to traverse ' + root.uid + ': ' + err.message);
+          } catch (err) {
+            console.error('[consolidated-sync] Failed to traverse ' + root.uid + ': ' + err.message);
+          }
         }
+      } finally {
+        conn.client.unbind(function() {});
       }
-    } finally {
-      conn.client.unbind(function() {});
+    }
+
+    // A failed complete-roster read must never be interpreted as an empty
+    // roster. Preserve the existing registry and report the source error.
+    if (cyborgMode && cyborgResult.status !== 'ok') {
+      var failedSyncLog = {
+        completedAt: new Date().toISOString(),
+        status: 'error',
+        duration: Date.now() - startTime,
+        message: cyborgResult.message,
+        summary: {
+          cyborgStatus: cyborgResult.status,
+          cyborgError: cyborgResult.message,
+          cyborgGeneratedAt: cyborgResult.generatedAt || null
+        }
+      };
+      await updateSyncStatus(storage, 'error', cyborgResult.message);
+      await storage.writeToStorage(SYNC_LOG_KEY, failedSyncLog);
+      return failedSyncLog;
     }
 
     // ─── Phase 1b: Validate ambiguous GitHub/GitLab usernames via API ───
@@ -116,7 +172,7 @@ async function runConsolidatedSync(storage, credentials) {
     var ldapOrgKeys = Object.keys(ldapOrgs);
     for (var li = 0; li < ldapOrgKeys.length; li++) {
       var org = ldapOrgs[ldapOrgKeys[li]];
-      if (!seenUids.has(org.leader.uid)) {
+      if (org.leader && !seenUids.has(org.leader.uid)) {
         allLdapPeople.push(org.leader);
         seenUids.add(org.leader.uid);
       }
@@ -129,20 +185,22 @@ async function runConsolidatedSync(storage, credentials) {
     }
 
     var validationStats = { githubValidated: 0, gitlabValidated: 0, githubCleared: 0, gitlabCleared: 0 };
-    try {
-      validationStats = await validateAmbiguousUsernames(allLdapPeople, {
-        githubToken: creds.GITHUB_TOKEN,
-        gitlabToken: creds.GITLAB_TOKEN
-      });
-    } catch (err) {
-      console.warn('[consolidated-sync] Username validation failed (continuing): ' + err.message);
+    if (!cyborgMode) {
+      try {
+        validationStats = await validateAmbiguousUsernames(allLdapPeople, {
+          githubToken: creds.GITHUB_TOKEN,
+          gitlabToken: creds.GITLAB_TOKEN
+        });
+      } catch (err) {
+        console.warn('[consolidated-sync] Username validation failed (continuing): ' + err.message);
+      }
     }
 
-    // ─── Phase 2: Google Sheets enrichment (on temp roster-shaped structure) ───
+    // ─── Phase 2: Google Sheets enrichment (LDAP mode only) ───
     // Skip Sheets enrichment when team data source is "in-app" —
-    // in-app data lives in _appFields/teamIds which are NOT in ENRICHMENT_FIELDS
+    // in-app data lives in _appFields/teamIds and is not externally enriched.
     var sheetsData = null;
-    if (config.teamDataSource !== 'in-app' && config.googleSheetId) {
+    if (!cyborgMode && config.teamDataSource !== 'in-app' && config.googleSheetId) {
       try {
         console.log('[consolidated-sync] Fetching Google Sheets data...');
         sheetsData = await fetchSheetData(config.googleSheetId, config.sheetNames, config.customFields, config.teamStructure);
@@ -150,18 +208,18 @@ async function runConsolidatedSync(storage, credentials) {
       } catch (err) {
         console.warn('[consolidated-sync] Google Sheets fetch failed (continuing without): ' + err.message);
       }
-    }
 
-    // Apply Sheets enrichment onto the LDAP people objects (in-place mutation)
-    if (sheetsData) {
-      for (var ri = 0; ri < config.orgRoots.length; ri++) {
-        var orgRoot = config.orgRoots[ri];
-        var orgData = ldapOrgs[orgRoot.uid];
-        if (!orgData) continue;
-        var orgDisplayName = orgRoot.displayName || orgRoot.name;
-        enrichPerson(orgData.leader, sheetsData, orgDisplayName);
-        for (var mi = 0; mi < orgData.members.length; mi++) {
-          enrichPerson(orgData.members[mi], sheetsData, orgDisplayName);
+      // Apply Sheets enrichment onto the LDAP people objects (in-place mutation)
+      if (sheetsData) {
+        for (var ri = 0; ri < config.orgRoots.length; ri++) {
+          var orgRoot = config.orgRoots[ri];
+          var orgData = ldapOrgs[orgRoot.uid];
+          if (!orgData) continue;
+          var orgDisplayName = orgRoot.displayName || orgRoot.name;
+          enrichPerson(orgData.leader, sheetsData, orgDisplayName);
+          for (var mi = 0; mi < orgData.members.length; mi++) {
+            enrichPerson(orgData.members[mi], sheetsData, orgDisplayName);
+          }
         }
       }
     }
@@ -170,7 +228,7 @@ async function runConsolidatedSync(storage, credentials) {
     // GitLab inference is disabled — GitLab usernames must come from explicit
     // LDAP/Rover configuration to prevent misattribution from namesquatted accounts.
     var usernamesInferred = { github: 0, gitlab: 0 };
-    if (config.githubOrgs || config.githubOrg) {
+    if (!cyborgMode && (config.githubOrgs || config.githubOrg)) {
       try {
         var tempRoster = { orgs: ldapOrgs };
         usernamesInferred = await inferUsernames(tempRoster, config, {
@@ -215,18 +273,18 @@ async function runConsolidatedSync(storage, credentials) {
     // (which was mutated in-place by enrichPerson) onto the merged registry person.
 
     // Include dynamic custom field keys from teamStructure config
-    var effectiveEnrichmentFields = ENRICHMENT_FIELDS.slice();
+    var effectiveSheetsEnrichmentFields = SHEETS_ENRICHMENT_FIELDS.slice();
     if (config.teamStructure && Array.isArray(config.teamStructure.customFields)) {
       for (var tsi = 0; tsi < config.teamStructure.customFields.length; tsi++) {
         var cfKey = config.teamStructure.customFields[tsi].key;
-        if (cfKey && effectiveEnrichmentFields.indexOf(cfKey) === -1) {
-          effectiveEnrichmentFields.push(cfKey);
+        if (cfKey && effectiveSheetsEnrichmentFields.indexOf(cfKey) === -1) {
+          effectiveSheetsEnrichmentFields.push(cfKey);
         }
       }
     }
 
-    // Only clear and re-apply enrichment fields if Sheets data was actually fetched.
-    // Without this guard, a sync that skips or fails Sheets would wipe existing
+    // Only clear and re-apply enrichment fields if Sheets or Cyborg data was successfully fetched.
+    // Without this guard, a sync that skips or fails Sheets/Cyborg would wipe existing
     // enrichment data (_teamGrouping, etc.) with nothing to replace it.
     if (sheetsData) {
       for (var ei = 0; ei < freshUids.length; ei++) {
@@ -236,15 +294,46 @@ async function runConsolidatedSync(storage, credentials) {
         if (!registryPerson) continue;
 
         // Clear stale enrichment fields first (prevents old team data persisting)
-        for (var fi = 0; fi < effectiveEnrichmentFields.length; fi++) {
-          delete registryPerson[effectiveEnrichmentFields[fi]];
+        for (var fi = 0; fi < effectiveSheetsEnrichmentFields.length; fi++) {
+          delete registryPerson[effectiveSheetsEnrichmentFields[fi]];
         }
 
         // Copy enrichment fields from enriched LDAP person (deep copy to avoid aliasing)
-        for (var ci = 0; ci < effectiveEnrichmentFields.length; ci++) {
-          var field = effectiveEnrichmentFields[ci];
+        for (var ci = 0; ci < effectiveSheetsEnrichmentFields.length; ci++) {
+          var field = effectiveSheetsEnrichmentFields[ci];
           if (enrichedPerson[field] !== undefined) {
             registryPerson[field] = deepCopy(enrichedPerson[field]);
+          }
+        }
+      }
+    } else if (cyborgResult && cyborgResult.status === 'ok') {
+      for (var cei = 0; cei < freshUids.length; cei++) {
+        var ceuid = freshUids[cei];
+        var normalizedCyborgUid = normalizeUid(ceuid);
+        var cyborgEntry = cyborgResult.entries.get(normalizedCyborgUid);
+        if (!cyborgEntry) continue;
+
+        var cyborgEnrichedPerson = freshPeopleMap[ceuid].person;
+        var cyborgRegistryPerson = merged[ceuid];
+        if (!cyborgRegistryPerson) continue;
+
+        for (var cfi = 0; cfi < CYBORG_ENRICHMENT_FIELDS.length; cfi++) {
+          delete cyborgRegistryPerson[CYBORG_ENRICHMENT_FIELDS[cfi]];
+        }
+        for (var cci = 0; cci < CYBORG_ENRICHMENT_FIELDS.length; cci++) {
+          var cyborgField = CYBORG_ENRICHMENT_FIELDS[cci];
+          if (cyborgEnrichedPerson[cyborgField] !== undefined) {
+            cyborgRegistryPerson[cyborgField] = deepCopy(cyborgEnrichedPerson[cyborgField]);
+          }
+        }
+
+        // Manual GitHub overrides always win. Otherwise Cyborg owns the value
+        // only when the current matched snapshot explicitly supplies it.
+        if (!cyborgRegistryPerson.github || cyborgRegistryPerson.github.source !== 'manual') {
+          if (cyborgEntry.hasGithubUsername && cyborgEntry.githubUsername) {
+            cyborgRegistryPerson.github = { username: cyborgEntry.githubUsername, source: 'cyborg' };
+          } else if (cyborgRegistryPerson.github && cyborgRegistryPerson.github.source === 'cyborg') {
+            cyborgRegistryPerson.github = null;
           }
         }
       }
@@ -262,7 +351,7 @@ async function runConsolidatedSync(storage, credentials) {
     var auxiliaryManagersAdded = 0;
     var unresolvedPersonRefs = [];
 
-    try {
+    if (!cyborgMode) try {
       var fieldDefsData = await storage.readFromStorage('team-data/field-definitions.json');
       var teamsData = await storage.readFromStorage('team-data/teams.json');
 
@@ -466,7 +555,9 @@ async function runConsolidatedSync(storage, credentials) {
       meta: {
         generatedAt: now,
         provider: 'consolidated',
-        orgRoots: config.orgRoots.map(function(r) { return r.uid; }),
+        orgRoots: cyborgMode
+          ? [cyborgResult.scope.name]
+          : config.orgRoots.map(function(r) { return r.uid; }),
         vp: vpInfo
       },
       people: merged
@@ -485,6 +576,13 @@ async function runConsolidatedSync(storage, credentials) {
         reactivated: changelog.reactivated,
         changed: changelog.changed,
         sheetsEnriched: sheetsData ? sheetsData.size : 0,
+        cyborgEnriched: (cyborgResult && cyborgResult.status === 'ok') ? cyborgResult.entries.size : 0,
+        cyborgMatched: matchedCyborgUids ? matchedCyborgUids.size : 0,
+        cyborgUnmatched: (cyborgResult && cyborgResult.status === 'ok') ? Math.max(0, cyborgResult.entries.size - matchedCyborgUids.size) : 0,
+        cyborgLdapUnmatched: (cyborgResult && cyborgResult.status === 'ok') ? Math.max(0, freshUids.length - matchedCyborgUids.size) : 0,
+        cyborgStatus: cyborgResult ? cyborgResult.status : null,
+        cyborgError: (cyborgResult && cyborgResult.status === 'error') ? cyborgResult.message : null,
+        cyborgGeneratedAt: (cyborgResult && cyborgResult.generatedAt) || null,
         githubInferred: usernamesInferred.github,
         gitlabInferred: usernamesInferred.gitlab,
         githubValidated: validationStats.githubValidated,

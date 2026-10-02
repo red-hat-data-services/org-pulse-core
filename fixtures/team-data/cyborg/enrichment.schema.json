@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://org-pulse.dev/schemas/cyborg-enrichment-v1.json",
+  "title": "Org Pulse Cyborg roster snapshot v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "source", "generatedAt", "scope", "people"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "source": { "const": "cyborg" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "minLength": 1 }
+      }
+    },
+    "people": {
+      "anyOf": [
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/completePerson" }
+        },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "type": "string", "minLength": 1 },
+          "additionalProperties": { "$ref": "#/$defs/person" }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "person": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["teams"],
+      "properties": {
+        "teams": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "githubUsername": { "type": "string", "minLength": 1 },
+        "repositories": {
+          "type": "array",
+          "items": { "type": "string", "format": "uri", "pattern": "^https?://" }
+        },
+        "jira": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "anyOf": [
+              { "required": ["project"] },
+              { "required": ["boardId"] }
+            ]
+          }
+        },
+        "slackChannels": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "completePerson": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uid", "teams"],
+      "properties": {
+        "uid": { "type": "string", "minLength": 1 },
+        "fullName": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "jobTitle": { "type": "string" },
+        "title": { "type": "string" },
+        "managerUid": { "type": ["string", "null"] },
+        "teams": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "githubUsername": { "type": ["string", "null"], "minLength": 1 },
+        "repositories": {
+          "type": "array",
+          "items": { "type": "string", "format": "uri", "pattern": "^https?://" }
+        },
+        "jira": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "anyOf": [
+              { "required": ["project"] },
+              { "required": ["boardId"] }
+            ]
+          }
+        },
+        "slackChannels": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "source": "cyborg",
+  "generatedAt": "2026-09-16T00:00:00.000Z",
+  "scope": {
+    "name": "Fleet Engineering",
+    "type": "org"
+  },
+  "people": [
+    {
+      "uid": "fleet-manager",
+      "fullName": "Example Fleet Manager",
+      "email": "fleet-manager@example.invalid",
+      "jobTitle": "Engineering Manager",
+      "managerUid": null,
+      "teams": [],
+      "githubUsername": "fleet-manager"
+    },
+    {
+      "uid": "fleet-engineer",
+      "fullName": "Example Fleet Engineer",
+      "email": "fleet-engineer@example.invalid",
+      "jobTitle": "Software Engineer",
+      "managerUid": "fleet-manager",
+      "teams": ["Fleet Console Next"],
+      "githubUsername": "fleet-engineer"
+    },
+    {
+      "uid": "fleet-multi-team",
+      "fullName": "Example Multi Team Engineer",
+      "email": "fleet-multi-team@example.invalid",
+      "jobTitle": "Staff Software Engineer",
+      "managerUid": "fleet-manager",
+      "teams": ["Fleet Console Next", "Architecture WG"],
+      "githubUsername": null
+    }
+  ]
+}

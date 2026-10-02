@@ -5,6 +5,10 @@ inputs:
   module:
     description: 'Module name (e.g., people-teams)'
     required: true
+  cyborg:
+    description: 'Run the module suite against a Cyborg-configured demo deployment'
+    required: false
+    default: 'false'
 
 runs:
   using: composite
@@ -21,9 +25,20 @@ runs:
       env:
         CONTAINER_RUNTIME: docker
 
+    - name: Prepare Cyborg integration fixtures
+      if: inputs.cyborg == 'true'
+      shell: bash
+      run: node scripts/prepare-cyborg-integration-fixtures.js "$RUNNER_TEMP/cyborg-fixtures"
+
     - name: Run integration tests
       shell: bash
-      run: make test-module MODULE=$MODULE
+      run: |
+        if [ "$CYBORG" = "true" ]; then
+          make test-module MODULE="$MODULE" TEST_GREP="@cyborg-$MODULE" CYBORG_FIXTURE_DIR="$RUNNER_TEMP/cyborg-fixtures"
+        else
+          make test-module MODULE="$MODULE" TEST_GREP="@$MODULE"
+        fi
       env:
         CONTAINER_RUNTIME: docker
         MODULE: ${{ inputs.module }}
+        CYBORG: ${{ inputs.cyborg }}

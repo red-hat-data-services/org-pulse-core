@@ -94,6 +94,57 @@ test.describe('People & Teams Module @people-teams', () => {
 
     expect(page.errors).toHaveLength(0);
   });
+
+  test('roster API identifies the configured team data source', async ({ request }) => {
+    const response = await request.get('/api/modules/team-tracker/roster');
+    expect(response.ok()).toBe(true);
+
+    const roster = await response.json();
+    expect(['sheets', 'in-app', 'cyborg']).toContain(roster.teamDataSource);
+    expect(Array.isArray(roster.orgs)).toBe(true);
+  });
+
+  test('roster API returns the complete people and teams data shape', async ({ request }) => {
+    const response = await request.get('/api/modules/team-tracker/roster');
+    expect(response.ok()).toBe(true);
+
+    const roster = await response.json();
+    const orgs = roster.orgs || [];
+    const teams = orgs.flatMap(org => Object.values(org.teams || {}));
+    const members = teams.flatMap(team => team.members || []);
+
+    expect(orgs.length).toBeGreaterThan(0);
+    expect(teams.length).toBeGreaterThan(0);
+    expect(members.length).toBeGreaterThan(0);
+
+    // These are the fields consumed by the Team Directory and People views.
+    for (const org of orgs) {
+      expect(typeof org.key).toBe('string');
+      expect(typeof org.displayName).toBe('string');
+      expect(org.teams).toBeDefined();
+    }
+    for (const team of teams) {
+      expect(typeof team.displayName).toBe('string');
+      expect(Array.isArray(team.members)).toBe(true);
+    }
+    for (const member of members) {
+      expect(typeof member.uid).toBe('string');
+      expect(typeof member.name).toBe('string');
+      expect(member).toHaveProperty('email');
+      expect(member).toHaveProperty('title');
+      expect(member).toHaveProperty('customFields');
+    }
+
+    // Cyborg supplies these optional source fields; validate them in a
+    // running Cyborg-configured container without constraining other modes.
+    if (roster.teamDataSource === 'cyborg') {
+      for (const member of members) {
+        expect(Array.isArray(member.repositories)).toBe(true);
+        expect(Array.isArray(member.jira)).toBe(true);
+        expect(Array.isArray(member.slackChannels)).toBe(true);
+      }
+    }
+  });
 });
 
 /**
