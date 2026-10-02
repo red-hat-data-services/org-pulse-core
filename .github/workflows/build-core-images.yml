@@ -386,6 +386,7 @@ jobs:
       - name: Commit deploy update, tag, and push
         env:
           VERSION: ${{ steps.bump.outputs.version }}
+          RELEASE_SHA: ${{ steps.bump.outputs.release_sha }}
         run: |
           git add deploy/openshift/base/kustomization.yaml
           git diff --cached --quiet && { echo "No deploy changes to commit"; } || \
