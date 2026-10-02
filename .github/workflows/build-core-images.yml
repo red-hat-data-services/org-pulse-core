@@ -300,18 +300,48 @@ jobs:
           git commit -m "release: ${NEW} [skip ci]"
           echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Download all image artifacts
-        uses: actions/download-artifact@v8
-        with:
-          path: /tmp/images
-
-      - name: Load all images
+      # The pre-release jobs build and test the merged source. Rebuild here after
+      # the version bump so an image tagged with the release version contains the
+      # same version in its embedded package metadata.
+      - name: Build release images
+        env:
+          RELEASE_SHA: ${{ steps.bump.outputs.release_sha }}
         run: |
-          docker load -i /tmp/images/core-backend-image/core-backend.tar
-          docker load -i /tmp/images/core-frontend-image/core-frontend.tar
-          docker load -i /tmp/images/core-frontend-builder-image/core-frontend-builder.tar
-          docker load -i /tmp/images/core-frontend-runtime-image/core-frontend-runtime.tar
-          docker load -i /tmp/images/chatbot-image/chatbot.tar
+          docker build \
+            -f deploy/core.backend.Dockerfile \
+            --build-arg GIT_SHA=${RELEASE_SHA} \
+            --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+            -t ${{ env.CORE_BACKEND_IMAGE }}:${RELEASE_SHA} \
+            .
+          docker build \
+            -f deploy/core.frontend.Dockerfile \
+            -t ${{ env.CORE_FRONTEND_IMAGE }}:${RELEASE_SHA} \
+            .
+          docker build \
+            -f deploy/core.frontend-builder.Dockerfile \
+            -t ${{ env.CORE_FRONTEND_IMAGE }}-builder:${RELEASE_SHA} \
+            .
+          docker build \
+            -f deploy/core.frontend-runtime.Dockerfile \
+            -t ${{ env.CORE_FRONTEND_IMAGE }}-runtime:${RELEASE_SHA} \
+            .
+          cp deploy/certs/internal-root-ca.pem services/chatbot/internal-root-ca.pem
+          docker build \
+            -f services/chatbot/Containerfile \
+            --build-arg GIT_SHA=${RELEASE_SHA} \
+            --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+            -t ${{ env.CHATBOT_IMAGE }}:${RELEASE_SHA} \
+            services/chatbot
+
+      - name: Verify embedded Core version
+        env:
+          RELEASE_SHA: ${{ steps.bump.outputs.release_sha }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          IMAGE_VERSION=$(docker run --rm --entrypoint node \
+            ${{ env.CORE_BACKEND_IMAGE }}:${RELEASE_SHA} \
+            -p "require('/app/package.json').version")
+          test "${IMAGE_VERSION}" = "${VERSION}"
 
       - name: Login to Quay.io with OIDC
         uses: ./.github/actions/quay-oidc-login
@@ -321,6 +351,7 @@ jobs:
       - name: Push all images
         env:
           VERSION: ${{ steps.bump.outputs.version }}
+          RELEASE_SHA: ${{ steps.bump.outputs.release_sha }}
         run: |
           for IMAGE in \
             "${{ env.CORE_BACKEND_IMAGE }}" \
@@ -328,9 +359,9 @@ jobs:
             "${{ env.CHATBOT_IMAGE }}" \
             "${{ env.CORE_FRONTEND_IMAGE }}-builder" \
             "${{ env.CORE_FRONTEND_IMAGE }}-runtime"; do
-            docker tag "${IMAGE}:${BUILD_SHA}" "${IMAGE}:latest"
-            docker tag "${IMAGE}:${BUILD_SHA}" "${IMAGE}:${VERSION}"
-            docker push "${IMAGE}:${BUILD_SHA}"
+            docker tag "${IMAGE}:${RELEASE_SHA}" "${IMAGE}:latest"
+            docker tag "${IMAGE}:${RELEASE_SHA}" "${IMAGE}:${VERSION}"
+            docker push "${IMAGE}:${RELEASE_SHA}"
             docker push "${IMAGE}:latest"
             docker push "${IMAGE}:${VERSION}"
           done
@@ -342,10 +373,12 @@ jobs:
 
       - name: Update deploy image tags
         working-directory: deploy/openshift/base
+        env:
+          RELEASE_SHA: ${{ steps.bump.outputs.release_sha }}
         run: |
-          kustomize edit set image ${{ env.CORE_BACKEND_IMAGE }}:${BUILD_SHA}
-          kustomize edit set image ${{ env.CORE_FRONTEND_IMAGE }}:${BUILD_SHA}
-          kustomize edit set image ${{ env.CHATBOT_IMAGE }}:${BUILD_SHA}
+          kustomize edit set image ${{ env.CORE_BACKEND_IMAGE }}:${RELEASE_SHA}
+          kustomize edit set image ${{ env.CORE_FRONTEND_IMAGE }}:${RELEASE_SHA}
+          kustomize edit set image ${{ env.CHATBOT_IMAGE }}:${RELEASE_SHA}
 
       - name: Validate kustomize build
         run: kustomize build deploy/openshift/base > /dev/null
@@ -356,7 +389,7 @@ jobs:
         run: |
           git add deploy/openshift/base/kustomization.yaml
           git diff --cached --quiet && { echo "No deploy changes to commit"; } || \
-            git commit -m "deploy: update backend + frontend + chatbot image to ${VERSION} (${BUILD_SHA}) [skip ci]"
+            git commit -m "deploy: update backend + frontend + chatbot image to ${VERSION} (${RELEASE_SHA}) [skip ci]"
           git tag "${VERSION}"
           git push origin main --tags
 
