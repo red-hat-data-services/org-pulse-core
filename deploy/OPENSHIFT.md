@@ -299,5 +299,6 @@ The `team-tracker-sync-refresh` CronJob fires every 15 minutes (`*/15 * * * *`) 
 
 - `concurrencyPolicy: Forbid` prevents overlapping runs
 - `activeDeadlineSeconds: 1800` (30 min) accommodates the heaviest handler (`team-tracker:metrics`)
-- Poll timeout exits 0 (the backend completes independently)
-- Backup runs as a refresh handler (`platform:backup`, cadence `24h`), not as a separate script step
+- Poll timeout and handler failures fail the CronJob; the backend continues a timed-out refresh independently
+- Backup runs first in the refresh registry (`platform:backup`, cadence `24h`), before longer data refreshes. Completed handler cadence is saved after each order group, so an interrupted refresh resumes with only due handlers.
+- The CronJob waits up to 25 minutes for refresh completion and fails if handlers fail or the refresh remains incomplete. Check the refresh status in the admin UI for handler errors.

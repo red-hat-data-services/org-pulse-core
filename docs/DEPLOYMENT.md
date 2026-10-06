@@ -172,7 +172,8 @@ The base includes a CronJob (`team-tracker-sync-refresh`) that fires every 15 mi
 
 - `concurrencyPolicy: Forbid` prevents overlapping runs
 - `activeDeadlineSeconds: 1800` (30 min) accommodates the heaviest handler (`team-tracker:metrics`)
-- Backup runs as a refresh handler (`platform:backup`, cadence `24h`), not as a separate script step
+- Backup runs first in the refresh registry (`platform:backup`, cadence `24h`), before longer data refreshes. Completed handler cadence is saved after each order group, so an interrupted refresh resumes with only due handlers.
+- The CronJob waits up to 25 minutes for refresh completion and fails if handlers fail or the refresh remains incomplete. Check the refresh status in the admin UI for handler errors.
 
 Set `CRON_ADMIN_EMAIL` in your ConfigMap to the email of an admin user — this is used as the `X-Forwarded-Email` header for API calls.
 

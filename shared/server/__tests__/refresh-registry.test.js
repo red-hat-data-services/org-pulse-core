@@ -197,6 +197,21 @@ describe('refresh-registry', () => {
     expect(executed).toContain('group2-ok')
   })
 
+  it('continues to later groups when a handler throws synchronously', async () => {
+    const registry = await createRefreshRegistry()
+    const later = vi.fn(async () => 'ok')
+    registry.register('throws', { handler: () => { throw new Error('sync boom') }, order: 10 })
+    registry.register('later', { handler: later, order: 20 })
+
+    const run = await registry.runAll({ force: true })
+    await run.execution
+
+    const status = await registry.getStatus()
+    expect(status.handlers.throws).toMatchObject({ state: 'failed', error: 'sync boom' })
+    expect(status.handlers.later.state).toBe('completed')
+    expect(later).toHaveBeenCalledOnce()
+  })
+
   // --- Errors and timeouts ---
 
   it('runAll catches handler errors', async () => {
@@ -810,6 +825,45 @@ describe('refresh-registry', () => {
   // --- State persistence ---
 
   describe('state persistence', () => {
+    it('keeps a completed handler after a refresh is interrupted in a later group', async () => {
+      const files = {}
+      const mockStorage = {
+        readFromStorage: vi.fn(async key => files[key] || null),
+        writeToStorage: vi.fn(async (key, value) => { files[key] = structuredClone(value) })
+      }
+      let signalLaterStarted
+      const laterStarted = new Promise(resolve => { signalLaterStarted = resolve })
+      let finishHandler
+      const registry = await createRefreshRegistry(mockStorage)
+      const first = vi.fn(async () => 'done')
+      registry.register('first', { handler: first, order: 0 })
+      registry.register('later', {
+        handler: async () => {
+          signalLaterStarted()
+          await new Promise(resolve => { finishHandler = resolve })
+        },
+        order: 10
+      })
+
+      const originalRun = await registry.runAll()
+      await laterStarted
+      expect(files['refresh-registry-state.json'].progress.first.lastSuccessfulRun).toBeTypeOf('number')
+
+      const restarted = await createRefreshRegistry(mockStorage)
+      const resumedFirst = vi.fn()
+      const resumedLater = vi.fn(async () => 'done')
+      restarted.register('first', { handler: resumedFirst, order: 0 })
+      restarted.register('later', { handler: resumedLater, order: 10 })
+      const resumedRun = await restarted.runAll()
+      if (resumedRun.execution) await resumedRun.execution
+
+      expect(resumedRun.counts).toMatchObject({ due: 1, skipped: 1 })
+      expect(resumedFirst).not.toHaveBeenCalled()
+      expect(resumedLater).toHaveBeenCalledOnce()
+      finishHandler()
+      await originalRun.execution
+    })
+
     it('persists lastSuccessfulRun on success', async () => {
       const mockStorage = {
         readFromStorage: vi.fn().mockReturnValue(null),

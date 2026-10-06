@@ -13,7 +13,7 @@ spec:
   jobTemplate:
     spec:
       activeDeadlineSeconds: 1800
-      backoffLimit: 1
+      backoffLimit: 0
       template:
         metadata:
           labels:
@@ -95,7 +95,7 @@ spec:
                   # Poll refresh status until complete
                   echo "=== Waiting for refresh to complete ==="
                   ATTEMPTS=0
-                  MAX_ATTEMPTS=120
+                  MAX_ATTEMPTS=300
                   while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
                     sleep 5
                     ATTEMPTS=$((ATTEMPTS + 1))
@@ -107,7 +107,8 @@ spec:
                       # Check for failures
                       FAILED=$(echo "$STATUS" | grep -o '"state":"failed"' | wc -l | tr -d ' ')
                       if [ "$FAILED" -gt 0 ]; then
-                        echo "WARNING: $FAILED handler(s) failed (see admin UI for details)"
+                        echo "ERROR: $FAILED handler(s) failed (see admin UI for details)"
+                        exit 1
                       fi
                       break
                     fi
@@ -115,8 +116,8 @@ spec:
                   done
 
                   if [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; then
-                    echo "WARNING: Refresh still running after polling timeout (backend will complete independently)"
-                    # Exit 0 — the refresh was accepted, we just can't wait for it
+                    echo "ERROR: Refresh still running after polling timeout (backend will continue independently)"
+                    exit 1
                   fi
 
                   echo "=== Sync and refresh completed successfully ==="
