@@ -83,6 +83,11 @@ function getHandler() {
 }
 
 describe('POST /api/admin/refresh/handler', () => {
+  it('runs the backup before longer refresh handlers', () => {
+    const { refreshRegistry } = getHandler()
+    expect(refreshRegistry.get('platform:backup').order).toBe(0)
+  })
+
   it('runs a handler whose ID contains "/" when passed in the body', async () => {
     const { handler, refreshRegistry, runOne } = getHandler()
     const id = 'team-tracker/allocation:allocation'

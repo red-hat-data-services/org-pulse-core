@@ -109,9 +109,9 @@ function registerAdminRoutes(app, context) {
 
   // Register platform:backup as a refresh handler
   refreshRegistry.register('platform:backup', {
-    order: 200,
+    order: 0,
     cadence: '24h',
-    timeout: 120000,
+    timeout: 600000,
     description: 'Creates a backup of all data files to S3 and applies retention policy.',
     handler: async function() {
       if (!process.env.AWS_BACKUP_BUCKET) {

@@ -5,7 +5,7 @@
  * tiered retention: 7 daily + 4 weekly (Sunday backups kept 28 days).
  */
 
-const { execFileSync } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -39,6 +39,25 @@ function isSunday(dateStr) {
   return d.getUTCDay() === 0;
 }
 
+function createArchive(tmpFile, dataDir) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('tar', [
+      'czf', tmpFile,
+      '-C', path.dirname(dataDir),
+      path.basename(dataDir),
+    ]);
+    let stderr = '';
+    child.stderr.on('data', chunk => {
+      stderr = (stderr + chunk.toString()).slice(-8192);
+    });
+    child.on('error', reject);
+    child.on('close', code => {
+      if (code === 0) resolve();
+      else reject(new Error(`tar exited with code ${code}: ${stderr.trim()}`));
+    });
+  });
+}
+
 /**
  * Create a tar.gz of the data directory and upload to S3.
  * @deprecated Use createBackupClient() instead
@@ -52,11 +71,7 @@ async function createBackup() {
 
   try {
     // Create tar.gz of the data directory
-    execFileSync('tar', [
-      'czf', tmpFile,
-      '-C', path.dirname(storage.DATA_DIR),
-      path.basename(storage.DATA_DIR),
-    ]);
+    await createArchive(tmpFile, storage.DATA_DIR);
 
     const stats = fs.statSync(tmpFile);
     console.log(`[backup] Created archive: ${filename} (${(stats.size / 1024 / 1024).toFixed(1)} MB)`);
@@ -210,11 +225,7 @@ function createBackupClient({ region, bucket, dataDir }) {
     const tmpFile = path.join(os.tmpdir(), filename);
 
     try {
-      execFileSync('tar', [
-        'czf', tmpFile,
-        '-C', path.dirname(resolvedDataDir),
-        path.basename(resolvedDataDir),
-      ]);
+      await createArchive(tmpFile, resolvedDataDir);
 
       const stats = fs.statSync(tmpFile);
       console.log(`[backup] Created archive: ${filename} (${(stats.size / 1024 / 1024).toFixed(1)} MB)`);

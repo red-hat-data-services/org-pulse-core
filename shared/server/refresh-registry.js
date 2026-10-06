@@ -139,6 +139,23 @@ async function createRefreshRegistry(storage) {
     }
   }
 
+  // Save settled handlers after each order group. A rollout can interrupt a
+  // long refresh, but the next run should retain completed cadence timestamps.
+  async function persistSettledGroup(group) {
+    const settled = {}
+    for (const [id] of group) settled[id] = progress[id]
+    const baseline = {}
+    for (const [id, config] of entries) {
+      baseline[id] = { registered: true, order: config.order }
+    }
+    lastRun = {
+      completedAt: lastRun ? lastRun.completedAt : null,
+      progress: { ...baseline, ...(lastRun ? lastRun.progress : {}), ...settled },
+      results: {}
+    }
+    await persistLastRun()
+  }
+
   function register(id, config) {
     if (typeof config.handler !== 'function') {
       console.warn('[refresh-registry] Handler for "' + id + '" is not a function, skipping')
@@ -249,7 +266,7 @@ async function createRefreshRegistry(storage) {
 
     let timer
     return Promise.race([
-      config.handler(options),
+      Promise.resolve().then(() => config.handler(options)),
       new Promise(function (_, reject) {
         timer = setTimeout(function () {
           reject(new Error('Refresh "' + id + '" timed out after ' + effectiveTimeout + 'ms'))
@@ -342,6 +359,7 @@ async function createRefreshRegistry(storage) {
               : { success: true, result: val.result })
           : { success: false, error: val.error }
       }
+      await persistSettledGroup(group)
     }
 
     return results
