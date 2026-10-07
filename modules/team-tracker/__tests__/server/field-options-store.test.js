@@ -441,6 +441,27 @@ describe('field-options-store', () => {
       expect(saved.orphanedValues).toEqual(['Beta'])
     })
 
+    it('preserves sourceConfig from existing data during sync', async () => {
+      const storage = makeStorage({
+        'team-data/field-options/component.json': {
+          name: 'component', label: 'Components', values: ['A', 'B'], source: 'jira',
+          sourceConfig: { entityType: 'components', projectKey: 'RHAI' }
+        },
+        'team-data/field-definitions.json': { personFields: [], teamFields: [] },
+        'audit-log.json': { entries: [] }
+      })
+      await fieldOptionsStore.syncFromExternal(storage, 'component', {
+        source: 'jira',
+        sourceProject: 'RHAI',
+        values: ['A', 'B', 'C']
+      }, createAuditLog(storage))
+
+      const saved = storage._data['team-data/field-options/component.json']
+      expect(saved.sourceConfig).toEqual({ entityType: 'components', projectKey: 'RHAI' })
+      expect(saved.source).toBe('jira')
+      expect(saved.values).toEqual(['A', 'B', 'C'])
+    })
+
     it('clears orphanedValues when no orphans remain', async () => {
       const storage = makeStorage({
         'team-data/field-options/component.json': {
