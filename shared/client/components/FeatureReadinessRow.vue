@@ -154,7 +154,7 @@ const confidenceTooltip = computed(() => {
       >{{ feature.title || '—' }}</span>
     </td>
 
-    <!-- Outcome (Big Rock) -->
+    <!-- Outcome -->
     <td class="px-3 py-2.5 max-w-[8rem]">
       <span
         class="text-xs text-gray-700 dark:text-gray-300 block truncate"
