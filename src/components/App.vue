@@ -250,6 +250,7 @@ import { useGithubStats } from '@shared/client/composables/useGithubStats'
 import { useGitlabStats } from '@shared/client/composables/useGitlabStats'
 import { useModules } from '../composables/useModules'
 import { useTheme } from '../composables/useTheme'
+import { useUsageTracker } from '@shared/client/composables/useUsageTracker'
 import { refreshMetrics, getLastRefreshed, apiRequest, getSiteConfig } from '@shared/client/services/api'
 import { loadModuleManifests, loadModuleClient } from '../module-loader'
 import { loadPlatformAboutTabs, loadModuleViewExtensions } from '../platform-loader'
@@ -466,6 +467,9 @@ export default {
       moduleSlug: readonly(activeModuleSlugRef)
     })
 
+    const usageTracker = useUsageTracker()
+    provide('usageTracker', usageTracker)
+
     const rawPlatformTabs = loadPlatformAboutTabs()
     const platformAboutTabs = rawPlatformTabs.map(tab => ({
       ...tab,
@@ -520,7 +524,8 @@ export default {
       floatingWidgets,
       appMessages,
       fetchMessages,
-      dismissMessage
+      dismissMessage,
+      usageTracker
     }
   },
   data() {
@@ -589,6 +594,7 @@ export default {
     window.removeEventListener('hashchange', this.onHashChange)
     window.removeEventListener('popstate', this.onPopState)
     window.removeEventListener('keydown', this.onKeyDown)
+    this.usageTracker.stop()
   },
   methods: {
     onKeyDown(e) {
@@ -678,13 +684,24 @@ export default {
       // Fetch messages independently -- non-blocking, never delays initial render
       this.fetchMessages()
 
-      // Check tracking opt-out status (non-blocking)
+      // Check tracking opt-out status before starting tracker
       this._trackingDisabled = import.meta.env.VITE_DEMO_MODE === 'true';
       if (!this._trackingDisabled) {
         fetch('/api/health-metrics/tracking/status')
-          .then(r => r.json())
-          .then(data => { if (data.optedOut) this._trackingDisabled = true; })
-          .catch(() => {});
+          .then(r => r.ok ? r.json() : { optedOut: false })
+          .then(data => {
+            if (data.optedOut) {
+              this._trackingDisabled = true;
+              this.usageTracker.disable();
+            } else {
+              this.usageTracker.start();
+            }
+          })
+          .catch(() => {
+            this.usageTracker.start();
+          });
+      } else {
+        this.usageTracker.disable();
       }
     },
 

@@ -104,4 +104,94 @@ function loadModuleViewExtensions(platformDirs) {
   return extensions
 }
 
-module.exports = { loadModuleViewExtensions }
+/**
+ * Discover server-route extensions from platform directories.
+ * Scans manifest.json files in platform subdirectories for type "server-routes".
+ * These are standalone server routes not tied to any module's enabled state.
+ *
+ * @param {string|string[]} [platformDirs] - Single directory or array of directories to search.
+ * @returns {Array} Array of extension objects with id, mountPath, serverEntry, _dir.
+ */
+function loadServerRouteExtensions(platformDirs) {
+  const dirs = platformDirs
+    ? (Array.isArray(platformDirs) ? platformDirs : [platformDirs])
+    : [DEFAULT_PLATFORM_DIR]
+
+  const extensions = []
+  const seenIds = new Set()
+
+  for (const platformDir of dirs) {
+    if (!fs.existsSync(platformDir)) continue
+
+    for (const entry of fs.readdirSync(platformDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      if (entry.name.startsWith('.') || entry.name.startsWith('_')) continue
+
+      const extDir = path.join(platformDir, entry.name)
+      const manifestPath = path.join(extDir, 'manifest.json')
+      if (!fs.existsSync(manifestPath)) continue
+
+      let manifest
+      try {
+        manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'))
+      } catch (err) {
+        console.error(`[platform-loader] Failed to parse ${entry.name}/manifest.json:`, err.message)
+        continue
+      }
+
+      if (manifest.type !== 'server-routes') continue
+
+      if (!manifest.mountPath || typeof manifest.mountPath !== 'string') {
+        console.error(`[platform-loader] server-routes extension "${entry.name}" missing mountPath`)
+        continue
+      }
+
+      if (!manifest.mountPath.startsWith('/api/')) {
+        console.error(`[platform-loader] server-routes extension "${entry.name}": mountPath must start with /api/`)
+        continue
+      }
+
+      const id = entry.name
+      if (seenIds.has(id)) {
+        console.warn(`[platform-loader] Duplicate server-routes extension "${id}", skipping`)
+        continue
+      }
+      seenIds.add(id)
+
+      let serverEntry = null
+      if (manifest.server && manifest.server.entry) {
+        const entryFile = manifest.server.entry.replace(/^\.\//, '')
+        const entryPath = path.join(extDir, entryFile)
+        const resolvedEntry = path.resolve(entryPath)
+        if (!resolvedEntry.startsWith(extDir + path.sep) && resolvedEntry !== extDir) {
+          console.error(`[platform-loader] server-routes extension "${id}": server entry escapes extension directory`)
+          continue
+        }
+        if (!fs.existsSync(entryPath)) {
+          console.error(`[platform-loader] server-routes extension "${id}": server entry not found: ${entryPath}`)
+          continue
+        }
+        serverEntry = entryPath
+      }
+
+      if (!serverEntry) {
+        console.error(`[platform-loader] server-routes extension "${id}" must have a server.entry`)
+        continue
+      }
+
+      extensions.push({
+        id: id,
+        mountPath: manifest.mountPath,
+        serverEntry: serverEntry,
+        secrets: manifest.secrets || null,
+        _dir: extDir
+      })
+
+      console.log(`[platform-loader] Discovered server-routes extension "${id}" → ${manifest.mountPath}`)
+    }
+  }
+
+  return extensions
+}
+
+module.exports = { loadModuleViewExtensions, loadServerRouteExtensions }

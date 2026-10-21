@@ -252,6 +252,58 @@ module routes take precedence.
 4. Run `npm run validate:platform` to verify
 5. Views and nav items appear automatically in the target module
 
+## Server Routes (`platform/<name>/`)
+
+Server-routes extensions mount standalone API routes that are not tied to any
+module's enabled state. Unlike `module-views` (which require a `targetModule`),
+server-routes are always active when the extension is present.
+
+### Manifest format
+
+```json
+{
+  "type": "server-routes",
+  "mountPath": "/api/usage",
+  "server": {
+    "entry": "./server/index.js"
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | yes | Must be `"server-routes"` |
+| `mountPath` | string | yes | Absolute path where routes are mounted (e.g., `/api/usage`) |
+| `server.entry` | string | yes | Path to CommonJS server entry (relative to extension dir) |
+
+### Server entry
+
+The server entry receives a router and a module-like context:
+
+```js
+module.exports = function(router, context) {
+  // context: storage, requireAuth, requireAdmin, registerRefresh, etc.
+  router.post('/events', context.requireAuth, async function(req, res) {
+    // ...
+  })
+}
+```
+
+### How it works
+
+- **Server-side**: `server/platform-loader.js` discovers `server-routes` manifests
+  via `loadServerRouteExtensions()`. `dev-server.js` mounts each extension's
+  router at the declared `mountPath`.
+- **No frontend component**: Server-routes extensions have no client-side views
+  or nav items. They are API-only.
+
+### Adding a server-routes extension
+
+1. Create `platform/<name>/manifest.json` with `type: "server-routes"`
+2. Create `platform/<name>/server/index.js` with the route handler
+3. Run `npm run validate:platform` to verify the manifest
+4. Routes are available immediately at the declared `mountPath`
+
 ## Dockerfile layering
 
 The core frontend builder does NOT include `platform/`. Deployment-specific

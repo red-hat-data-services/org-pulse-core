@@ -136,11 +136,71 @@ async function getFileMtime(key) {
   }
 }
 
+/**
+ * List all files in a subdirectory of fixtures (no extension filter).
+ * @param {string} dir - Subdirectory name
+ * @returns {Promise<string[]>} Array of filenames (without path)
+ */
+async function listAllStorageFiles(dir) {
+  const seen = new Set();
+  const results = [];
+  for (const baseDir of FIXTURES_DIRS) {
+    const dirPath = path.resolve(baseDir, dir);
+    if (!isPathSafeForDir(dirPath, baseDir)) continue;
+    try {
+      const files = await fsp.readdir(dirPath);
+      for (const f of files) {
+        if (!seen.has(f)) {
+          seen.add(f);
+          results.push(f);
+        }
+      }
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+  }
+  return results;
+}
+
+/**
+ * Read raw text from fixtures directory (no JSON parsing).
+ * @param {string} key - Relative path
+ * @returns {Promise<string|null>} File content as string, or null if not found
+ */
+async function readRawFromStorage(key) {
+  const found = await findInFixtures(key);
+  if (!found) return null;
+  try {
+    return await fsp.readFile(found.filePath, 'utf-8');
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/**
+ * No-op append for demo mode (fixtures are read-only)
+ * @param {string} key - Would-be path
+ * @param {string} _content - Content that would be appended
+ * @returns {Promise<void>}
+ */
+async function appendToStorage(key, _content) {
+  console.log(`[Demo Mode] Append ignored: ${key}`);
+}
+
 module.exports = {
   initDemoStorage,
   readFromStorage,
+  readRawFromStorage,
   writeToStorage,
+  writeRawToStorage: async function (key, _content) {
+    console.log(`[Demo Mode] Raw write ignored: ${key}`)
+  },
+  appendToStorage,
   listStorageFiles,
+  listAllStorageFiles,
   deleteStorageDirectory,
   deleteFromStorage,
   getFileMtime,

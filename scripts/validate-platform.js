@@ -22,8 +22,9 @@ if (!fs.existsSync(PLATFORM_DIR)) {
 
 const hasAboutTabs = fs.existsSync(ABOUT_TABS_DIR)
 
-// Discover module-views extensions
+// Discover module-views and server-routes extensions
 const moduleViewsDirs = []
+const serverRoutesDirs = []
 if (fs.existsSync(PLATFORM_DIR)) {
   for (const entry of fs.readdirSync(PLATFORM_DIR, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue
@@ -32,12 +33,14 @@ if (fs.existsSync(PLATFORM_DIR)) {
     try {
       const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
       if (m.type === 'module-views') moduleViewsDirs.push(entry.name)
+      if (m.type === 'server-routes') serverRoutesDirs.push(entry.name)
     } catch { /* skip */ }
   }
 }
 const hasModuleViews = moduleViewsDirs.length > 0
+const hasServerRoutes = serverRoutesDirs.length > 0
 
-if (!hasAboutTabs && !hasModuleViews) {
+if (!hasAboutTabs && !hasModuleViews && !hasServerRoutes) {
   console.log('No platform extensions found — skipping validation')
   process.exit(0)
 }
@@ -189,8 +192,10 @@ for (const dirName of moduleViewsDirs) {
 
   if (manifest.server && manifest.server.entry) {
     const entryFile = manifest.server.entry.replace(/^\.\//, '')
-    const entryPath = path.join(extDir, entryFile)
-    if (!fs.existsSync(entryPath)) {
+    const entryPath = path.resolve(extDir, entryFile)
+    if (!entryPath.startsWith(path.resolve(extDir) + path.sep)) {
+      error(`${dirName}: server entry escapes extension directory: ${manifest.server.entry}`)
+    } else if (!fs.existsSync(entryPath)) {
       error(`${dirName}: server entry not found: ${manifest.server.entry} (expected at ${entryPath})`)
     }
   }
@@ -200,6 +205,44 @@ for (const dirName of moduleViewsDirs) {
     if (hasNav) parts.push(`${manifest.navItems.length} navItem(s)`)
     if (hasServer) parts.push('server routes')
     console.log(`  Extension "${dirName}" → ${manifest.targetModule}: ${parts.join(' + ') || 'no contributions'} validated successfully`)
+  }
+}
+
+// --- Server-Routes Validation ---
+
+for (const dirName of serverRoutesDirs) {
+  const extDir = path.join(PLATFORM_DIR, dirName)
+  const manifestPath = path.join(extDir, 'manifest.json')
+  let manifest
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+  } catch (e) {
+    error(`${dirName}/manifest.json is not valid JSON: ${e.message}`)
+    continue
+  }
+
+  console.log(`Validating platform/${dirName}/manifest.json (server-routes)...`)
+
+  if (!manifest.mountPath || typeof manifest.mountPath !== 'string') {
+    error(`${dirName}: "mountPath" must be a non-empty string`)
+  } else if (!manifest.mountPath.startsWith('/api/')) {
+    error(`${dirName}: "mountPath" must start with /api/`)
+  }
+
+  if (!manifest.server || !manifest.server.entry) {
+    error(`${dirName}: a server-routes extension must define "server.entry"`)
+  } else {
+    const entryFile = manifest.server.entry.replace(/^\.\//, '')
+    const entryPath = path.resolve(extDir, entryFile)
+    if (!entryPath.startsWith(path.resolve(extDir) + path.sep)) {
+      error(`${dirName}: server entry escapes extension directory: ${manifest.server.entry}`)
+    } else if (!fs.existsSync(entryPath)) {
+      error(`${dirName}: server entry not found: ${manifest.server.entry} (expected at ${entryPath})`)
+    }
+  }
+
+  if (errors === 0) {
+    console.log(`  Extension "${dirName}" → ${manifest.mountPath}: server routes validated successfully`)
   }
 }
 

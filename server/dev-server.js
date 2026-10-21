@@ -93,7 +93,7 @@ async function startServer(options = {}) {
 
   const { SecretRegistry } = require('../shared/server/secret-registry');
   const platformSecretGroups = require('../shared/server/platform-secrets');
-  const { loadModuleViewExtensions } = require('./platform-loader');
+  const { loadModuleViewExtensions, loadServerRouteExtensions } = require('./platform-loader');
   const { buildModuleContext } = require('../shared/server/module-context');
 
   // ─── Module Discovery ───
@@ -115,6 +115,13 @@ async function startServer(options = {}) {
     if (ext.secrets) {
       const extSlug = ext.targetModule + '/' + ext.id;
       secretRegistry.registerModuleSecrets(extSlug, ext.secrets);
+    }
+  }
+
+  const serverRouteExtensions = loadServerRouteExtensions(platformPaths);
+  for (const ext of serverRouteExtensions) {
+    if (ext.secrets) {
+      secretRegistry.registerModuleSecrets(ext.id, ext.secrets);
     }
   }
 
@@ -588,8 +595,29 @@ async function startServer(options = {}) {
     }
   }
 
+  // ─── Platform Server-Route Extensions ───
+
+  for (const ext of serverRouteExtensions) {
+    try {
+      const extRouter = express.Router();
+      const extCtx = buildModuleContext(coreServices, ext.id, registries);
+      const extExported = require(ext.serverEntry);
+      if (typeof extExported !== 'function') {
+        console.error(`[platform] server-routes extension "${ext.id}": server entry does not export a function`);
+        continue;
+      }
+      extExported(extRouter, extCtx);
+      app.use(ext.mountPath, extRouter);
+      console.log(`[platform] Mounted server-routes extension "${ext.id}" at ${ext.mountPath}`);
+    } catch (err) {
+      console.error(`[platform] Failed to mount server-routes extension "${ext.id}":`, err.message);
+      mountFailures.push({ id: ext.id, mountPath: ext.mountPath, error: err.message });
+    }
+  }
+
   // Store extensions and mount failures for manifest merging and health reporting
   routeContext.moduleViewExtensions = moduleViewExtensions;
+  routeContext.serverRouteExtensions = serverRouteExtensions;
   routeContext.mountFailures = mountFailures;
 
   // ─── Health Metrics (core feature, not a module) ───

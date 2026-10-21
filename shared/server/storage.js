@@ -175,11 +175,96 @@ async function getFileMtime(key) {
   }
 }
 
+/**
+ * List all files in a subdirectory of storage (no extension filter).
+ * @param {string} dir - Subdirectory name
+ * @returns {Promise<string[]>} Array of filenames (without path)
+ */
+async function listAllStorageFiles(dir) {
+  const dirPath = path.resolve(DATA_DIR, dir);
+  if (!isPathSafe(dirPath)) {
+    console.error(`[storage] Blocked path traversal attempt: ${dir}`);
+    return [];
+  }
+  try {
+    return await fsp.readdir(dirPath);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+}
+
+/**
+ * Read raw text from local file (no JSON parsing).
+ * Suitable for JSONL, plain text, and other non-JSON formats.
+ * @param {string} key - S3-style key
+ * @returns {Promise<string|null>} File content as string, or null if not found
+ */
+async function readRawFromStorage(key) {
+  const filePath = path.resolve(DATA_DIR, key);
+  if (!isPathSafe(filePath)) {
+    console.error(`[storage] Blocked path traversal attempt: ${key}`);
+    return null;
+  }
+  try {
+    return await fsp.readFile(filePath, 'utf-8');
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Write raw text to local file (no JSON serialization).
+ * @param {string} key - S3-style key
+ * @param {string} content - Text content to write
+ * @returns {Promise<void>}
+ */
+async function writeRawToStorage(key, content) {
+  const filePath = path.resolve(DATA_DIR, key);
+  if (!isPathSafe(filePath)) {
+    console.error(`[storage] Blocked path traversal attempt: ${key}`);
+    return;
+  }
+  await ensureDir(filePath);
+  await fsp.writeFile(filePath, content, 'utf-8');
+}
+
+/**
+ * Append text content to a file in storage.
+ * Creates the file and parent directories if they don't exist.
+ * Serializes concurrent appends to the same key using an in-process mutex.
+ * @param {string} key - S3-style key (e.g., 'usage/events-2026-10-12.jsonl')
+ * @param {string} content - Text content to append
+ * @returns {Promise<void>}
+ */
+async function appendToStorage(key, content) {
+  const filePath = path.resolve(DATA_DIR, key);
+  if (!isPathSafe(filePath)) {
+    console.error(`[storage] Blocked path traversal attempt: ${key}`);
+    return;
+  }
+  await ensureDir(filePath);
+  const { getStorageMutex } = require('./storage-mutex');
+  const mutex = getStorageMutex(key);
+  await mutex.runExclusive(async () => {
+    await fsp.appendFile(filePath, content, 'utf-8');
+  });
+}
+
 module.exports = {
   initStorage,
   readFromStorage,
+  readRawFromStorage,
   writeToStorage,
+  writeRawToStorage,
+  appendToStorage,
   listStorageFiles,
+  listAllStorageFiles,
   deleteStorageDirectory,
   deleteFromStorage,
   getFileMtime,
