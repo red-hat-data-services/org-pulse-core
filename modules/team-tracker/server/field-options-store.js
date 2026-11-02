@@ -191,6 +191,9 @@ async function syncFromExternal(storage, name, opts, auditLog) {
       updatedAt: now,
       updatedBy: source + '-sync'
     };
+    if (existing && existing.sourceConfig) {
+      options.sourceConfig = existing.sourceConfig;
+    }
     if (richValues) {
       options.richValues = richValues;
     }

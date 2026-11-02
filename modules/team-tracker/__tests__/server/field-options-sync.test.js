@@ -284,6 +284,32 @@ describe('field-options-sync', () => {
       expect(result.entityType).toBe('teams')
     })
 
+    it('preserves sourceConfig so subsequent syncs succeed', async () => {
+      const storage = makeStorage({
+        'team-data/field-options/components.json': {
+          name: 'components', label: 'Components', values: ['Dashboard', 'Notebooks'],
+          source: 'jira', sourceProject: 'RHAI',
+          sourceConfig: { entityType: 'components', projectKey: 'RHAI' }
+        },
+        'team-data/field-definitions.json': { personFields: [], teamFields: [] },
+        'audit-log.json': { entries: [] }
+      })
+      const jiraRequest = makeJiraRequest({
+        '/components': SAMPLE_COMPONENTS
+      })
+
+      // First sync
+      await fieldOptionsSync.syncOptionSet(storage, jiraRequest, 'components', createAuditLog(storage))
+
+      // sourceConfig must still be present after sync
+      const saved = storage._data['team-data/field-options/components.json']
+      expect(saved.sourceConfig).toEqual({ entityType: 'components', projectKey: 'RHAI' })
+
+      // Second sync should not throw
+      const result2 = await fieldOptionsSync.syncOptionSet(storage, jiraRequest, 'components', createAuditLog(storage))
+      expect(result2.valuesCount).toBe(3)
+    })
+
     it('throws for non-linked option set', async () => {
       const storage = makeStorage({
         'team-data/field-options/tags.json': { name: 'tags', label: 'Tags', values: ['X'] }
