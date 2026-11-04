@@ -203,9 +203,13 @@ function createTestContext(overrides = {}) {
 
   const testStorage = {
     readFromStorage: async function () { return null },
+    readRawFromStorage: async function () { return null },
     writeToStorage: async function () {},
+    writeRawToStorage: async function () {},
+    appendToStorage: async function () {},
     deleteFromStorage: async function () {},
     listStorageFiles: async function () { return [] },
+    listAllStorageFiles: async function () { return [] },
     deleteStorageDirectory: async function () { return { deleted: 0 } },
     getFileMtime: async function () { return null }
   }
