@@ -6,6 +6,8 @@
 const CONFIG_KEY = 'team-data/config.json';
 const LEGACY_CONFIG_KEY = 'roster-sync-config.json';
 const VALID_DATA_SOURCES = ['sheets', 'in-app', 'cyborg'];
+const ORG_ROOT_UID_PATTERN = /^[a-zA-Z0-9._-]+$/;
+const RESERVED_UIDS = new Set(['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'hasOwnProperty']);
 
 // Simple cache for getOrgDisplayNames — invalidated on saveConfig
 let _orgDisplayNamesCache = null;
@@ -175,6 +177,70 @@ function clearDisplayNamesCache() {
   _orgDisplayNamesCache = null;
 }
 
+/**
+ * Validate orgRoots entries, including manualMembers lists.
+ *
+ * Org membership is exclusive: a uid may be a manual member of at most one
+ * org root, and org root uids cannot be manual members of another root
+ * (roots are pinned to their own pillar during sync).
+ *
+ * Returns { valid: true } or { valid: false, error }.
+ * An empty array is valid here — callers enforce their own minimum count.
+ */
+function validateOrgRoots(orgRoots) {
+  if (!Array.isArray(orgRoots)) {
+    return { valid: false, error: 'orgRoots must be an array' };
+  }
+
+  const rootUids = new Set();
+  for (const root of orgRoots) {
+    if (!root || typeof root !== 'object') {
+      return { valid: false, error: 'Each org root must be an object' };
+    }
+    if (!root.uid || typeof root.uid !== 'string' || !ORG_ROOT_UID_PATTERN.test(root.uid) || RESERVED_UIDS.has(root.uid)) {
+      return { valid: false, error: 'Each org root needs a uid matching /^[a-zA-Z0-9._-]+$/' };
+    }
+    if (!root.displayName || typeof root.displayName !== 'string' || !root.displayName.trim()) {
+      return { valid: false, error: 'Org root ' + root.uid + ' needs a displayName' };
+    }
+    if (rootUids.has(root.uid)) {
+      return { valid: false, error: 'Duplicate org root uid: ' + root.uid };
+    }
+    rootUids.add(root.uid);
+  }
+
+  const memberAssignments = new Map();
+  for (const root of orgRoots) {
+    if (root.manualMembers === undefined) continue;
+    if (!Array.isArray(root.manualMembers)) {
+      return { valid: false, error: 'manualMembers for org root ' + root.uid + ' must be an array' };
+    }
+    const seen = new Set();
+    for (const uid of root.manualMembers) {
+      if (!uid || typeof uid !== 'string' || !ORG_ROOT_UID_PATTERN.test(uid) || RESERVED_UIDS.has(uid)) {
+        return { valid: false, error: 'manualMembers for org root ' + root.uid + ' contains an invalid uid' };
+      }
+      if (rootUids.has(uid)) {
+        return { valid: false, error: uid + ' is an org root and cannot be a manual member of ' + root.uid };
+      }
+      if (seen.has(uid)) {
+        return { valid: false, error: 'Duplicate uid ' + uid + ' in manualMembers for org root ' + root.uid };
+      }
+      seen.add(uid);
+      if (memberAssignments.has(uid)) {
+        return {
+          valid: false,
+          error: uid + ' is a manual member of multiple org roots (' +
+            memberAssignments.get(uid) + ' and ' + root.uid + ')'
+        };
+      }
+      memberAssignments.set(uid, root.uid);
+    }
+  }
+
+  return { valid: true };
+}
+
 module.exports = {
   VALID_DATA_SOURCES,
   loadConfig,
@@ -182,5 +248,6 @@ module.exports = {
   isConfigured,
   getOrgDisplayNames,
   updateSyncStatus,
-  clearDisplayNamesCache
+  clearDisplayNamesCache,
+  validateOrgRoots
 };
