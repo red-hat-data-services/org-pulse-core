@@ -7,6 +7,7 @@ const CONFIG_KEY = 'team-data/config.json';
 const LEGACY_CONFIG_KEY = 'roster-sync-config.json';
 const VALID_DATA_SOURCES = ['sheets', 'in-app', 'cyborg'];
 const ORG_ROOT_UID_PATTERN = /^[a-zA-Z0-9._-]+$/;
+const RESERVED_UIDS = new Set(['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'hasOwnProperty']);
 
 // Simple cache for getOrgDisplayNames — invalidated on saveConfig
 let _orgDisplayNamesCache = null;
@@ -196,7 +197,7 @@ function validateOrgRoots(orgRoots) {
     if (!root || typeof root !== 'object') {
       return { valid: false, error: 'Each org root must be an object' };
     }
-    if (!root.uid || typeof root.uid !== 'string' || !ORG_ROOT_UID_PATTERN.test(root.uid)) {
+    if (!root.uid || typeof root.uid !== 'string' || !ORG_ROOT_UID_PATTERN.test(root.uid) || RESERVED_UIDS.has(root.uid)) {
       return { valid: false, error: 'Each org root needs a uid matching /^[a-zA-Z0-9._-]+$/' };
     }
     if (!root.displayName || typeof root.displayName !== 'string' || !root.displayName.trim()) {
@@ -216,7 +217,7 @@ function validateOrgRoots(orgRoots) {
     }
     const seen = new Set();
     for (const uid of root.manualMembers) {
-      if (!uid || typeof uid !== 'string' || !ORG_ROOT_UID_PATTERN.test(uid)) {
+      if (!uid || typeof uid !== 'string' || !ORG_ROOT_UID_PATTERN.test(uid) || RESERVED_UIDS.has(uid)) {
         return { valid: false, error: 'manualMembers for org root ' + root.uid + ' contains an invalid uid' };
       }
       if (rootUids.has(uid)) {

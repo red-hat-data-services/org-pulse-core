@@ -170,25 +170,20 @@ test.describe('People & Teams Module @people-teams', () => {
     expect(ldapOrgMembers.some(m => m.uid === 'hwilson')).toBe(false);
   });
 
-  test('admin roster-sync config endpoint requires authentication', async ({ page }) => {
+  test('admin roster-sync config endpoint requires authentication', async ({ request }) => {
     // In CI containers with DEMO_MODE=true there is no OAuth proxy, so
     // requireAdmin returns 403 for admin-gated endpoints. Validation of
     // manualMembers payloads is covered by unit tests
     // (roster-sync-config.test.js).
-    const res = await page.evaluate(async () => {
-      const response = await fetch('/api/modules/team-tracker/admin/roster-sync/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          orgRoots: [
-            { uid: 'orga', displayName: 'Org A' },
-            { uid: 'orgb', displayName: 'Org B', manualMembers: ['jbloggs'] }
-          ]
-        })
-      });
-      return { status: response.status };
+    const response = await request.post('/api/modules/team-tracker/admin/roster-sync/config', {
+      data: {
+        orgRoots: [
+          { uid: 'orga', displayName: 'Org A' },
+          { uid: 'orgb', displayName: 'Org B', manualMembers: ['jbloggs'] }
+        ]
+      }
     });
-    expect(res.status).toBe(403);
+    expect(response.status()).toBe(403);
   });
 });
 
