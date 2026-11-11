@@ -401,6 +401,9 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
    *   get:
    *     tags: ['OR: Teams']
    *     summary: List all orgs with team counts and headcounts
+   *     description: |
+   *       Includes orgs whose members are all unassigned (e.g. manual
+   *       pillars without teams) with a teamCount of 0.
    *     responses:
    *       200:
    *         description: List of orgs
@@ -428,6 +431,16 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
 
       const orgMap = {};
       const orgPeople = {};
+      // Seed orgs from roster people so orgs whose members are all
+      // unassigned (e.g. manual pillars without teams yet) still appear
+      for (const person of allPeople) {
+        const personOrg = orgKeyToDisplay[person.orgKey] || person.orgKey || '';
+        if (!personOrg || personOrg === 'unknown') continue;
+        if (!orgMap[personOrg]) orgMap[personOrg] = { name: personOrg, teamCount: 0 };
+        if (!orgPeople[personOrg]) orgPeople[personOrg] = new Set();
+        orgPeople[personOrg].add(person.name);
+      }
+
       for (const [compositeKey] of Object.entries(orgTeamPeopleMap)) {
         const sepIdx = compositeKey.indexOf('::');
         const org = compositeKey.substring(0, sepIdx);
@@ -435,12 +448,6 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
         orgMap[org].teamCount++;
       }
 
-      for (const person of allPeople) {
-        const personOrg = orgKeyToDisplay[person.orgKey] || person.orgKey || '';
-        if (!personOrg || !orgMap[personOrg]) continue;
-        if (!orgPeople[personOrg]) orgPeople[personOrg] = new Set();
-        orgPeople[personOrg].add(person.name);
-      }
       for (const [org, names] of Object.entries(orgPeople)) {
         if (orgMap[org]) orgMap[org].headcount = names.size;
       }
@@ -471,7 +478,7 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
    *       200:
    *         description: Org summary with teams, roles, and RFE data
    *       404:
-   *         description: No data for this org
+   *         description: No data for this org (no teams and no people)
    */
   router.get('/org-summary/:orgName', requireScope('roster:read'), async function(req, res) {
     try {
@@ -479,13 +486,17 @@ module.exports = function registerOrgTeamsRoutes(router, context) {
       const isAll = orgName === '_all';
       const { teams } = await buildEnrichedTeams(isAll ? undefined : orgName);
 
-      if (teams.length === 0) return res.status(404).json({ error: 'No data available for this org' });
-
       const allPeople = await getAllPeople(storage);
       const orgKeyToDisplay = await buildOrgKeyToDisplayName();
       const orgPeople = isAll ? allPeople : allPeople.filter(function(person) {
         return (orgKeyToDisplay[person.orgKey] || person.orgKey || '') === orgName;
       });
+
+      // Orgs without teams (e.g. manual pillars) still have a summary as
+      // long as they have people
+      if (teams.length === 0 && orgPeople.length === 0) {
+        return res.status(404).json({ error: 'No data available for this org' });
+      }
 
       const rosterConfig = await loadRosterSyncConfig(storage);
       const fteInAppMode = (rosterConfig?.teamDataSource || 'sheets') === 'in-app';
