@@ -151,6 +151,27 @@ describe('useUsageTracker', () => {
     expect(body.events).toHaveLength(500)
   })
 
+  it('stop waits for in-flight flush before sending remaining events', async () => {
+    let resolveInflight
+    global.fetch = vi.fn(() => new Promise(resolve => { resolveInflight = resolve }))
+    tracker.start()
+    tracker.trackView('ai-impact', 'autofix')
+    const flushP = tracker.flush()
+
+    tracker.trackView('ai-impact', 'rfe-review')
+    const stopP = tracker.stop()
+
+    global.fetch = vi.fn(() => Promise.resolve({ ok: true }))
+    resolveInflight({ ok: true })
+    await flushP
+    await stopP
+
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+    const body = JSON.parse(global.fetch.mock.calls[0][1].body)
+    expect(body.events).toHaveLength(1)
+    expect(body.events[0].view).toBe('rfe-review')
+  })
+
   it('removes visibilitychange listener on stop', () => {
     const removeSpy = vi.spyOn(document, 'removeEventListener')
     tracker.start()
