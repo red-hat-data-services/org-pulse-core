@@ -170,6 +170,24 @@ test.describe('People & Teams Module @people-teams', () => {
     expect(ldapOrgMembers.some(m => m.uid === 'hwilson')).toBe(false);
   });
 
+  test('org-list and org-summary include a teamless manual pillar', async ({ request }) => {
+    // gkim's pillar members are all unassigned (no teams under the org) —
+    // the org must still appear in listings with zero teams
+    const listRes = await request.get('/api/modules/team-tracker/org-list');
+    expect(listRes.ok()).toBe(true);
+    const { orgs } = await listRes.json();
+    const pillar = (orgs || []).find(o => o.name === 'Grace Kim');
+    expect(pillar).toBeDefined();
+    expect(pillar.teamCount).toBe(0);
+    expect(pillar.headcount).toBe(2);
+
+    const summaryRes = await request.get('/api/modules/team-tracker/org-summary/Grace%20Kim');
+    expect(summaryRes.ok()).toBe(true);
+    const summary = await summaryRes.json();
+    expect(summary.teamCount).toBe(0);
+    expect(summary.headcount).toBe(2);
+  });
+
   test('admin roster-sync config endpoint requires authentication', async ({ request }) => {
     // In CI containers with DEMO_MODE=true there is no OAuth proxy, so
     // requireAdmin returns 403 for admin-gated endpoints. Validation of
