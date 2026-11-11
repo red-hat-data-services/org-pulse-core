@@ -145,6 +145,51 @@ test.describe('People & Teams Module @people-teams', () => {
       }
     }
   });
+
+  test('roster API reflects manually-assigned org members from fixtures', async ({ request }) => {
+    const response = await request.get('/api/modules/team-tracker/roster');
+    expect(response.ok()).toBe(true);
+
+    const roster = await response.json();
+    // gkim is a pillar whose members are pinned via orgRoots[].manualMembers
+    // (hwilson reports to fjohnson in LDAP but belongs to gkim's pillar)
+    const manualOrg = (roster.orgs || []).find(o => o.key === 'gkim');
+    expect(manualOrg).toBeDefined();
+
+    const manualOrgMembers = Object.values(manualOrg.teams || {})
+      .flatMap(team => team.members || []);
+    expect(manualOrgMembers.some(m => m.uid === 'gkim')).toBe(true);
+    expect(manualOrgMembers.some(m => m.uid === 'hwilson')).toBe(true);
+
+    // Manual assignment is exclusive — hwilson no longer appears under the
+    // org root they report to
+    const ldapOrg = (roster.orgs || []).find(o => o.key === 'fjohnson');
+    expect(ldapOrg).toBeDefined();
+    const ldapOrgMembers = Object.values(ldapOrg.teams || {})
+      .flatMap(team => team.members || []);
+    expect(ldapOrgMembers.some(m => m.uid === 'hwilson')).toBe(false);
+  });
+
+  test('admin roster-sync config endpoint requires authentication', async ({ page }) => {
+    // In CI containers with DEMO_MODE=true there is no OAuth proxy, so
+    // requireAdmin returns 403 for admin-gated endpoints. Validation of
+    // manualMembers payloads is covered by unit tests
+    // (roster-sync-config.test.js).
+    const res = await page.evaluate(async () => {
+      const response = await fetch('/api/modules/team-tracker/admin/roster-sync/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orgRoots: [
+            { uid: 'orga', displayName: 'Org A' },
+            { uid: 'orgb', displayName: 'Org B', manualMembers: ['jbloggs'] }
+          ]
+        })
+      });
+      return { status: response.status };
+    });
+    expect(res.status).toBe(403);
+  });
 });
 
 /**

@@ -135,6 +135,61 @@ describe('Roster Sync Config API', () => {
   })
 
   describe('POST /api/admin/roster-sync/config', () => {
+    it('persists manualMembers on org roots', async () => {
+      const config = {
+        orgRoots: [
+          { uid: 'testorg', displayName: 'Test Org' },
+          { uid: 'manualorg', displayName: 'Manual Org', manualMembers: ['jbloggs', 'tsmith'] }
+        ]
+      }
+
+      const res = await request(app, 'POST', '/api/modules/team-tracker/admin/roster-sync/config', config)
+
+      expect(res.status).toBe(200)
+      expect(writeToStorage).toHaveBeenCalledWith(
+        'team-data/config.json',
+        expect.objectContaining({
+          orgRoots: [
+            { uid: 'testorg', displayName: 'Test Org' },
+            { uid: 'manualorg', displayName: 'Manual Org', manualMembers: ['jbloggs', 'tsmith'] }
+          ]
+        })
+      )
+    })
+
+    it('rejects a uid listed as a manual member of multiple org roots', async () => {
+      const res = await request(app, 'POST', '/api/modules/team-tracker/admin/roster-sync/config', {
+        orgRoots: [
+          { uid: 'orga', displayName: 'Org A', manualMembers: ['jbloggs'] },
+          { uid: 'orgb', displayName: 'Org B', manualMembers: ['jbloggs'] }
+        ]
+      })
+
+      expect(res.status).toBe(400)
+      expect(res.body.error).toContain('multiple org roots')
+    })
+
+    it('rejects an org root uid listed as a manual member of another root', async () => {
+      const res = await request(app, 'POST', '/api/modules/team-tracker/admin/roster-sync/config', {
+        orgRoots: [
+          { uid: 'orga', displayName: 'Org A' },
+          { uid: 'orgb', displayName: 'Org B', manualMembers: ['orga'] }
+        ]
+      })
+
+      expect(res.status).toBe(400)
+      expect(res.body.error).toContain('cannot be a manual member')
+    })
+
+    it('rejects invalid uids in manualMembers', async () => {
+      const res = await request(app, 'POST', '/api/modules/team-tracker/admin/roster-sync/config', {
+        orgRoots: [{ uid: 'orga', displayName: 'Org A', manualMembers: ['bad uid!'] }]
+      })
+
+      expect(res.status).toBe(400)
+      expect(res.body.error).toContain('invalid uid')
+    })
+
     it('persists excludeGroups within gitlabInstances when saving config', async () => {
       const config = {
         orgRoots: [{ uid: 'testorg', displayName: 'Test Org' }],

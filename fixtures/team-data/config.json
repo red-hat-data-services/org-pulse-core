@@ -1,7 +1,8 @@
 {
   "orgRoots": [
     { "uid": "achen", "name": "Alice Chen", "displayName": "Alice Chen" },
-    { "uid": "fjohnson", "name": "Frank Johnson", "displayName": "Frank Johnson" }
+    { "uid": "fjohnson", "name": "Frank Johnson", "displayName": "Frank Johnson" },
+    { "uid": "gkim", "name": "Grace Kim", "displayName": "Grace Kim", "manualMembers": ["hwilson"] }
   ],
   "excludedTitles": [],
   "gracePeriodDays": 30,

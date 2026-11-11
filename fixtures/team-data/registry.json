@@ -2,7 +2,7 @@
   "meta": {
     "generatedAt": "2026-01-15T00:00:00.000Z",
     "provider": "demo",
-    "orgRoots": ["achen", "fjohnson"],
+    "orgRoots": ["achen", "fjohnson", "gkim"],
     "vp": {
       "name": "Demo VP",
       "uid": "demovp"
@@ -195,7 +195,7 @@
       "officeLocation": null,
       "costCenter": null,
       "managerUid": "fjohnson",
-      "orgRoot": "fjohnson",
+      "orgRoot": "gkim",
       "github": { "username": "gracekim", "source": "ldap" },
       "gitlab": { "username": "gracekim", "source": "ldap" },
       "status": "active",
@@ -222,7 +222,7 @@
       "officeLocation": null,
       "costCenter": null,
       "managerUid": "fjohnson",
-      "orgRoot": "fjohnson",
+      "orgRoot": "gkim",
       "github": { "username": "henryw", "source": "ldap" },
       "gitlab": { "username": "henryw", "source": "ldap" },
       "status": "active",

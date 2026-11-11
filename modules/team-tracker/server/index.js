@@ -4381,13 +4381,9 @@ module.exports = async function registerRoutes(router, context) {
         if (!Array.isArray(orgRoots) || orgRoots.length === 0) {
           return res.status(400).json({ error: 'At least one org root is required' });
         }
-        for (const root of orgRoots) {
-          if (!root.uid || !root.displayName) {
-            return res.status(400).json({ error: 'Each org root must have uid and displayName' });
-          }
-          if (!/^[a-zA-Z0-9._-]+$/.test(root.uid)) {
-            return res.status(400).json({ error: 'Invalid org root UID format' });
-          }
+        const orgRootsValidation = rosterSyncConfig.validateOrgRoots(orgRoots);
+        if (!orgRootsValidation.valid) {
+          return res.status(400).json({ error: orgRootsValidation.error });
         }
       }
 
