@@ -30,7 +30,8 @@ Core team owns `shared/` via CODEOWNERS. Changes require core team review.
 | `useModuleLink()` | Cross-module hash navigation (`linkTo`, `navigateTo`) |
 | `useMessages()` | App-wide message system: `messages` (reactive filtered list), `fetchMessages()`, `dismiss(id)` |
 | `useJiraAuth()` | Jira OAuth 2.0 client state: `isConnected`, `siteName`, `connectJira()`, `disconnectJira()`, `checkStatus()`. Used by modules with per-user Jira authentication. |
-| `useUsageTracker()` | Singleton usage tracker: `trackView(module, viewId, org?)`, `trackInteraction(module, viewId, action, target?, org?)`, `start()`, `stop()`, `flush()`, `disable()`. Batched event flush (30s interval, 50-event cap) to `POST /api/usage/events`, with exponential retry backoff and navigation-safe delivery. A 404 disables tracking for the page lifetime. `disable()` is terminal for the page lifetime and is used for opt-out or demo mode. Events include `clientTs`. Provided at App.vue level via `provide('usageTracker')`. |
+| `useUsageTracker()` | Singleton usage tracker: `trackView(module, viewId, org?)`, `trackInteraction(module, viewId, action, target?, org?)`, `start()`, `stop()`, `flush()`, `disable()`. Batched event flush (30s interval, 50-event flush trigger, 500-event buffer cap) to `POST /api/usage/events`, with exponential retry backoff and navigation-safe delivery. A 404 disables tracking for the page lifetime. `disable()` is terminal for the page lifetime and is used for opt-out or demo mode. Events include `clientTs`. Provided at App.vue level via `provide('usageTracker')`. |
+| `withTracking(moduleSlug, viewId, loader)` | HOC that wraps an async component loader to auto-fire `trackView(moduleSlug, viewId)` on mount. Use in module route maps: `'autofix': withTracking('ai-impact', 'autofix', () => import('./views/AutofixView.vue'))`. Reads the tracker from `inject('usageTracker')` — safe to use when tracking is not available. |
 
 ### Utilities
 
