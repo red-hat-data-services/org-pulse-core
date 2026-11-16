@@ -200,7 +200,8 @@ Stores the consolidated configuration for automated roster building (merged from
 ```json
 {
   "orgRoots": [
-    { "uid": "jsmith", "displayName": "Jane Smith" }
+    { "uid": "jsmith", "displayName": "Jane Smith" },
+    { "uid": "acorvin", "displayName": "AI Platform", "manualMembers": ["jbloggs", "tsmith"] }
   ],
   "googleSheetId": "1ABCdef...",
   "sheetNames": ["Sheet1", "Sheet2"],
@@ -247,6 +248,7 @@ Stores the consolidated configuration for automated roster building (merged from
 
 **Notes:**
 - `orgRoots` is required (at least one). Each entry needs `uid` and `displayName`. UIDs must match `/^[a-zA-Z0-9._-]+$/`.
+- `orgRoots[].manualMembers` (optional) is an array of UIDs pinned to that pillar outside its LDAP reporting chain — used for pillars whose top is not a people manager, or to attach people who report elsewhere. During sync, manual members are looked up in LDAP and added to (or reassigned into) the pillar. Org membership is exclusive: manual assignment wins over traversal-derived membership, a UID may be a manual member of at most one org root, and org root UIDs cannot be manual members of another root. `excludedTitles` does not apply to manual members (explicit admin intent). Only used in LDAP/sheets mode — ignored in Cyborg mode.
 - `googleSheetId`, `sheetNames`, `githubOrgs`, `gitlabGroups`, `gitlabInstances` are optional (default to `null` or `[]`).
 - `gitlabInstances` is the preferred way to configure GitLab instances. Legacy `gitlabGroups` is auto-migrated to `gitlabInstances` on first load. Each instance has `label`, `baseUrl` (must start with `https://`), `tokenEnvVar` (name of env var holding the token), `groups` (array of group paths), and optional `excludeGroups` (array of group paths to skip when fetching contributions, e.g., mirror repositories).
 - `teamStructure` replaces legacy `fieldMapping`/`customFields` via an in-memory migration on load.
@@ -284,7 +286,10 @@ Written after each consolidated sync run. Contains the result of the most recent
     "cyborgError": null,
     "cyborgGeneratedAt": null,
     "githubInferred": 2,
-    "gitlabInferred": 1
+    "gitlabInferred": 1,
+    "manualMembersApplied": 1,
+    "manualMembersReassigned": 0,
+    "manualMembersUnresolved": []
   },
   "coverage": { "github": 0.85, "gitlab": 0.78 }
 }
@@ -451,6 +456,7 @@ For local Cyborg-mode testing, use the synthetic complete-roster fixture at
 - Auxiliary people are excluded from GitHub/GitLab coverage statistics (`computeCoverage()`) and from the legacy roster shape (`readRosterFull()` filters out the `_auxiliary` org bucket).
 - `readRosterFull()` in `shared/server/roster.js` transforms this into the legacy `{ orgs: { key: { leader, members } } }` format for backward compatibility with `deriveRoster()` and downstream consumers.
 - Leaders are identified by matching a person's `uid` against the configured `orgRoots[].uid` values.
+- Manual org members (`orgRoots[].manualMembers`) are regular engineering members: on each sync they enter `freshPeopleMap` for their pillar, so previously-auxiliary registry entries listed as manual members are converted to `orgType: "engineering"` with the pillar as their `orgRoot`.
 - Enrichment fields from Google Sheets (`_teamGrouping`, `specialty`, `jiraTeam`, etc.) are stored as top-level fields on person records.
 - `teamIds` is an array of team IDs (e.g., `["team_a1b2c3"]`) linking the person to in-app managed teams. Defaults to `[]`. Only used when `teamDataSource` is `"in-app"`.
 - `_appFields` is an object mapping field definition IDs to values. Values are strings for single-value fields, or arrays of strings for multi-value fields (e.g., `{ "field_x1y2z3": "backend", "field_mv0001": ["Python", "Go"] }`). Stores person-level custom field values managed in-app. The `_` prefix ensures it is not overwritten by Sheets enrichment during sync.

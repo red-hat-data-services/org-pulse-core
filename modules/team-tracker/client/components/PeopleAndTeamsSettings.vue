@@ -5,41 +5,74 @@
       <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">Org Roots</h3>
       <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">
         Define the org leaders whose teams will be tracked. The roster sync traverses each leader's LDAP reporting chain.
+        Pillars whose top is not a people manager can pin members manually instead.
       </p>
 
       <div class="space-y-3 mb-4">
         <div
           v-for="(root, idx) in editRoots"
           :key="idx"
-          class="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-md"
+          class="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-md"
         >
-          <div class="flex-1 grid grid-cols-2 gap-3">
-            <div>
-              <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Kerberos UID</label>
-              <input
-                v-model="root.uid"
-                placeholder="e.g. shgriffi"
-                class="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
-              />
+          <div class="flex items-center gap-3">
+            <div class="flex-1 grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Kerberos UID</label>
+                <input
+                  v-model="root.uid"
+                  placeholder="e.g. shgriffi"
+                  class="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Display Name</label>
+                <input
+                  v-model="root.displayName"
+                  placeholder="e.g. AI Platform"
+                  class="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                />
+              </div>
             </div>
-            <div>
-              <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Display Name</label>
-              <input
-                v-model="root.displayName"
-                placeholder="e.g. AI Platform"
-                class="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
-              />
-            </div>
+            <button
+              @click="removeRoot(idx)"
+              class="p-1 text-gray-400 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 transition-colors mt-4"
+              title="Remove"
+            >
+              <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
           </div>
-          <button
-            @click="removeRoot(idx)"
-            class="p-1 text-gray-400 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 transition-colors mt-4"
-            title="Remove"
-          >
-            <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
-          </button>
+
+          <div class="mt-3 pt-3 border-t border-gray-200 dark:border-gray-600">
+            <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Manual Members</label>
+            <p class="text-xs text-gray-400 dark:text-gray-500 mb-2">
+              People pinned to this pillar outside its LDAP reporting chain — e.g. when the pillar top is not a people manager. Takes effect on the next sync.
+            </p>
+            <div v-if="(root.manualMembers || []).length > 0" class="flex flex-wrap gap-1.5 mb-2">
+              <span
+                v-for="member in root.manualMembers"
+                :key="member"
+                class="inline-flex items-center gap-1 px-2.5 py-1 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full"
+              >
+                {{ memberLabel(member) }}
+                <button
+                  @click="removeManualMember(idx, member)"
+                  class="ml-0.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400"
+                  title="Remove member"
+                >
+                  <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </span>
+            </div>
+            <PersonAutocomplete
+              :people="[]"
+              placeholder="Add member — search the directory..."
+              @update:model-value="uid => addManualMember(idx, uid)"
+            />
+          </div>
         </div>
       </div>
 
@@ -286,6 +319,8 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRosterSync } from '../composables/useRosterSync'
+import { useRoster } from '@shared/client/composables/useRoster'
+import PersonAutocomplete from './PersonAutocomplete.vue'
 
 const emit = defineEmits(['toast', 'config-saved'])
 
@@ -306,6 +341,21 @@ const newExcludedTitle = ref('')
 const saveMessage = ref(null)
 const saveError = ref(false)
 
+// Roster people (uid -> name) for labeling manual member chips
+const { rosterData, loadRoster } = useRoster()
+
+const memberNames = computed(() => {
+  const map = {}
+  for (const org of rosterData.value?.orgs || []) {
+    for (const team of Object.values(org.teams || {})) {
+      for (const member of team.members || []) {
+        if (member.uid && member.name) map[member.uid] = member.name
+      }
+    }
+  }
+  return map
+})
+
 // Snapshot original values for detecting structure-affecting changes
 let savedOrgRoots = []
 let savedExcludedTitles = ''
@@ -322,7 +372,10 @@ function populateForm() {
     editExcludedTitles.value = [...(config.value.excludedTitles || [])]
 
     if (config.value.configured) {
-      editRoots.value = (config.value.orgRoots || []).map(r => ({ ...r }))
+      editRoots.value = (config.value.orgRoots || []).map(r => ({
+        ...r,
+        manualMembers: [...(r.manualMembers || [])]
+      }))
       editGithubOrgs.value = [...(config.value.githubOrgs || [])]
       editGitlabInstances.value = (config.value.gitlabInstances || []).map(i => ({
         label: i.label || '',
@@ -347,16 +400,36 @@ watch(config, populateForm)
 onMounted(async () => {
   await fetchConfig()
   populateForm()
+  loadRoster()
 })
 
 // --- Helpers ---
 
 function addRoot() {
-  editRoots.value.push({ uid: '', displayName: '' })
+  editRoots.value.push({ uid: '', displayName: '', manualMembers: [] })
 }
 
 function removeRoot(idx) {
   editRoots.value.splice(idx, 1)
+}
+
+function memberLabel(uid) {
+  const name = memberNames.value[uid]
+  return name ? `${name} (${uid})` : uid
+}
+
+function addManualMember(idx, uid) {
+  if (!uid) return
+  const root = editRoots.value[idx]
+  if (!root.manualMembers) root.manualMembers = []
+  if (!root.manualMembers.includes(uid)) root.manualMembers.push(uid)
+}
+
+function removeManualMember(idx, uid) {
+  const root = editRoots.value[idx]
+  if (root.manualMembers) {
+    root.manualMembers = root.manualMembers.filter(m => m !== uid)
+  }
 }
 
 function addExcludedTitle() {
@@ -383,7 +456,12 @@ async function handleSave() {
 
   const orgRoots = editRoots.value
     .filter(r => r.uid && r.displayName)
-    .map(r => ({ uid: r.uid.trim(), displayName: r.displayName.trim() }))
+    .map(r => {
+      const root = { uid: r.uid.trim(), displayName: r.displayName.trim() }
+      const manualMembers = [...new Set((r.manualMembers || []).map(m => m.trim()).filter(Boolean))]
+      if (manualMembers.length > 0) root.manualMembers = manualMembers
+      return root
+    })
 
   if (orgRoots.length === 0) {
     saveMessage.value = 'At least one org root with UID and display name is required.'

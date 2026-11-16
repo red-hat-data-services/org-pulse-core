@@ -433,3 +433,75 @@ describe('search index handler', () => {
     expect(mlTeam.keywords).toContain('PM Jones')
   })
 })
+
+describe('org-list and org-summary with teamless orgs', () => {
+  // org1 has a structure team; org2 is a manual pillar whose people have
+  // no team assignments at all
+  function teamlessOrgStorage() {
+    return {
+      'team-data/registry.json': {
+        meta: { generatedAt: '2026-01-01', provider: 'test', orgRoots: ['org1', 'org2'] },
+        people: {
+          lead1: { uid: 'lead1', name: 'Lead One', status: 'active', orgRoot: 'org1', teamIds: ['team_abc'], title: 'Engineer' },
+          member1: { uid: 'member1', name: 'Member One', status: 'active', orgRoot: 'org1', teamIds: ['team_abc'], title: 'Engineer' },
+          root2: { uid: 'root2', name: 'Root Two', status: 'active', orgRoot: 'org2', title: 'Engineer' },
+          manual1: { uid: 'manual1', name: 'Manual One', status: 'active', orgRoot: 'org2', title: 'Engineer' }
+        }
+      },
+      'team-data/config.json': {
+        teamDataSource: 'in-app',
+        orgRoots: [
+          { uid: 'org1', displayName: 'Org One' },
+          { uid: 'org2', displayName: 'Manual Pillar' }
+        ]
+      },
+      'team-data/field-definitions.json': { personFields: [], teamFields: [] },
+      'org-roster/teams-metadata.json': { teams: [], boardNames: {} },
+      'org-roster/components.json': { components: {} },
+      'team-data/teams.json': {
+        teams: {
+          team_abc: { id: 'team_abc', name: 'Platform', orgKey: 'org1', metadata: {} }
+        }
+      },
+      'audit-log.json': { entries: [] }
+    }
+  }
+
+  it('org-list includes an org whose members are all unassigned', async () => {
+    const storage = makeStorage(teamlessOrgStorage())
+    const handlers = setupRoutes(storage)
+    const res = mockRes()
+
+    await handlers['GET /org-list']({ query: {} }, res)
+
+    expect(res._status).toBe(200)
+    const orgOne = res._body.orgs.find(o => o.name === 'Org One')
+    expect(orgOne).toEqual({ name: 'Org One', teamCount: 1, headcount: 2 })
+    const pillar = res._body.orgs.find(o => o.name === 'Manual Pillar')
+    expect(pillar).toEqual({ name: 'Manual Pillar', teamCount: 0, headcount: 2 })
+  })
+
+  it('org-summary returns a summary for an org with people but no teams', async () => {
+    const storage = makeStorage(teamlessOrgStorage())
+    const handlers = setupRoutes(storage)
+    const res = mockRes()
+
+    await handlers['GET /org-summary/:orgName']({ params: { orgName: 'Manual Pillar' } }, res)
+
+    expect(res._status).toBe(200)
+    expect(res._body.org).toBe('Manual Pillar')
+    expect(res._body.teamCount).toBe(0)
+    expect(res._body.headcount).toBe(2)
+    expect(res._body.teams).toEqual([])
+  })
+
+  it('org-summary still 404s for an org with no teams and no people', async () => {
+    const storage = makeStorage(teamlessOrgStorage())
+    const handlers = setupRoutes(storage)
+    const res = mockRes()
+
+    await handlers['GET /org-summary/:orgName']({ params: { orgName: 'Ghost Org' } }, res)
+
+    expect(res._status).toBe(404)
+  })
+})

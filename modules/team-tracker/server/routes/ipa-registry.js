@@ -7,7 +7,7 @@
 const ipaClient = require('../../../../shared/server/roster-sync/ipa-client');
 const { computeCoverage } = require('../../../../shared/server/roster-sync/lifecycle');
 const { getAllPeople } = require('../../../../shared/server/roster');
-const { loadConfig, getOrgDisplayNames } = require('../../../../shared/server/roster-sync/config');
+const { loadConfig, getOrgDisplayNames, validateOrgRoots } = require('../../../../shared/server/roster-sync/config');
 const { runConsolidatedSync, isSyncInProgress: isConsolidatedSyncInProgress } = require('../../../../shared/server/roster-sync/consolidated-sync');
 
 const { mergePerson } = require('../../../../shared/server/roster-sync/lifecycle');
@@ -86,7 +86,13 @@ function registerIpaRegistryRoutes(router, context) {
   router.post('/ipa/config', requireAdmin, requireScope('roster:write'), async function(req, res) {
     var config = await loadConfig(storage) || {};
     var body = req.body;
-    if (body.orgRoots !== undefined) config.orgRoots = body.orgRoots;
+    if (body.orgRoots !== undefined) {
+      var orgRootsValidation = validateOrgRoots(body.orgRoots);
+      if (!orgRootsValidation.valid) {
+        return res.status(400).json({ error: orgRootsValidation.error });
+      }
+      config.orgRoots = body.orgRoots;
+    }
     if (body.gracePeriodDays !== undefined) config.gracePeriodDays = body.gracePeriodDays;
     if (body.autoSync !== undefined) config.autoSync = body.autoSync;
     if (body.excludedTitles !== undefined) config.excludedTitles = body.excludedTitles;

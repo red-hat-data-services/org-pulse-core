@@ -145,6 +145,64 @@ test.describe('People & Teams Module @people-teams', () => {
       }
     }
   });
+
+  test('roster API reflects manually-assigned org members from fixtures', async ({ request }) => {
+    const response = await request.get('/api/modules/team-tracker/roster');
+    expect(response.ok()).toBe(true);
+
+    const roster = await response.json();
+    // gkim is a pillar whose members are pinned via orgRoots[].manualMembers
+    // (hwilson reports to fjohnson in LDAP but belongs to gkim's pillar)
+    const manualOrg = (roster.orgs || []).find(o => o.key === 'gkim');
+    expect(manualOrg).toBeDefined();
+
+    const manualOrgMembers = Object.values(manualOrg.teams || {})
+      .flatMap(team => team.members || []);
+    expect(manualOrgMembers.some(m => m.uid === 'gkim')).toBe(true);
+    expect(manualOrgMembers.some(m => m.uid === 'hwilson')).toBe(true);
+
+    // Manual assignment is exclusive — hwilson no longer appears under the
+    // org root they report to
+    const ldapOrg = (roster.orgs || []).find(o => o.key === 'fjohnson');
+    expect(ldapOrg).toBeDefined();
+    const ldapOrgMembers = Object.values(ldapOrg.teams || {})
+      .flatMap(team => team.members || []);
+    expect(ldapOrgMembers.some(m => m.uid === 'hwilson')).toBe(false);
+  });
+
+  test('org-list and org-summary include a teamless manual pillar', async ({ request }) => {
+    // gkim's pillar members are all unassigned (no teams under the org) —
+    // the org must still appear in listings with zero teams
+    const listRes = await request.get('/api/modules/team-tracker/org-list');
+    expect(listRes.ok()).toBe(true);
+    const { orgs } = await listRes.json();
+    const pillar = (orgs || []).find(o => o.name === 'Grace Kim');
+    expect(pillar).toBeDefined();
+    expect(pillar.teamCount).toBe(0);
+    expect(pillar.headcount).toBe(2);
+
+    const summaryRes = await request.get('/api/modules/team-tracker/org-summary/Grace%20Kim');
+    expect(summaryRes.ok()).toBe(true);
+    const summary = await summaryRes.json();
+    expect(summary.teamCount).toBe(0);
+    expect(summary.headcount).toBe(2);
+  });
+
+  test('admin roster-sync config endpoint requires authentication', async ({ request }) => {
+    // In CI containers with DEMO_MODE=true there is no OAuth proxy, so
+    // requireAdmin returns 403 for admin-gated endpoints. Validation of
+    // manualMembers payloads is covered by unit tests
+    // (roster-sync-config.test.js).
+    const response = await request.post('/api/modules/team-tracker/admin/roster-sync/config', {
+      data: {
+        orgRoots: [
+          { uid: 'orga', displayName: 'Org A' },
+          { uid: 'orgb', displayName: 'Org B', manualMembers: ['jbloggs'] }
+        ]
+      }
+    });
+    expect(response.status()).toBe(403);
+  });
 });
 
 /**

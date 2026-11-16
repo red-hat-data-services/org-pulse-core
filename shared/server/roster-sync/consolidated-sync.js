@@ -16,6 +16,7 @@ const { enrichPerson } = require('./merge');
 const { inferUsernames } = require('./username-inference');
 const { validateAmbiguousUsernames } = require('./username-validation');
 const { mergePerson, computeCoverage, processLifecycle } = require('./lifecycle');
+const { applyManualOrgMembers } = require('./manual-members');
 const { DEFAULT_EXCLUDED_TITLES } = require('./constants');
 
 const REGISTRY_KEY = 'team-data/registry.json';
@@ -68,6 +69,7 @@ async function runConsolidatedSync(storage, credentials) {
     var freshPeopleMap = {};
     var vpInfo = null;
     var _totalPeople = 0;
+    var manualMemberStats = { applied: 0, reassigned: 0, unresolved: [] };
 
     var excludedTitles = config.excludedTitles?.length ? config.excludedTitles : DEFAULT_EXCLUDED_TITLES;
 
@@ -141,6 +143,29 @@ async function runConsolidatedSync(storage, credentials) {
           } catch (err) {
             console.error('[consolidated-sync] Failed to traverse ' + root.uid + ': ' + err.message);
           }
+        }
+
+        // ─── Phase 1c: Apply manual org members ───
+        // orgRoots[].manualMembers pins people to a pillar outside the LDAP
+        // reporting chain (e.g. a pillar whose top is not a people manager).
+        // Manual assignment is exclusive — it wins over traversal-derived
+        // membership — and root uids are re-asserted afterwards so a root
+        // person is always claimed by their own pillar.
+        var manualLookupCache = {};
+        manualMemberStats = await applyManualOrgMembers(
+          config.orgRoots,
+          ldapOrgs,
+          freshPeopleMap,
+          async function(uid) {
+            if (manualLookupCache[uid] !== undefined) return manualLookupCache[uid];
+            manualLookupCache[uid] = await ipaClient.lookupPerson(conn.client, conn.config.baseDn, uid, extraAttrs);
+            return manualLookupCache[uid];
+          }
+        );
+        if (manualMemberStats.applied > 0 || manualMemberStats.reassigned > 0 || manualMemberStats.unresolved.length > 0) {
+          console.log('[consolidated-sync] Manual members: applied=' + manualMemberStats.applied +
+            ' reassigned=' + manualMemberStats.reassigned +
+            ' unresolved=' + manualMemberStats.unresolved.length);
         }
       } finally {
         conn.client.unbind(function() {});
@@ -216,7 +241,9 @@ async function runConsolidatedSync(storage, credentials) {
           var orgData = ldapOrgs[orgRoot.uid];
           if (!orgData) continue;
           var orgDisplayName = orgRoot.displayName || orgRoot.name;
-          enrichPerson(orgData.leader, sheetsData, orgDisplayName);
+          // Orgs assembled purely from manualMembers may have no leader
+          // (the root's own traversal failed) — enrich members only then.
+          if (orgData.leader) enrichPerson(orgData.leader, sheetsData, orgDisplayName);
           for (var mi = 0; mi < orgData.members.length; mi++) {
             enrichPerson(orgData.members[mi], sheetsData, orgDisplayName);
           }
@@ -591,7 +618,10 @@ async function runConsolidatedSync(storage, credentials) {
         gitlabCleared: validationStats.gitlabCleared,
         auxiliaryResolved: auxiliaryResolved,
         auxiliaryManagersAdded: auxiliaryManagersAdded,
-        unresolvedPersonRefs: unresolvedPersonRefs
+        unresolvedPersonRefs: unresolvedPersonRefs,
+        manualMembersApplied: manualMemberStats.applied,
+        manualMembersReassigned: manualMemberStats.reassigned,
+        manualMembersUnresolved: manualMemberStats.unresolved
       },
       coverage: computeCoverage(merged)
     };
