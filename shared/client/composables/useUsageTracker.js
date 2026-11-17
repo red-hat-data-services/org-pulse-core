@@ -9,6 +9,7 @@ let flushTimer = null
 let started = false
 let disabled = false
 let flushing = false
+let flushPromise = null
 let retryDelayMs = 0
 let retryAfter = 0
 let visibilityHandler = null
@@ -33,51 +34,60 @@ function trackInteraction(module, viewId, action, target = null, org = null) {
 }
 
 async function flush({ keepalive = false } = {}) {
-  if (disabled || flushing || buffer.length === 0) return
+  if (disabled || buffer.length === 0) return
+  if (flushing) {
+    if (keepalive) {
+      await flushPromise
+      return flush({ keepalive })
+    }
+    return
+  }
   if (!keepalive && Date.now() < retryAfter) return
 
   flushing = true
   const batch = buffer.splice(0)
   const body = JSON.stringify({ events: batch })
 
-  try {
-    if (keepalive && typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
-      try {
-        const queued = navigator.sendBeacon(
-          '/api/usage/events',
-          new Blob([body], { type: 'application/json' })
-        )
-        if (queued) {
-          resetRetryDelay()
+  flushPromise = (async function () {
+    try {
+      if (keepalive && typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+        try {
+          const queued = navigator.sendBeacon(
+            '/api/usage/events',
+            new Blob([body], { type: 'application/json' })
+          )
+          if (queued) return
+        } catch {
+          // Fall back to a keepalive fetch when beacon queuing is unavailable.
+        }
+      }
+
+      const res = await fetch('/api/usage/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        keepalive
+      })
+      if (!res.ok) {
+        if (res.status === 404) {
+          disable()
           return
         }
-      } catch {
-        // Fall back to a keepalive fetch when beacon queuing is unavailable.
-      }
-    }
-
-    const res = await fetch('/api/usage/events', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-      keepalive
-    })
-    if (!res.ok) {
-      if (res.status === 404) {
-        disable()
+        requeueBatch(batch)
+        scheduleRetry()
         return
       }
+      resetRetryDelay()
+    } catch {
       requeueBatch(batch)
       scheduleRetry()
-      return
+    } finally {
+      flushing = false
+      flushPromise = null
     }
-    resetRetryDelay()
-  } catch {
-    requeueBatch(batch)
-    scheduleRetry()
-  } finally {
-    flushing = false
-  }
+  })()
+
+  return flushPromise
 }
 
 function requeueBatch(batch) {
