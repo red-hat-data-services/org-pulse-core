@@ -35,11 +35,13 @@ async function readRosterFull(storage) {
       gitlabUsername: person.gitlab?.username || null,
     };
 
-    // Leader = person whose uid matches a configured orgRoot
+    const org = orgMap[orgKey];
     if (orgRootUids.has(uid)) {
-      orgMap[orgKey].leader = flat;
+      // Keep the legacy leader selection without dropping earlier roots in this group.
+      if (org.leader) org.members.push(org.leader);
+      org.leader = flat;
     } else {
-      orgMap[orgKey].members.push(flat);
+      org.members.push(flat);
     }
   }
 
