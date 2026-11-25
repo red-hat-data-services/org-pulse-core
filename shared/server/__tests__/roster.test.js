@@ -1,6 +1,28 @@
 import { describe, it, expect } from 'vitest'
 
-const { splitByKnownNames, getTeamRollup, collectRoleNames } = require('../roster')
+const { getAllPeople, readRosterFull, splitByKnownNames, getTeamRollup, collectRoleNames } = require('../roster')
+
+describe('getAllPeople', () => {
+  it('retains both configured roots when they share an org group', async () => {
+    const files = {
+      'team-data/config.json': { orgRoots: [{ uid: 'first-root' }, { uid: 'second-root' }] },
+      'team-data/registry.json': {
+        people: {
+          'first-root': { uid: 'first-root', status: 'active', orgRoot: 'engineering', github: { username: 'gh-first' } },
+          teammate: { uid: 'teammate', status: 'active', orgRoot: 'engineering', github: { username: 'gh-teammate' } },
+          'second-root': { uid: 'second-root', status: 'active', orgRoot: 'engineering', github: { username: 'gh-second' } }
+        }
+      }
+    }
+    const storage = { readFromStorage: async key => files[key] ?? null }
+
+    const people = await getAllPeople(storage)
+    expect(people.map(person => person.githubUsername).sort()).toEqual(['gh-first', 'gh-second', 'gh-teammate'])
+
+    const roster = await readRosterFull(storage)
+    expect(roster.orgs.engineering.leader.uid).toBe('second-root')
+  })
+})
 
 describe('splitByKnownNames', () => {
   const knownNames = new Set([
